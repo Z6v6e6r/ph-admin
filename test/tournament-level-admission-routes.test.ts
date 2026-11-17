@@ -368,8 +368,52 @@ async function dtoCases(): Promise<void> {
   }
 }
 
+// ---- Organizer report over the roster (detects bookings that bypassed PadlHub) -------------
+
+async function reportCases(): Promise<void> {
+  const byPhone: Record<string, Rating> = { '79000000001': 3.31, '79000000002': 4.4, '79000000003': null, '79000000004': 2.85 };
+  const participants = [
+    { id: 'p1', name: 'In range', phone: '79000000001', status: 'REGISTERED', paymentStatus: 'PAID' },
+    { id: 'p2', name: 'Direct Viva booking', phone: '79000000002', status: 'REGISTERED', paymentStatus: 'PAID' },
+    { id: 'p3', name: 'No level', phone: '79000000003', status: 'REGISTERED' },
+    { id: 'p4', name: 'Tolerance', phone: '79000000004', status: 'REGISTERED' }
+  ];
+  let current = '';
+  const rating = ratings(() => byPhone[current]);
+  const original = rating.service.resolveCanonicalLevelByIdentity;
+  rating.service.resolveCanonicalLevelByIdentity = async (input: { phone: string }) => { current = input.phone; return original(input); };
+  const row = tournament({ participants: participants as never, waitlist: [{ id: 'w1', name: 'Wait', phone: '79000000002' }] as never });
+  const snapshot = JSON.stringify(row.participants);
+  const vivaGuard = new Proxy({}, { get: () => () => { throw new Error('report must not call Viva'); } });
+  const svc = service(row, rating, vivaGuard as never) as any;
+  svc.hydrateCustomTournament = async (value: CustomTournament) => value;
+  const admin = { id: 'admin-1', authSource: 'token', roles: [], permissions: ['tournaments:read'], stationIds: [], connectorRoutes: [] };
+  await withMode(undefined, async () => {
+    const report = await svc.getLevelAdmissionReport('custom-level-1', admin);
+    assert.equal(report.rule.ruleKind, 'RANGE');
+    assert.deepEqual(report.rule.effectiveRange, { min: 2.8, max: 3.7 });
+    assert.equal(report.checked, 5);
+    assert.equal(report.outsideRule, 3, 'out-of-range direct booking, missing level and waitlisted out-of-range');
+    const reason = (id: string) => report.entries.find((entry: any) => entry.participantId === id).reasonCode;
+    assert.equal(reason('p1'), 'LEVEL_ALLOWED');
+    assert.equal(reason('p2'), 'LEVEL_NOT_ALLOWED');
+    assert.equal(reason('p3'), 'PLAYER_LEVEL_REQUIRED');
+    assert.equal(reason('p4'), 'LEVEL_ALLOWED_WITH_TOLERANCE');
+    assert.ok(report.entries.every((entry: any) => !String(entry.phoneMasked).includes('79000000002')), 'phones are masked');
+    assert.equal(JSON.stringify(row.participants), snapshot, 'the report never changes participation');
+  });
+  const unrestricted = service(tournament({ accessLevels: [] }), ratings(() => { throw new Error('no read'); })) as any;
+  unrestricted.hydrateCustomTournament = async (value: CustomTournament) => value;
+  const empty = await unrestricted.getLevelAdmissionReport('custom-level-1', admin);
+  assert.equal(empty.checked, 0);
+  // A staff user scoped to another station cannot read this roster.
+  await assert.rejects(() => svc.getLevelAdmissionReport('custom-level-1', { ...admin, id: 'other', stationIds: ['other-station'],
+    permissionStationScopes: { 'tournaments:read': ['other-station'] } }));
+}
+
 async function main(): Promise<void> {
   await dtoCases();
+  await reportCases();
   await energyCases();
   await decisionCases();
   await purchaseCases();

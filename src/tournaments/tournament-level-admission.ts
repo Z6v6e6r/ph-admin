@@ -333,3 +333,24 @@ export function describeTournamentLevelRule(
     ruleVersion: decision.ruleVersion
   };
 }
+
+/** Organizer report over the existing roster; never changes participation. */
+export interface TournamentLevelAdmissionReport {
+  tournamentId: string;
+  rule: TournamentLevelRuleView;
+  generatedAt: string;
+  truncated: boolean;
+  checked: number;
+  outsideRule: number;
+  entries: Array<{
+    participantId: string | null;
+    name: string;
+    phoneMasked: string | null;
+    list: 'PARTICIPANT' | 'WAITLIST';
+    status: string | null;
+    paymentStatus: string | null;
+    allowed: boolean;
+    reasonCode: TournamentLevelReasonCode;
+    playerLevel: number | null;
+  }>;
+}

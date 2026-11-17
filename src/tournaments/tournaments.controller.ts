@@ -33,7 +33,7 @@ import {
 import { TournamentResultsExportService } from './tournament-results-export.service';
 import { TournamentsVivaStatusSyncService } from './tournaments-viva-status-sync.service';
 import { TournamentsService } from './tournaments.service';
-import type { TournamentLevelDecision } from './tournament-level-admission';
+import type { TournamentLevelAdmissionReport, TournamentLevelDecision } from './tournament-level-admission';
 
 @Controller('tournaments')
 @Roles(
@@ -190,6 +190,16 @@ export class TournamentsController {
     @CurrentUser() user?: RequestUser
   ): Promise<CustomTournament> {
     return this.tournamentsService.findCustomById(id, user);
+  }
+
+  /** Read-only: v2 level decision for everyone already on the roster (incl. Viva-synced bookings). */
+  @Get('custom/:id/level-admission-report')
+  @Permissions('tournaments:read')
+  getLevelAdmissionReport(
+    @Param('id') id: string,
+    @CurrentUser() user?: RequestUser
+  ): Promise<TournamentLevelAdmissionReport> {
+    return this.tournamentsService.getLevelAdmissionReport(id, user);
   }
 
   @Patch('custom/:id')

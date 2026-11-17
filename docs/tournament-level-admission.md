@@ -46,3 +46,39 @@ subscription gateway until it consumes `level-decision`, and any direct Viva end
 `TOURNAMENT_LEVEL_ADMISSION_MODE`: unset/unknown = `legacy` (pre-v2 behavior unchanged), `enforce`,
 `off` (emergency, admits without a level check). Switching never deletes settings or participants.
 Rollback: unset the variable and restart.
+
+## Closing direct Viva booking (prepared, not active)
+
+Direct bookings bypass every PadlHub check:
+- the LK1 one-time payment and the combined "subscription + booking" purchase
+  (`products:[{SUBSCRIPTION, bookingRequests:[exerciseId]}]`), both created by the browser in Viva;
+- any client calling the Viva end-user API or widget for the same exercise.
+
+A UI check (LK1) and the Node-RED gateway cannot close these. The level never goes to Viva:
+client groups, tags or custom fields derived from a level are out of the question.
+
+1. **Detect (available now, read-only).**
+   - `GET /api/tournaments/custom/:id/level-admission-report` (`tournaments:read`, station-scoped)
+     and the admin button "Проверить участников по сохранённому правилу".
+   - The report applies the v2 rule to everyone on the roster, including bookings synced from Viva.
+   - Nobody is removed, cancelled or refunded automatically. Refunds stay manual (first-version
+     mode), and the organizer decides.
+2. **Close self-booking in Viva for restricted tournaments only.** This is a provider setting.
+   It must be confirmed with Viva and decided by the owner before any implementation:
+   - Q1: Can one exercise be made non-bookable by clients (widget and end-user API
+     `transactions`/`bookingRequests`) while the admin API can still book it? What is the setting?
+   - Q2: Which admin API call creates a booking for a client? What are its idempotency and recovery
+     semantics? There is no such call in CUP, LK1 or LK2 today; they only read bookings.
+3. **Server-owned booking (implementation after 1–2).**
+   - LK1 and the composite purchase send the join request to CUP.
+   - CUP evaluates the decision and creates the Viva booking through the admin API.
+   - The payment goes through the existing admin `createBookingPaymentCheckout`
+     (`/api/v1/transactions` with `bookingIds`), with pending-payment recovery.
+   - The decision snapshot (`ruleVersion`) is stored. A started payment keeps its start decision,
+     also for the composite purchase (owner decision 2026-11-17). A new payment gets a new decision.
+   - This is CRITICAL (provider POST, idempotency, ambiguous-write recovery, reconciliation).
+     Estimate: 3–5 engineering days after Q1/Q2 are answered.
+4. **Rollout.** Restricted tournaments one at a time; unrestricted tournaments are unchanged.
+   Rollback: reopen self-booking for that exercise in Viva.
+
+Until step 2 is active, full server-side admission control is **not** provided.

@@ -4,6 +4,7 @@ import { PrepareTournamentOwnerDto } from './dto/prepare-tournament-owner.dto';
 import {
   PlayerLevelEvidence,
   TournamentLevelAdmissionMode,
+  TournamentLevelAdmissionReport,
   TournamentLevelDecision,
   describeTournamentLevelRule,
   evaluateTournamentLevelAdmission,
@@ -5725,6 +5726,56 @@ export class TournamentsService {
       return { ...decision, allowed: true, reasonCode: 'LEVEL_GATE_LEGACY', tournamentId: tournament.id };
     }
     return { ...decision, tournamentId: tournament.id };
+  }
+
+  /**
+   * Read-only organizer report: what the v2 rule decides for everyone already on the roster,
+   * including players whose booking reached CUP from Viva (e.g. a direct Viva end-user booking
+   * that bypassed PadlHub). Nothing is removed, cancelled or refunded, and nothing is written to
+   * Viva; the organizer decides manually. The level comes only from CUP canonical state.
+   */
+  async getLevelAdmissionReport(id: string, user?: RequestUser): Promise<TournamentLevelAdmissionReport> {
+    this.ensurePersistenceEnabled();
+    const stored = await this.tournamentsPersistence.findCustomTournamentById(id);
+    if (!stored) throw new NotFoundException(`Custom tournament with id ${id} not found`);
+    const tournament = await this.hydrateCustomTournament(stored);
+    this.ensureTournamentVisibleForUser(tournament, user, 'tournaments:read');
+    const rule = describeTournamentLevelRule(tournament, this.tournamentLevelMode());
+    const roster = [
+      ...tournament.participants.map((participant) => ({ participant, list: 'PARTICIPANT' as const })),
+      ...tournament.waitlist.map((participant) => ({ participant, list: 'WAITLIST' as const }))
+    ];
+    const limit = 200;
+    const entries: TournamentLevelAdmissionReport['entries'] = [];
+    if (rule.ruleKind !== 'NONE') {
+      for (const { participant, list } of roster.slice(0, limit)) {
+        const phone = this.normalizePhone(participant.phone);
+        const evidence: PlayerLevelEvidence = phone
+          ? await this.resolveTournamentAdmissionLevel({ phone })
+          : { status: 'UNKNOWN' };
+        const decision = evaluateTournamentLevelAdmission(tournament, evidence, { mode: 'ENFORCE' });
+        entries.push({
+          participantId: participant.id ?? null,
+          name: participant.name,
+          phoneMasked: phone ? this.maskPhoneForLog(phone) : null,
+          list,
+          status: participant.status ?? null,
+          paymentStatus: participant.paymentStatus ?? null,
+          allowed: decision.allowed,
+          reasonCode: decision.reasonCode,
+          playerLevel: decision.playerLevel
+        });
+      }
+    }
+    return {
+      tournamentId: tournament.id,
+      rule,
+      generatedAt: new Date().toISOString(),
+      truncated: rule.ruleKind !== 'NONE' && roster.length > limit,
+      checked: entries.length,
+      outsideRule: entries.filter((entry) => !entry.allowed).length,
+      entries
+    };
   }
 
   private evaluateLegacyAccess(

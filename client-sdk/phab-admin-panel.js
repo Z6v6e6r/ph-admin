@@ -9027,6 +9027,9 @@
       updateCustomTournament: function (tournamentId, payload) {
         return request('/tournaments/custom/' + encodeURIComponent(tournamentId), 'PATCH', payload);
       },
+      getTournamentLevelAdmissionReport: function (tournamentId) {
+        return request('/tournaments/custom/' + encodeURIComponent(tournamentId) + '/level-admission-report', 'GET');
+      },
       organizerRequest: function (tournamentId, action, value) {
         var base = '/tournaments/custom/' + encodeURIComponent(tournamentId) + '/organizer';
         var path = action === 'status' ? base + '/operations/' + encodeURIComponent(value) : action === 'read' ? base : base + '/' + (action === 'command' ? 'operations' : 'preview');
@@ -27656,6 +27659,58 @@
       return { root: root, input: input };
     }
 
+    // Read-only: shows who on the roster (including bookings that came from Viva directly)
+    // is outside the saved rule. Nobody is removed or refunded automatically.
+    function createTournamentLevelAdmissionReportControl(tournamentId) {
+      var root = document.createElement('div');
+      root.className = 'phab-admin-tournament-level-report';
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'phab-admin-btn-secondary';
+      button.textContent = 'Проверить участников по сохранённому правилу';
+      var output = document.createElement('div');
+      output.className = 'phab-admin-tournament-levels-note';
+      output.setAttribute('aria-live', 'polite');
+      root.appendChild(button);
+      root.appendChild(output);
+      var reasonLabels = {
+        LEVEL_NOT_ALLOWED: 'вне диапазона',
+        PLAYER_LEVEL_REQUIRED: 'уровень не определён',
+        PLAYER_LEVEL_UNKNOWN: 'уровень не подтверждён',
+        LEVEL_CHECK_UNAVAILABLE: 'проверка недоступна',
+        ACTIVITY_LEVEL_INVALID: 'правило турнира некорректно'
+      };
+      button.addEventListener('click', function () {
+        button.disabled = true;
+        output.textContent = 'Проверяем…';
+        api.getTournamentLevelAdmissionReport(tournamentId).then(function (report) {
+          output.textContent = '';
+          if (!report || report.rule.ruleKind === 'NONE') {
+            output.textContent = 'У турнира нет ограничения по уровню.';
+            return;
+          }
+          var summary = document.createElement('div');
+          summary.textContent = 'Проверено: ' + report.checked + '. Вне правила: ' + report.outsideRule + '.'
+            + (report.truncated ? ' Показаны первые 200.' : '')
+            + ' Участники не удаляются автоматически — решение за организатором.';
+          output.appendChild(summary);
+          (report.entries || []).filter(function (entry) { return !entry.allowed; }).forEach(function (entry) {
+            var line = document.createElement('div');
+            line.textContent = (entry.list === 'WAITLIST' ? '[лист ожидания] ' : '')
+              + (entry.name || 'Без имени') + ' · ' + (entry.phoneMasked || 'без телефона') + ' · '
+              + (reasonLabels[entry.reasonCode] || entry.reasonCode)
+              + (typeof entry.playerLevel === 'number' ? ' (' + entry.playerLevel.toFixed(2).replace('.', ',') + ')' : '');
+            output.appendChild(line);
+          });
+        }).catch(function (error) {
+          output.textContent = 'Не удалось проверить: ' + String((error && error.message) || error);
+        }).finally(function () {
+          button.disabled = false;
+        });
+      });
+      return root;
+    }
+
     function createTournamentAccessLevelsControl(initialValues) {
       var root = document.createElement('div');
       root.className = 'phab-admin-tournament-levels';
@@ -28758,6 +28813,14 @@
         customTournament ? model && model.levelTolerance : TOURNAMENT_LEVEL_TOLERANCE_NEW_DEFAULT
       );
       appendCommunityFormField(form, 'Допуск по уровню ±', levelToleranceControl.root, true);
+      if (customTournament && customTournament.id) {
+        appendCommunityFormField(
+          form,
+          'Проверка уровней участников',
+          createTournamentLevelAdmissionReportControl(customTournament.id),
+          true
+        );
+      }
 
       var genderSelect = document.createElement('select');
       genderSelect.className = 'phab-admin-input';
