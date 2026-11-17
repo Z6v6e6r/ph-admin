@@ -1,3 +1,4 @@
+import { runProviderIdentityTests } from './subscriptions-provider-identity.test';
 import { buildResidencyPolicyCandidate, RESIDENCY_BOOKING_COMPATIBILITY, RESIDENCY_PRODUCT_ID } from '../src/subscriptions/residency-booking-policy';
 import { compileSubscriptionRuntimeProjection } from '../src/subscriptions/subscription-runtime-projection';
 import * as assert from 'node:assert/strict';
@@ -444,7 +445,7 @@ main().finally(() => {
     if (value === undefined) delete process.env[name];
     else process.env[name] = value;
   }
-}).catch((error) => {
+}).then(runProviderIdentityTests).catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });

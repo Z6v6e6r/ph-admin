@@ -1,18 +1,19 @@
 import * as assert from 'node:assert/strict';
 import { resolveResidencyProviderIdentity } from '../src/subscriptions/subscription-provider-identity';
 import { SubscriptionRuntimeContextService } from '../src/subscriptions/subscription-runtime-context.service';
-const originalFetch = globalThis.fetch;
-const names = ['SUBSCRIPTIONS_RUNTIME_CONTEXT_ENABLED', 'SUBSCRIPTIONS_RESIDENCY_SYNC_ENABLED',
-  'SUBSCRIPTIONS_RESIDENCY_BOOKING_CONTEXT_ENABLED', 'SUBSCRIPTIONS_RUNTIME_CONTEXT_INTEGRATION_TOKEN',
-  'SUBSCRIPTIONS_RUNTIME_TENANT_ID', 'SUBSCRIPTIONS_RUNTIME_HASH_PEPPER'];
-const originalEnv = names.map(k => [k, process.env[k]] as const);
 const url = 'https://api.vivacrm.ru/end-user/api/v1/iSkq6G/profile';
 const phone = '79990000000';
 const token = 'synthetic-integration-token-'.repeat(2);
 let reads = 0;
 const response = (body: unknown, status = 200, responseUrl = url) => ({ status, url: responseUrl,
   json: async () => body }) as Response;
-async function main() {
+export async function runProviderIdentityTests() {
+  const originalFetch = globalThis.fetch;
+  const names = ['SUBSCRIPTIONS_RUNTIME_CONTEXT_ENABLED', 'SUBSCRIPTIONS_RESIDENCY_SYNC_ENABLED',
+    'SUBSCRIPTIONS_RESIDENCY_BOOKING_CONTEXT_ENABLED', 'SUBSCRIPTIONS_RUNTIME_CONTEXT_INTEGRATION_TOKEN',
+    'SUBSCRIPTIONS_RUNTIME_TENANT_ID', 'SUBSCRIPTIONS_RUNTIME_HASH_PEPPER'];
+  const originalEnv = names.map(k => [k, process.env[k]] as const);
+  try {
   globalThis.fetch = async (target, options) => {
     reads++;
     assert.equal(target, url); assert.equal(options?.redirect, 'error');
@@ -61,8 +62,9 @@ async function main() {
   identity.verifyTrustedBearer = async () => { throw new Error('invalid JWT'); };
   await assert.rejects(service.authorizeResidencyRefresh('Bearer synthetic', token)); assert.equal(reads, 0);
   console.log('Residency provider identity positive and refusal checks passed');
-}
-main().finally(() => {
+  } finally {
   globalThis.fetch = originalFetch;
   for (const [k,v] of originalEnv) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
-}).catch(error => { console.error(error); process.exitCode = 1; });
+  }
+}
+if (require.main === module) runProviderIdentityTests().catch(error => { console.error(error); process.exitCode = 1; });
