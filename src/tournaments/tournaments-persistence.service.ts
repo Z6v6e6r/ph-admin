@@ -527,6 +527,12 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     });
   }
 
+  /** Server-owned booking attempts (disabled by default); `_id` uniqueness is the concurrency boundary. */
+  async serverBookingAttemptsCollection() {
+    await this.collection(false);
+    return this.requireDb().collection<any>('tournament_server_booking_attempts_v1');
+  }
+
   /** Chat reuses the established Mongo client. This path NEVER calls index provisioning. */
   async tournamentChatCollections() {
     const tournaments = await this.collection(false);
