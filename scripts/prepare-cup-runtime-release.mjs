@@ -145,6 +145,7 @@ try {
   const preservedDeclarationPaths = restoreEquivalentRecoveryDeclarations(declarations, path.join(mediaRoot, 'dist'));
   mediaDelta = verifyMediaRecoveryCompilation(before, inventory(path.join(mediaRoot, 'dist')));
   run(process.execPath, [path.join(source, 'test/support-media-recovery.test.mjs')], source, { SUPPORT_MEDIA_RECOVERY_ROOT: mediaRoot });
+  run(process.execPath, [path.join(source, 'test/support-media-governor-recovery.test.mjs')], source, { SUPPORT_MEDIA_RECOVERY_ROOT: mediaRoot });
   run(process.execPath, [path.join(source, 'test/cup-recovery-legacy-max.test.mjs'), mongoUri], source, { CUP_RECOVERY_ROOT: mediaRoot });
   const payload = path.join(scratch, 'media-recovery-runtime'); fs.mkdirSync(payload);
   for (const name of ['package.json', 'package-lock.json']) fs.copyFileSync(path.join(mediaRoot, name), path.join(payload, name));
