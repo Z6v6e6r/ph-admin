@@ -102,7 +102,7 @@ function editorFixture(stage='custom'){
   normalizeObject:v=>v||{},normalizeTournamentMechanics:()=>({}),getTournamentChangeLogEntries:()=>[],getTournamentStatusAuditRecord:()=>({}),getTournamentSourceSnapshot:()=>({}),
   normalizeTournamentTypeLabel:v=>v,mergeTournamentEditorModelWithLiveSource:v=>v,loadTournamentPublicationCommunities:()=>delay('publication',[],'A'),
   clearNode:e=>{e.children=[];},buildTournamentCardUrl:()=>'',appendCommunityFormField(){},TOURNAMENT_STATUS_OPTIONS:[],formatDateTimeFull:()=>'-',
-  createTournamentTypeSelect:element,createTournamentVisibilitySwitch:()=>({root:element(),input:element()}),createTournamentAccessLevelsControl:()=>({root:element(),input:element()}),
+  createTournamentTypeSelect:element,createTournamentVisibilitySwitch:()=>({root:element(),input:element()}),createTournamentAccessLevelsControl:()=>({root:element(),input:element()}),createTournamentLevelToleranceControl:()=>({root:element(),input:element()}),createTournamentLevelAdmissionReportControl:element,
   createTournamentPersonList:element,hasPermission:()=>true,setStatus(){},scenarioPane:{suspend(){}},storeNotificationToken(){},notificationApi:null,
  });
  vm.runInContext(code+editorCode+closeCode+openCode+logoutCode,ctx);
