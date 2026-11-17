@@ -1,3 +1,4 @@
+import type { TournamentLevelDecision, TournamentLevelRuleView } from './tournament-level-admission';
 import {
   AmericanoGeneratorConfig,
   AmericanoHistoricalRound
@@ -32,7 +33,10 @@ export type TournamentAccessCheckCode =
   | 'PLAYER_GENDER_REQUIRED'
   | 'GENDER_NOT_ALLOWED'
   | 'TOURNAMENT_SECURE_JOIN_REQUIRED'
-  | 'TOURNAMENT_RULE_CHANGED';
+  | 'TOURNAMENT_RULE_CHANGED'
+  | 'PLAYER_LEVEL_UNKNOWN'
+  | 'LEVEL_CHECK_UNAVAILABLE'
+  | 'ACTIVITY_LEVEL_INVALID';
 
 export interface TournamentParticipant {
   id?: string;
@@ -283,6 +287,8 @@ export interface CustomTournament extends Tournament {
   isPublic?: boolean;
   tournamentType: string;
   accessLevels: string[];
+  /** Symmetric level tolerance ±; raw stored value (absent = 0, invalid fails closed). */
+  levelTolerance?: unknown;
   gender: TournamentGender;
   maxPlayers: number;
   participants: TournamentParticipant[];
@@ -305,6 +311,8 @@ export interface TournamentPublicView {
   tournamentTypeBadgeLabel?: string;
   gender: TournamentGender;
   accessLevels: string[];
+  /** Display-only projection of the level rule; admission is decided by the level-decision route. */
+  levelAdmission?: TournamentLevelRuleView;
   startsAt?: string;
   endsAt?: string;
   studioName?: string;
@@ -392,6 +400,7 @@ export interface TournamentAccessCheckResponse {
   tournamentSlug?: string;
   accessLevels: string[];
   levelLabel?: string;
+  levelDecision?: TournamentLevelDecision;
 }
 
 export interface TournamentRegistrationResponse {
@@ -410,6 +419,7 @@ export interface TournamentRegistrationResponse {
   tournamentSlug?: string;
   participant?: TournamentParticipant;
   payment?: TournamentJoinPaymentState;
+  levelDecision?: TournamentLevelDecision;
 }
 
 export interface TournamentCustomEnergyCheckoutResponse {
@@ -473,7 +483,10 @@ export type TournamentJoinFlowCode =
   | 'REGISTERED'
   | 'WAITLISTED'
   | 'ALREADY_REGISTERED'
-  | 'ALREADY_WAITLISTED';
+  | 'ALREADY_WAITLISTED'
+  | 'PLAYER_LEVEL_UNKNOWN'
+  | 'LEVEL_CHECK_UNAVAILABLE'
+  | 'ACTIVITY_LEVEL_INVALID';
 
 export interface TournamentJoinPaymentState {
   required: boolean;
