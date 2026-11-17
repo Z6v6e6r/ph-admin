@@ -1,3 +1,4 @@
+import { resolveResidencyProviderIdentity } from './subscription-provider-identity';
 import { RESIDENCY_PRODUCT_ID, residencyBookingCompatibilityMatches } from './residency-booking-policy';
 import {
   ForbiddenException,
@@ -77,7 +78,7 @@ export class SubscriptionRuntimeContextService {
     if (!this.flag('SUBSCRIPTIONS_RESIDENCY_SYNC_ENABLED') || !this.flag('SUBSCRIPTIONS_RESIDENCY_BOOKING_CONTEXT_ENABLED')) {
       throw new ServiceUnavailableException({ code: 'RESIDENCY_SYNC_DISABLED' });
     }
-    return this.verifiedIdentity(authorizationHeader, integrationToken);
+    return this.verifiedIdentity(authorizationHeader, integrationToken, true);
   }
 
   async resolveResidency(
@@ -136,7 +137,7 @@ export class SubscriptionRuntimeContextService {
     return this.validateInstance(instance);
   }
 
-  private async verifiedIdentity(authorizationHeader?: string, integrationToken?: string): Promise<SubscriptionRuntimeIdentity> {
+  private async verifiedIdentity(authorizationHeader?: string, integrationToken?: string, allowResidencyProfile = false): Promise<SubscriptionRuntimeIdentity> {
     this.assertIntegrationToken(integrationToken);
     const tenantId = this.requireConfiguredId('SUBSCRIPTIONS_RUNTIME_TENANT_ID');
     const pepper = String(process.env.SUBSCRIPTIONS_RUNTIME_HASH_PEPPER ?? '');
@@ -154,7 +155,10 @@ export class SubscriptionRuntimeContextService {
         message: 'LK identity tenant does not match subscription runtime tenant'
       });
     }
-    const providerClientId = String(verified.actor.clientId ?? '').trim();
+    const claimedId = verified.actor.clientId;
+    const providerClientId = allowResidencyProfile && claimedId === undefined
+      ? await resolveResidencyProviderIdentity(authorizationHeader, tenantId, verified.actor.phoneNorm)
+      : String(claimedId ?? '').trim();
     if (!ID_PATTERN.test(providerClientId)) {
       throw new UnauthorizedException({
         code: 'SUBSCRIPTIONS_RUNTIME_PROVIDER_CLIENT_REQUIRED',
