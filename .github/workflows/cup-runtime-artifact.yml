@@ -2,10 +2,10 @@ name: CUP immutable runtime and recovery
 on:
   pull_request:
     branches: [main]
-    paths: ['src/**', 'client-sdk/**', 'deploy/recovery/**', 'scripts/prepare-cup-runtime-release.mjs', 'scripts/prepare-cup83-recovery-tree.py', 'test/cup-recovery*', 'test/cup-runtime-artifact-workflow.test.mjs', 'test/cup-notification-scenarios.test.mjs', 'package*.json', '.github/workflows/cup-runtime-artifact.yml']
+    paths: ['src/**', 'client-sdk/**', 'deploy/recovery/**', 'scripts/prepare-cup-runtime-release.mjs', 'scripts/prepare-cup83-recovery-tree.py', 'test/cup-recovery*', 'test/cup-runtime-artifact-workflow.test.mjs', 'test/cup-notification-scenarios.test.mjs', 'test/viva-request-governor*.ts', 'package*.json', '.github/workflows/cup-runtime-artifact.yml']
   push:
     branches: [main]
-    paths: ['src/**', 'client-sdk/**', 'deploy/recovery/**', 'scripts/prepare-cup-runtime-release.mjs', 'scripts/prepare-cup83-recovery-tree.py', 'test/cup-recovery*', 'test/cup-runtime-artifact-workflow.test.mjs', 'test/cup-notification-scenarios.test.mjs', 'package*.json', '.github/workflows/cup-runtime-artifact.yml']
+    paths: ['src/**', 'client-sdk/**', 'deploy/recovery/**', 'scripts/prepare-cup-runtime-release.mjs', 'scripts/prepare-cup83-recovery-tree.py', 'test/cup-recovery*', 'test/cup-runtime-artifact-workflow.test.mjs', 'test/cup-notification-scenarios.test.mjs', 'test/viva-request-governor*.ts', 'package*.json', '.github/workflows/cup-runtime-artifact.yml']
 permissions:
   contents: read
 jobs:
