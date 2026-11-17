@@ -11,7 +11,9 @@ export const MEDIA_RECOVERY_TS = Object.freeze([
     'support-media.service', 'support-media-store'].map(n => `src/support/${n}.ts`),
   'src/support/support.controller.ts', 'src/support/support.module.ts',
   'src/messenger/messenger.controller.ts', 'src/messenger/messenger.service.ts',
-  'src/common/messages/message-attachment.types.ts'
+  'src/common/messages/message-attachment.types.ts',
+  'src/integrations/viva/viva-request-governor.service.ts',
+  'src/integrations/viva/viva-tournaments.service.ts'
 ]);
 export const MEDIA_RECOVERY_SOURCES = Object.freeze([
   ...MEDIA_RECOVERY_TS,

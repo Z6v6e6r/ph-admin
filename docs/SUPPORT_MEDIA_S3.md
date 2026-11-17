@@ -102,7 +102,11 @@ POST остаётся accepted при отказе display grant; raw refs в re
 `prepare-cup-runtime-release.mjs` собирает Linux Node22 candidate и отдельный полный
 `media-recovery-runtime.tgz` из baseline83 с закрытым reviewed source patch.
 Архив включает AWS/sharp native dependencies, SDK и media reader. Source closure:
-19 явно перечисленных файлов; executable closure: 17 файлов. Unrelated executables
+21 явно перечисленный файл; executable closure: 19 файлов. В closure включены
+Viva request governor и Viva tournaments service: восстановление чтения фото
+сохраняет ограничение параллельных запросов, общий deadline ожидания и владение
+повторами, выпущенные в PR #123. Расхождение этих исходников или отсутствие
+любого из двух executable файлов блокирует сборку. Unrelated executables
 обязаны совпадать. Изменение порядка inferred type unions допускается только после
 AST equivalence; unrelated declaration bytes затем восстанавливаются из baseline.
 

@@ -5665,3 +5665,92 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..20432e4995e8bf1f52fb6987d8a6e6ba
 @@ -5523 +5849 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -    client: SupportClientProfile | undefined,
 +    client: SupportDialogSummaryClient | undefined,
+diff --git a/src/integrations/viva/viva-request-governor.service.ts b/src/integrations/viva/viva-request-governor.service.ts
+index 92365a6b..b1c235f4 100644
+--- a/src/integrations/viva/viva-request-governor.service.ts
++++ b/src/integrations/viva/viva-request-governor.service.ts
+@@ -9 +9,2 @@ export interface VivaGovernedRequestOptions<T> {
+-  execute: () => Promise<T>;
++  timeoutMs?: number;
++  execute: (signal: AbortSignal) => Promise<T>;
+@@ -34,0 +36,7 @@ export class VivaCircuitOpenError extends Error {
++export class VivaRequestTimeoutError extends Error {
++  constructor(readonly timeoutMs: number) {
++    super(`Viva request timeout after ${timeoutMs}ms`);
++    this.name = 'VivaRequestTimeoutError';
++  }
++}
++
+@@ -39,0 +48,4 @@ export class VivaRequestGovernorService {
++  private readonly requestTimeoutMs = this.readPositiveNumberEnv(
++    'VIVA_END_USER_TIMEOUT_MS',
++    5000
++  );
+@@ -55 +67 @@ export class VivaRequestGovernorService {
+-      return options.execute();
++      return this.executeWithDeadline(options);
+@@ -65 +77 @@ export class VivaRequestGovernorService {
+-    const request = options.execute()
++    const request = this.executeWithDeadline(options)
+@@ -75 +87,3 @@ export class VivaRequestGovernorService {
+-        this.inFlight.delete(key);
++        if (this.inFlight.get(key) === request) {
++          this.inFlight.delete(key);
++        }
+@@ -81,0 +96,21 @@ export class VivaRequestGovernorService {
++  private executeWithDeadline<T>(options: VivaGovernedRequestOptions<T>): Promise<T> {
++    const configuredTimeoutMs = Number.isFinite(options.timeoutMs) && Number(options.timeoutMs) >= 1
++      ? Number(options.timeoutMs)
++      : this.requestTimeoutMs;
++    const timeoutMs = Math.max(1, Math.min(Math.floor(configuredTimeoutMs), 2_147_483_647));
++    const controller = new AbortController();
++    let timer: ReturnType<typeof setTimeout>;
++    const bounded = new Promise<T>((resolve, reject) => {
++      timer = setTimeout(() => {
++        const error = new VivaRequestTimeoutError(timeoutMs);
++        // Settle the shared operation even when execute ignores cancellation.
++        reject(error);
++        controller.abort(error);
++      }, timeoutMs);
++      // Defer execution until run() has registered the shared promise. This also
++      // turns synchronous throws into ordinary failures with the same cleanup.
++      Promise.resolve().then(() => options.execute(controller.signal)).then(resolve, reject);
++    });
++    return bounded.finally(() => clearTimeout(timer));
++  }
++
+diff --git a/src/integrations/viva/viva-tournaments.service.ts b/src/integrations/viva/viva-tournaments.service.ts
+index e4dd2956..68899c42 100644
+--- a/src/integrations/viva/viva-tournaments.service.ts
++++ b/src/integrations/viva/viva-tournaments.service.ts
+@@ -32,0 +33,6 @@ const CLOSED_EXERCISE_TYPE_ID = '840';
++const CORPORATE_EXERCISE_TYPE_ID = '2349';
++const CORPORATE_TOURNAMENT_DIRECTION_NAMES = new Set([
++  'вск турнир',
++  'предприниматели-патриоты турнир',
++  'пулково турнир'
++]);
+@@ -577,2 +583,2 @@ export class VivaTournamentsService {
+-      // Discover closed-only dates too; individual exercises are still filtered below.
+-      new Set([...this.exerciseTypeIds, CLOSED_EXERCISE_TYPE_ID])
++      // Discover closed and corporate dates too; filter individual exercises below.
++      new Set([...this.exerciseTypeIds, CLOSED_EXERCISE_TYPE_ID, CORPORATE_EXERCISE_TYPE_ID])
+@@ -611 +617 @@ export class VivaTournamentsService {
+-    const execute = async (): Promise<unknown> => {
++    const execute = async (signal?: AbortSignal): Promise<unknown> => {
+@@ -617 +623 @@ export class VivaTournamentsService {
+-        signal: this.buildAbortSignal()
++        signal: signal ?? this.buildAbortSignal()
+@@ -630,0 +637 @@ export class VivaTournamentsService {
++        timeoutMs: this.requestTimeoutMs,
+@@ -743 +750,6 @@ export class VivaTournamentsService {
+-    if (!isClosedCorporateTournament && !this.isTournamentExercise(name, exerciseType)) {
++    const corporateDirectionName = (this.readDisplayName(direction) ?? '')
++      .trim().toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ');
++    const isCorporateTournament =
++      exerciseType.id === CORPORATE_EXERCISE_TYPE_ID
++      && CORPORATE_TOURNAMENT_DIRECTION_NAMES.has(corporateDirectionName);
++    if (!isClosedCorporateTournament && !isCorporateTournament && !this.isTournamentExercise(name, exerciseType)) {
+@@ -852 +864 @@ export class VivaTournamentsService {
+-      ...(isClosedCorporateTournament ? { isPublic: false } : {}),
++      ...(isClosedCorporateTournament || isCorporateTournament ? { isPublic: false } : {}),
