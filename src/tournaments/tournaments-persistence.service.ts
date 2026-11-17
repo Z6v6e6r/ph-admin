@@ -3,6 +3,14 @@ import { ORGANIZER_CAS_BUDGET_MS, OrganizerState } from './tournament-organizer.
 import { publicTournamentId, LocalOperation } from './tournament-local-operation.contract';
 import { TournamentAdmissionRule } from './tournaments.types';
 import {
+  LEVEL_TOLERANCE_NEW_TOURNAMENT_DEFAULT,
+  describeTournamentLevelRule,
+  formatTournamentLevelRange,
+  normalizeLevelToleranceInput,
+  readStoredLevelTolerance
+} from './tournament-level-admission';
+import {
+  BadRequestException,
   ConflictException,
   ServiceUnavailableException,
   Injectable,
@@ -71,6 +79,8 @@ export interface CreateCustomTournamentMutation {
   tournamentType: string;
   isPublic?: boolean;
   accessLevels: string[];
+  /** Absent on create means the new-tournament default (0.2); 0 is preserved. */
+  levelTolerance?: number;
   gender: TournamentGender;
   maxPlayers: number;
   participants: TournamentParticipant[];
@@ -110,6 +120,7 @@ export interface UpdateCustomTournamentMutation {
   tournamentType?: string;
   isPublic?: boolean;
   accessLevels?: string[];
+  levelTolerance?: number;
   gender?: TournamentGender;
   maxPlayers?: number;
   participants?: TournamentParticipant[];
@@ -321,6 +332,9 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     }
     if (mutation.accessLevels !== undefined) {
       setPayload.accessLevels = this.normalizeLevels(mutation.accessLevels);
+    }
+    if (mutation.levelTolerance !== undefined) {
+      setPayload.levelTolerance = this.validateLevelTolerance(mutation.levelTolerance);
     }
     if (mutation.gender !== undefined) {
       setPayload.gender = this.normalizeGender(mutation.gender);
@@ -1195,6 +1209,8 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       tournamentType: this.pickString(document.tournamentType) ?? 'AMERICANO',
       isPublic: this.normalizeIsPublic(document.isPublic),
       accessLevels: this.normalizeLevels(document.accessLevels),
+      // Raw stored value: the admission rule treats absent as 0 and anything invalid as closed.
+      ...(document.levelTolerance !== undefined ? { levelTolerance: document.levelTolerance } : {}),
       gender: this.normalizeGender(document.gender),
       maxPlayers: this.pickPositiveInteger(document.maxPlayers) ?? 8,
       participants,
@@ -1291,6 +1307,9 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       tournamentType: this.pickString(mutation.tournamentType) ?? 'AMERICANO',
       isPublic: this.normalizeIsPublic(mutation.isPublic),
       accessLevels: this.normalizeLevels(mutation.accessLevels),
+      levelTolerance: mutation.levelTolerance === undefined
+        ? LEVEL_TOLERANCE_NEW_TOURNAMENT_DEFAULT
+        : this.validateLevelTolerance(mutation.levelTolerance),
       gender: this.normalizeGender(mutation.gender),
       maxPlayers: this.pickPositiveInteger(mutation.maxPlayers) ?? 8,
       participants: this.normalizeParticipants(mutation.participants, 'REGISTERED'),
@@ -2062,6 +2081,18 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       this.formatAuditList(beforeTournament.accessLevels),
       this.formatAuditList(afterTournament.accessLevels)
     );
+    pushChange(
+      'levelTolerance',
+      'Допуск по уровню ±',
+      this.formatAuditLevelTolerance(beforeTournament.levelTolerance),
+      this.formatAuditLevelTolerance(afterTournament.levelTolerance)
+    );
+    pushChange(
+      'levelEffectiveRange',
+      'Фактический диапазон записи',
+      this.formatAuditLevelRange(beforeTournament),
+      this.formatAuditLevelRange(afterTournament)
+    );
     pushChange('gender', 'Пол', beforeTournament.gender, afterTournament.gender);
     pushChange(
       'maxPlayers',
@@ -2383,6 +2414,29 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     return value
       .map((item) => this.pickString(item))
       .filter((item): item is string => Boolean(item));
+  }
+
+  private validateLevelTolerance(value: unknown): number {
+    try {
+      return normalizeLevelToleranceInput(value);
+    } catch (error) {
+      throw new BadRequestException({ code: 'TOURNAMENT_LEVEL_TOLERANCE_INVALID',
+        message: error instanceof Error ? error.message : 'levelTolerance is invalid' });
+    }
+  }
+
+  private formatAuditLevelTolerance(value: unknown): string {
+    const tolerance = readStoredLevelTolerance(value);
+    return tolerance === 'INVALID' ? 'некорректно' : `±${tolerance.toFixed(2).replace('.', ',')}`;
+  }
+
+  private formatAuditLevelRange(tournament: { id?: unknown; accessLevels?: unknown; levelTolerance?: unknown }): string {
+    const view = describeTournamentLevelRule({ id: String(tournament.id ?? ''), accessLevels: tournament.accessLevels,
+      levelTolerance: tournament.levelTolerance }, 'ENFORCE');
+    if (view.ruleKind === 'NONE') return 'без ограничения';
+    if (view.ruleKind === 'INVALID') return 'некорректно';
+    if (view.ruleKind === 'CATEGORIES') return (view.allowedGrades ?? []).join(', ');
+    return view.effectiveRange ? formatTournamentLevelRange(view.effectiveRange) : '—';
   }
 
   private normalizeLevels(value: unknown): string[] {

@@ -33,6 +33,7 @@ import {
 import { TournamentResultsExportService } from './tournament-results-export.service';
 import { TournamentsVivaStatusSyncService } from './tournaments-viva-status-sync.service';
 import { TournamentsService } from './tournaments.service';
+import type { TournamentLevelDecision } from './tournament-level-admission';
 
 @Controller('tournaments')
 @Roles(
@@ -244,9 +245,37 @@ export class TournamentsController {
     canRegister: boolean;
     canCancel: boolean;
     message: string;
+    levelDecision?: TournamentLevelDecision;
   }> {
     const client = await this.resolveLkClient(request, user);
-    return this.tournamentsService.getPublicRegistrationByTournamentRef(id, client.phone);
+    const registration = await this.tournamentsService.getPublicRegistrationByTournamentRef(id, client.phone);
+    if (registration.status !== 'NONE' || !registration.canRegister) return registration;
+    // Existing registrations are never re-evaluated; only a new registration is gated.
+    const levelDecision = await this.tournamentsService.getLevelDecisionByTournamentRef(
+      id,
+      this.pickString(request.headers.authorization)
+    );
+    if (levelDecision.enforced && !levelDecision.allowed) {
+      return { ...registration, canRegister: false, message: levelDecision.message, levelDecision };
+    }
+    return { ...registration, levelDecision };
+  }
+
+  /**
+   * Server level decision for the authenticated LK player. Consumed by LK1 before checkout and by
+   * server gateways (Node-RED subscription bookings) before a booking is created. Level, range and
+   * tolerance are never accepted from the caller.
+   */
+  @Get(':id/level-decision')
+  @Roles()
+  getMyLevelDecision(
+    @Param('id') id: string,
+    @Req() request: Request
+  ): Promise<TournamentLevelDecision & { tournamentId: string }> {
+    return this.tournamentsService.getLevelDecisionByTournamentRef(
+      id,
+      this.pickString(request.headers.authorization)
+    );
   }
 
   @Post(':id/register')
