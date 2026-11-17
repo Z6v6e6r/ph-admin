@@ -41,6 +41,10 @@ jobs:
       - name: Verify admin notification scenario compatibility
         run: node --test test/cup-notification-scenarios.test.mjs
       - run: npm ci --ignore-scripts
+      - name: Verify bounded Viva request governor and retry ownership
+        run: |
+          npx ts-node test/viva-request-governor.test.ts
+          npx ts-node test/viva-request-governor-timeout.test.ts
       - name: Start owned disposable Mongo for recovery proof
         run: |
           docker run --detach --name cup-runtime-rehearsal-mongo --publish 127.0.0.1:27017:27017 mongo:7.0 --bind_ip_all

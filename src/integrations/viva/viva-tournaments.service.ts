@@ -614,13 +614,13 @@ export class VivaTournamentsService {
     const url = this.buildUrl(path, query, widgetId);
     const resolvedWidgetId = widgetId ?? this.widgetIds[0] ?? 'default';
     const priority = this.resolveRequestPriority(path);
-    const execute = async (): Promise<unknown> => {
+    const execute = async (signal?: AbortSignal): Promise<unknown> => {
       const response = await fetch(url, {
         headers: {
           Accept: 'application/json',
           'User-Agent': this.endUserUserAgent
         },
-        signal: this.buildAbortSignal()
+        signal: signal ?? this.buildAbortSignal()
       });
 
       if (!response.ok) {
@@ -634,6 +634,7 @@ export class VivaTournamentsService {
         key: `GET ${url}`,
         bucket: `viva:${resolvedWidgetId}:${priority}`,
         priority,
+        timeoutMs: this.requestTimeoutMs,
         execute
       });
     }

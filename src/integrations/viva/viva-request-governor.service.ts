@@ -6,7 +6,8 @@ export interface VivaGovernedRequestOptions<T> {
   key: string;
   bucket: string;
   priority?: VivaRequestPriority;
-  execute: () => Promise<T>;
+  timeoutMs?: number;
+  execute: (signal: AbortSignal) => Promise<T>;
 }
 
 interface VivaCircuitState {
@@ -32,11 +33,22 @@ export class VivaCircuitOpenError extends Error {
   }
 }
 
+export class VivaRequestTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`Viva request timeout after ${timeoutMs}ms`);
+    this.name = 'VivaRequestTimeoutError';
+  }
+}
+
 @Injectable()
 export class VivaRequestGovernorService {
   private readonly logger = new Logger(VivaRequestGovernorService.name);
   private readonly inFlight = new Map<string, Promise<unknown>>();
   private readonly circuits = new Map<string, VivaCircuitState>();
+  private readonly requestTimeoutMs = this.readPositiveNumberEnv(
+    'VIVA_END_USER_TIMEOUT_MS',
+    5000
+  );
   private readonly failureThreshold = this.readPositiveNumberEnv(
     'VIVA_GOVERNOR_CIRCUIT_FAILURE_THRESHOLD',
     3
@@ -52,7 +64,7 @@ export class VivaRequestGovernorService {
     const key = String(options.key || '').trim();
     const bucket = String(options.bucket || 'viva:default').trim();
     if (!key) {
-      return options.execute();
+      return this.executeWithDeadline(options);
     }
 
     this.assertCircuitAllows(bucket);
@@ -62,7 +74,7 @@ export class VivaRequestGovernorService {
       return existing as Promise<T>;
     }
 
-    const request = options.execute()
+    const request = this.executeWithDeadline(options)
       .then((result) => {
         this.recordSuccess(bucket);
         return result;
@@ -72,11 +84,34 @@ export class VivaRequestGovernorService {
         throw error;
       })
       .finally(() => {
-        this.inFlight.delete(key);
+        if (this.inFlight.get(key) === request) {
+          this.inFlight.delete(key);
+        }
       });
 
     this.inFlight.set(key, request);
     return request;
+  }
+
+  private executeWithDeadline<T>(options: VivaGovernedRequestOptions<T>): Promise<T> {
+    const configuredTimeoutMs = Number.isFinite(options.timeoutMs) && Number(options.timeoutMs) >= 1
+      ? Number(options.timeoutMs)
+      : this.requestTimeoutMs;
+    const timeoutMs = Math.max(1, Math.min(Math.floor(configuredTimeoutMs), 2_147_483_647));
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const bounded = new Promise<T>((resolve, reject) => {
+      timer = setTimeout(() => {
+        const error = new VivaRequestTimeoutError(timeoutMs);
+        // Settle the shared operation even when execute ignores cancellation.
+        reject(error);
+        controller.abort(error);
+      }, timeoutMs);
+      // Defer execution until run() has registered the shared promise. This also
+      // turns synchronous throws into ordinary failures with the same cleanup.
+      Promise.resolve().then(() => options.execute(controller.signal)).then(resolve, reject);
+    });
+    return bounded.finally(() => clearTimeout(timer));
   }
 
   getDiagnostics(): {
