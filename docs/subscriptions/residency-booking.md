@@ -140,6 +140,20 @@ paid purchase: it must equal line cost minus discount. A genuine `PAID` /
 discount; zero alone never establishes payment. The subscription's `cost` is not
 used to infer gross/net semantics.
 
+### Composite order (participation + residency in one payment)
+
+`SUBSCRIPTIONS_RESIDENCY_COMPOSITE_LINES_ENABLED` (default `false`) lets the
+refresh accept a linked PAID transaction with 2–8 lines, for the owner's single
+payment model of 2026-11-17. It requires exactly one residency line with count 1;
+every other line carries one consistent non-residency product id; every line has
+safe-integer cost and discount (discount ≤ cost); the transaction `sum`, `discount`
+and `toPay` equal the line totals; no transaction-level `productId`. The residency
+purchase amount is its own line's cost minus discount; the 30-day window still
+starts at the transaction `paymentDate`. A refund marker on any line or on the
+transaction denies residency (refunds stay manual, OD-05). Single-line purchases
+behave identically with the flag on or off. Enabling it needs PROVIDER evidence that
+Viva returns such a readback; this switch does not create composite payments.
+
 The agreed PURCHASE rule grants monetary discounts immediately for 30 days from
 confirmed issuance. Its authority is the linked PAID transaction's `paymentDate`,
 not provider visit-counter activation. Both Viva `NEW` and `ACTIVE` are accepted

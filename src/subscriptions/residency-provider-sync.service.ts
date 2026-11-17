@@ -31,7 +31,8 @@ export class ResidencyProviderSyncService {
       const snapshot = await withinResidencyDeadline(() => this.repository.binding(actor.tenantId, deadline), deadline);
       const source = await withinResidencyDeadline(() => this.viva.readResidencySubscriptionEvidence({ clientId: actor.providerClientId, clientSubscriptionId, studioId, deadline }), deadline);
       const facts = normalizeResidencyProviderFacts({ providerClientId: actor.providerClientId, clientSubscriptionId,
-        subscription: source.subscription, transaction: source.transaction, observedAt: this.now().toISOString() });
+        subscription: source.subscription, transaction: source.transaction, observedAt: this.now().toISOString(),
+        allowCompositeLines: ['true', '1', 'yes'].includes(String(process.env.SUBSCRIPTIONS_RESIDENCY_COMPOSITE_LINES_ENABLED ?? '').toLowerCase()) });
       const resolution = resolveSubscriptionSalePeriod({ purchasedAt: facts.purchasedAt, publications: snapshot.publications });
       if (resolution.kind !== 'MATCH') residencyFailure('SALE_PERIOD');
       const publication = resolution.publication;
