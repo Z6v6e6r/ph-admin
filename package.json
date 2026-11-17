@@ -119,7 +119,7 @@
     "test:subscriptions-binding-promotion": "ts-node test/subscriptions-legacy-binding-promotion.test.ts && ts-node test/subscriptions-legacy-binding-promotion.mongodb.test.ts",
     "test:subscriptions-synthetic-projection:mongo": "ts-node test/subscriptions-synthetic-canonical-projection.mongodb.test.ts",
     "test:subscriptions-trusted-shadow-adapter": "ts-node test/subscriptions-trusted-shadow-adapter.test.ts",
-    "test:subscriptions-runtime-context": "ts-node test/subscriptions-runtime-context.test.ts",
+    "test:subscriptions-runtime-context": "ts-node test/subscriptions-runtime-context.test.ts && ts-node test/subscriptions-provider-identity.test.ts",
     "test:subscriptions-sale-period-resolver": "ts-node test/subscriptions-sale-period-resolver.test.ts",
     "test:subscriptions-entitlement-lifecycle": "ts-node test/subscriptions-entitlement-lifecycle.test.ts",
     "test:subscriptions-entitlement-lifecycle:mongo": "ts-node test/subscriptions-entitlement-lifecycle.mongodb.test.ts",
