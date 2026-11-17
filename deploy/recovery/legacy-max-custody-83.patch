@@ -170,17 +170,199 @@ index 0000000000000000000000000000000000000000..181223501fbdbf085af9c0c6544639ae
 +  }
 +  return structuredClone(snapshot.commands);
 +}
+diff --git a/src/support/max-outbox-policy.ts b/src/support/max-outbox-policy.ts
+index 651c2d09bbfb09cc3964f6f7c559f9842e8fa919..1fb00c91eb7858d46e3470d574478f807173c94e 100644
+--- a/src/support/max-outbox-policy.ts
++++ b/src/support/max-outbox-policy.ts
+@@ -10,6 +10,7 @@ export interface MaxFailure {
+ const codes = new Set(['bot.blocked', 'bot.not.started', 'bot.removed', 'chat.not.found',
+   'dialog.not.found', 'dialog.suspended', 'access.denied', 'forbidden', 'invalid_input']);
+ export const MAX_DELIVERY_ATTEMPTS = 5;
++export const MAX_LOCAL_DEFERRALS = 20;
+ export function maxFailure(value: unknown, now: number): MaxFailure {
+   const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+   const status = typeof raw.status === 'number' && Number.isInteger(raw.status)
+diff --git a/src/support/max-outbox-store.ts b/src/support/max-outbox-store.ts
+index ccd4b3c4f00508f3b658a09eb763e5dbf03d2158..b1d2d89b0fcb4ade5f9ada2f5d043ae0e2540365 100644
+--- a/src/support/max-outbox-store.ts
++++ b/src/support/max-outbox-store.ts
+@@ -1,8 +1,9 @@
+ import { ConflictException, ServiceUnavailableException } from '@nestjs/common';
+ import { randomUUID } from 'crypto';
+ import { Collection, MongoOperationTimeoutError } from 'mongodb';
++import { isDeepStrictEqual } from 'node:util';
+ import { performance } from 'node:perf_hooks';
+-import { MaxFailure, MAX_DELIVERY_ATTEMPTS, maxFailure, maxRetryDelay } from './max-outbox-policy';
++import { MaxFailure, MAX_DELIVERY_ATTEMPTS, MAX_LOCAL_DEFERRALS, maxFailure, maxRetryDelay } from './max-outbox-policy';
+ import { SupportConnectorRoute, SupportOutboxCommand, SupportOutboxStatus } from './support.types';
+
+ export interface MaxReceipt { leaseToken?: unknown; failure?: unknown; retryAfterSeconds?: unknown }
+@@ -11,6 +12,21 @@ export function isMaxConnector(connector: SupportConnectorRoute): boolean {
+   return connector === SupportConnectorRoute.MAX_BOT || connector === SupportConnectorRoute.MAX_ACADEMY_BOT;
+ }
+
++export const MAX_RECEIPT_PROTOCOL = 'max-lease-v1';
++/** Marker presence is a permanent fence, even if a future tool changes status. */
++export const maxOutboxEligible = () => ({
++  'meta.maxOutboxProtocol': MAX_RECEIPT_PROTOCOL,
++  'meta.legacyMaxRestartCustody': { $exists: false },
++  'meta.legacyMaxArchive': { $exists: false }
++});
++const excluded = (row: SupportOutboxCommand) => Object.prototype.hasOwnProperty.call(row.meta ?? {}, 'legacyMaxRestartCustody')
++  || Object.prototype.hasOwnProperty.call(row.meta ?? {}, 'legacyMaxArchive');
++const identity = (row: SupportOutboxCommand) => {
++  const mutable = new Set(['_id', 'status', 'attempts', 'leasedUntil', 'leaseToken', 'updatedAt', 'nextAttemptAt',
++    'lastReceipt', 'terminalReason', 'lastError', 'lastProviderFailure', 'localDeferrals', 'lastLocalDeferral']);
++  return JSON.parse(JSON.stringify(Object.fromEntries(Object.entries(row).filter(([key]) => !mutable.has(key)))));
++};
++
+ /** Atomic Mongo claims/receipts; no dependence on a process-local outbox snapshot. */
+ export class MaxOutboxStore {
+   constructor(private readonly collection: Collection<SupportOutboxCommand>,
+@@ -26,31 +42,78 @@ export class MaxOutboxStore {
+     };
+   }
+
++  async enqueue(command: SupportOutboxCommand): Promise<SupportOutboxCommand> {
++    if (!isMaxConnector(command.connector) || !command.id || command.status !== SupportOutboxStatus.PENDING
++      || command.attempts !== 0 || excluded(command)
++      || ['leaseToken', 'leasedUntil', 'lastReceipt', 'terminalReason'].some(key => key in command)
++      || (command.meta?.maxOutboxProtocol !== undefined && command.meta.maxOutboxProtocol !== MAX_RECEIPT_PROTOCOL)) {
++      throw new ConflictException({ code: 'MAX_OUTBOX_ENQUEUE_CONFLICT' });
++    }
++    const remaining = this.operationBudget();
++    const snapshot: SupportOutboxCommand = JSON.parse(JSON.stringify({ ...command, meta: { ...command.meta, maxOutboxProtocol: MAX_RECEIPT_PROTOCOL } }));
++    try {
++      // Matching by ID alone makes an existing archive/legacy ID an insert-only no-op, never a second row.
++      await this.collection.updateOne({ id: snapshot.id },
++        { $setOnInsert: snapshot }, { upsert: true, writeConcern: { w: 'majority', j: true }, timeoutMS: remaining() });
++    } catch { /* A lost write ACK can only be resolved by the exact majority readback below. */ }
++    const durable = await this.collection.findOne({ id: snapshot.id, connector: snapshot.connector, ...maxOutboxEligible() },
++      { readConcern: { level: 'majority' }, readPreference: 'primary', timeoutMS: remaining() });
++    if (!durable) throw new ServiceUnavailableException({ code: 'MAX_OUTBOX_ENQUEUE_UNCONFIRMED' });
++    if (!isDeepStrictEqual(identity(durable), identity(snapshot))) throw new ConflictException({ code: 'MAX_OUTBOX_ENQUEUE_CONFLICT' });
++    return durable;
++  }
++
++  async health(connector: SupportConnectorRoute, now = Date.now()) {
++    if (!isMaxConnector(connector)) throw new ConflictException({ code: 'MAX_CONNECTOR_REQUIRED' });
++    const remaining = this.operationBudget(), at = new Date(now).toISOString();
++    const [result] = await this.collection.aggregate([
++      { $match: { connector, ...maxOutboxEligible() } },
++      { $facet: {
++        states: [{ $group: { _id: '$status', count: { $sum: 1 } } }],
++        due: [{ $match: { status: SupportOutboxStatus.PENDING,
++          $or: [{ nextAttemptAt: { $lte: at } }, { nextAttemptAt: { $exists: false } }] } }, { $count: 'count' }],
++        expired: [{ $match: { status: SupportOutboxStatus.LEASED,
++          $or: [{ leasedUntil: { $lte: at } }, { leasedUntil: { $exists: false } }] } }, { $count: 'count' }],
++        review: [{ $match: { terminalReason: 'DELIVERY_UNKNOWN' } }, { $count: 'count' }],
++        oldest: [{ $match: { status: SupportOutboxStatus.PENDING } }, { $sort: { createdAt: 1 } },
++          { $limit: 1 }, { $project: { _id: 0, createdAt: 1 } }]
++      } }
++    ], { readConcern: { level: 'majority' }, readPreference: 'primary', timeoutMS: remaining() }).toArray();
++    const states = Object.fromEntries((result?.states ?? []).map((x: { _id: string; count: number }) => [x._id, x.count]));
++    const oldest = result?.oldest?.[0]?.createdAt;
++    return { protocol: MAX_RECEIPT_PROTOCOL, connector, pending: states.PENDING ?? 0, leased: states.LEASED ?? 0,
++      sent: states.SENT ?? 0, failed: states.FAILED ?? 0, due: result?.due?.[0]?.count ?? 0,
++      expiredLeases: result?.expired?.[0]?.count ?? 0, needsReview: result?.review?.[0]?.count ?? 0,
++      oldestPendingAgeMs: typeof oldest === 'string' && Number.isFinite(Date.parse(oldest)) ? Math.max(0, now - Date.parse(oldest)) : null };
++  }
++
+   async pull(connector: SupportConnectorRoute, limit: number, leaseSec: number, now = Date.now()) {
+     const remaining = this.operationBudget();
+     const at = new Date(now).toISOString();
++    if (!isMaxConnector(connector)) throw new ConflictException({ code: 'MAX_CONNECTOR_REQUIRED' });
+     // An expired lease has an ambiguous provider outcome. Never automatically resend it.
+-    await this.collection.updateMany({ connector, status: SupportOutboxStatus.LEASED,
++    await this.collection.updateMany({ connector, ...maxOutboxEligible(), status: SupportOutboxStatus.LEASED,
+       $or: [{ leasedUntil: { $lte: at } }, { leasedUntil: { $exists: false } }] }, {
+       $set: { status: SupportOutboxStatus.FAILED, terminalReason: 'DELIVERY_UNKNOWN', updatedAt: at },
+       $unset: { leasedUntil: '', leaseToken: '' }
+-    }, { writeConcern: { w: 'majority' }, timeoutMS: remaining() });
+-    await this.collection.updateMany({ connector, status: SupportOutboxStatus.PENDING,
++    }, { writeConcern: { w: 'majority', j: true }, timeoutMS: remaining() });
++    await this.collection.updateMany({ connector, ...maxOutboxEligible(), status: SupportOutboxStatus.PENDING,
+       attempts: { $gte: this.maxAttempts } }, {
+       $set: { status: SupportOutboxStatus.FAILED, terminalReason: 'ATTEMPTS_EXHAUSTED', updatedAt: at },
+       $unset: { nextAttemptAt: '' }
+-    }, { writeConcern: { w: 'majority' }, timeoutMS: remaining() });
++    }, { writeConcern: { w: 'majority', j: true }, timeoutMS: remaining() });
+     const commands: SupportOutboxCommand[] = [];
+-    for (let i = 0; i < Math.min(50, Math.max(1, limit)); i++) {
++    // One atomic claim per response: a later batch failure must not hide an already returned claim.
++    for (let i = 0; i < Math.min(1, Math.max(0, Math.floor(limit))); i++) {
+       const leaseToken = randomUUID();
+-      const command = await this.collection.findOneAndUpdate({ connector,
++      const command = await this.collection.findOneAndUpdate({ connector, ...maxOutboxEligible(),
+         status: SupportOutboxStatus.PENDING,
+         $and: [ { $or: [{ attempts: { $lt: this.maxAttempts } }, { attempts: { $exists: false } }] },
+           { $or: [{ nextAttemptAt: { $lte: at } }, { nextAttemptAt: { $exists: false } }] } ] }, {
+         $set: { status: SupportOutboxStatus.LEASED, leaseToken,
+           leasedUntil: new Date(now + Math.min(300, Math.max(5, leaseSec)) * 1000).toISOString(), updatedAt: at },
+         $inc: { attempts: 1 }, $unset: { lastReceipt: '', nextAttemptAt: '' }
+-      }, { sort: { createdAt: 1, id: 1 }, returnDocument: 'after', includeResultMetadata: false, writeConcern: { w: 'majority' }, timeoutMS: remaining() });
++      }, { sort: { createdAt: 1, id: 1 }, returnDocument: 'after', includeResultMetadata: false, writeConcern: { w: 'majority', j: true }, timeoutMS: remaining() });
+       if (!command) break;
+       commands.push(command);
+     }
+@@ -63,15 +126,15 @@ export class MaxOutboxStore {
+     if (typeof token !== 'string' || !/^[0-9a-f-]{36}$/.test(token)) {
+       throw new ConflictException({ code: 'OUTBOX_LEASE_REQUIRED' });
+     }
+-    const command = await this.collection.findOne({ id }, { readConcern: { level: 'majority' }, readPreference: 'primary', timeoutMS: remaining() });
+-    if (!command || !isMaxConnector(command.connector)) throw new ConflictException({ code: 'OUTBOX_LEASE_STALE' });
++    const command = await this.collection.findOne({ id, ...maxOutboxEligible() }, { readConcern: { level: 'majority' }, readPreference: 'primary', timeoutMS: remaining() });
++    if (!command || !isMaxConnector(command.connector) || excluded(command) || command.meta?.maxOutboxProtocol !== MAX_RECEIPT_PROTOCOL) throw new ConflictException({ code: 'OUTBOX_LEASE_STALE' });
+     // Majority readback prevents a duplicate reporting success from an applied but uncommitted receipt.
+     // A repeated receipt is safe only until the next claim, which clears lastReceipt.
+     if (command.lastReceipt?.token === token && command.lastReceipt.kind === kind) return command;
+     const at = new Date(now).toISOString();
+     const failure: MaxFailure | undefined = kind === 'fail' ? maxFailure(body.failure, now) : undefined;
+     const localDeferred = failure?.category === 'LOCAL_DEFERRED';
+-    const retry = localDeferred || (failure?.category === 'RATE_LIMITED' && command.attempts < this.maxAttempts);
++    const retry = (localDeferred && (command.localDeferrals ?? 0) < MAX_LOCAL_DEFERRALS) || (failure?.category === 'RATE_LIMITED' && command.attempts < this.maxAttempts);
+     const set: Record<string, unknown> = { updatedAt: at, lastReceipt: { token, kind },
+       status: kind === 'ack' ? SupportOutboxStatus.SENT : retry ? SupportOutboxStatus.PENDING : SupportOutboxStatus.FAILED };
+     const unset: Record<string, ''> = { leaseToken: '', leasedUntil: '', nextAttemptAt: '', terminalReason: '' };
+@@ -88,16 +151,17 @@ export class MaxOutboxStore {
+         set.nextAttemptAt = new Date(now + maxRetryDelay(localDeferred ? (command.localDeferrals ?? 0) + 1 : command.attempts, localDeferred ? undefined : body.retryAfterSeconds)).toISOString();
+         delete unset.nextAttemptAt;
+       } else {
+-        set.terminalReason = failure.category === 'RATE_LIMITED' ? 'ATTEMPTS_EXHAUSTED' : failure.category;
++        set.terminalReason = localDeferred ? 'LOCAL_ADMISSION_EXHAUSTED' : failure.category === 'RATE_LIMITED' ? 'ATTEMPTS_EXHAUSTED' : failure.category;
+         delete unset.terminalReason;
+       }
+     }
+-    const updated = await this.collection.findOneAndUpdate({ id, status: SupportOutboxStatus.LEASED,
++    const updated = await this.collection.findOneAndUpdate({ id, ...maxOutboxEligible(), status: SupportOutboxStatus.LEASED,
+       leaseToken: token, leasedUntil: { $gt: at }, attempts: command.attempts },
+-    { $set: set, $unset: unset }, { returnDocument: 'after', includeResultMetadata: false, writeConcern: { w: 'majority' }, timeoutMS: remaining() });
++    { $set: set, $unset: unset }, { returnDocument: 'after', includeResultMetadata: false, writeConcern: { w: 'majority', j: true }, timeoutMS: remaining() });
+     if (updated) return updated; // Mongo acknowledgement precedes API success.
+-    const concurrent = await this.collection.findOne({ id }, { readConcern: { level: 'majority' }, readPreference: 'primary', timeoutMS: remaining() });
+-    if (concurrent?.lastReceipt?.token === token && concurrent.lastReceipt.kind === kind) return concurrent;
++    const concurrent = await this.collection.findOne({ id, ...maxOutboxEligible() }, { readConcern: { level: 'majority' }, readPreference: 'primary', timeoutMS: remaining() });
++    if (concurrent && !excluded(concurrent) && concurrent.meta?.maxOutboxProtocol === MAX_RECEIPT_PROTOCOL
++      && concurrent.lastReceipt?.token === token && concurrent.lastReceipt.kind === kind) return concurrent;
+     throw new ConflictException({ code: 'OUTBOX_LEASE_STALE' });
+   }
+ }
 diff --git a/src/support/support-persistence.service.ts b/src/support/support-persistence.service.ts
-index 8629aaa95d48fb82b6520e5be51948037e24790f..b72455ddf8b25706b289ddcd8549274e3f44b328 100644
+index 8629aaa95d48fb82b6520e5be51948037e24790f..2d6b4360dbbb1a250579a4bbc423529a33f3cb8b 100644
 --- a/src/support/support-persistence.service.ts
 +++ b/src/support/support-persistence.service.ts
-@@ -1,4 +1,6 @@
+@@ -1,8 +1,10 @@
  import { isDeepStrictEqual } from 'node:util';
 +import { createHash } from 'node:crypto';
 +import { LegacyMaxCustodyStore, LegacyMaxImportManifest, LegacyMaxTransition, validateLegacyMaxSnapshot } from './legacy-max-custody';
  import { performance } from 'node:perf_hooks';
  import { maxOutboxMode } from '../common/release-capabilities';
  import { ConflictException } from '@nestjs/common';
+-import { MAX_OUTBOX_TIMEOUT_MS, MaxOutboxStore, MaxReceipt, isMaxConnector, missingMaxStore } from './max-outbox-store';
++import { MAX_OUTBOX_TIMEOUT_MS, MaxOutboxStore, MaxReceipt, isMaxConnector, MAX_RECEIPT_PROTOCOL, maxOutboxEligible, missingMaxStore } from './max-outbox-store';
+ import { supportDiagnostics } from './support-diagnostics';
+ import { Injectable, Logger, OnModuleDestroy, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
+ import { Collection, Db, Document, MongoClient, MongoOperationTimeoutError } from 'mongodb';
 @@ -40,6 +42,40 @@ export interface SupportReplyContext {
    firstInboundId?: string;
  }
@@ -230,7 +412,7 @@ index 8629aaa95d48fb82b6520e5be51948037e24790f..b72455ddf8b25706b289ddcd8549274e
  }
 
  @Injectable()
-@@ -196,6 +233,9 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
+@@ -196,13 +233,16 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
 
    private readonly backendConfigs = this.buildBackendConfigs();
    private readonly backendStates = new Map<SupportPersistenceBackendKey, SupportPersistenceBackendState>();
@@ -240,7 +422,50 @@ index 8629aaa95d48fb82b6520e5be51948037e24790f..b72455ddf8b25706b289ddcd8549274e
 
    async onModuleInit(): Promise<void> {
      for (const config of this.backendConfigs) {
-@@ -260,6 +300,8 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
+       if (!config.uri) {
+-        if (maxOutboxMode() === 'legacy' && isProductionRuntime()
++        if ((maxOutboxMode() === 'receipt-v1' || (maxOutboxMode() === 'legacy' && isProductionRuntime()))
+           && config.key === this.resolveBackendKeyForConnector(SupportConnectorRoute.MAX_BOT)) {
+-          throw new Error('MAX_OUTBOX_LEGACY_AUTHORITY_NOT_READY');
++          throw new Error(maxOutboxMode() === 'receipt-v1' ? 'MAX_OUTBOX_AUTHORITY_NOT_READY' : 'MAX_OUTBOX_LEGACY_AUTHORITY_NOT_READY');
+         }
+         this.logger.warn(
+           `Support persistence backend ${config.key} has no Mongo URI and will be disabled.`
+@@ -226,10 +266,18 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
+         state.client = client;
+         state.db = client.db(config.dbName);
+         await this.ensureIndexes(state);
++        if (maxOutboxMode() === 'receipt-v1' && config.key === this.resolveBackendKeyForConnector(SupportConnectorRoute.MAX_BOT)) {
++          const indexes = await this.collection<SupportOutboxCommand>(state, 'outbox').listIndexes().toArray();
++          if (!indexes.some(index => index.unique === true && !index.sparse && !index.partialFilterExpression
++            && Object.keys(index.key).join(',') === 'id' && index.key.id === 1)) {
++            throw new Error('MAX_OUTBOX_UNIQUE_ID_REQUIRED');
++          }
++        }
+         if (maxOutboxMode() === 'legacy') {
+           const fenced = await this.collection<SupportOutboxCommand>(state, 'outbox').findOne({
+             connector: { $in: [SupportConnectorRoute.MAX_BOT, SupportConnectorRoute.MAX_ACADEMY_BOT] },
+-            $or: [{ leaseToken: { $exists: true } }, { lastReceipt: { $exists: true } }, { terminalReason: { $exists: true } }]
++            $or: [{ leaseToken: { $exists: true } }, { lastReceipt: { $exists: true } }, { terminalReason: { $exists: true } },
++              { 'meta.maxOutboxProtocol': MAX_RECEIPT_PROTOCOL }]
+           }, { projection: { _id: 1 }, maxTimeMS: 5000, timeoutMS: 5000,
+             readPreference: 'primary', readConcern: { level: 'majority' } });
+           if (fenced) throw new Error('MAX_OUTBOX_RECEIPT_STATE_REQUIRES_V1');
+@@ -242,10 +290,10 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
+           `MongoDB connect failed for backend=${config.key}: ${error instanceof Error ? error.name : 'UnknownError'}`
+         );
+         await this.safeCloseBackend(state);
+-        if (maxOutboxMode() === 'legacy'
++        if (['legacy', 'receipt-v1'].includes(maxOutboxMode())
+           && config.key === this.resolveBackendKeyForConnector(SupportConnectorRoute.MAX_BOT)) {
+-          throw new Error(error instanceof Error && error.message === 'MAX_OUTBOX_RECEIPT_STATE_REQUIRES_V1'
+-            ? error.message : 'MAX_OUTBOX_LEGACY_AUTHORITY_NOT_READY');
++          throw new Error(error instanceof Error && ['MAX_OUTBOX_RECEIPT_STATE_REQUIRES_V1', 'MAX_OUTBOX_UNIQUE_ID_REQUIRED'].includes(error.message)
++            ? error.message : maxOutboxMode() === 'receipt-v1' ? 'MAX_OUTBOX_AUTHORITY_NOT_READY' : 'MAX_OUTBOX_LEGACY_AUTHORITY_NOT_READY');
+         }
+         if (isMongoIndexReadinessError(error)) throw error;
+         if (error instanceof Error && error.message === 'MAX_OUTBOX_RECEIPT_STATE_REQUIRES_V1') throw error;
+@@ -260,6 +308,8 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
    }
 
    async onModuleDestroy(): Promise<void> {
@@ -249,7 +474,7 @@ index 8629aaa95d48fb82b6520e5be51948037e24790f..b72455ddf8b25706b289ddcd8549274e
      await Promise.all(
        Array.from(this.backendStates.values()).map((state) => this.safeCloseBackend(state))
      );
-@@ -453,6 +495,207 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
+@@ -453,6 +503,207 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
      }
    }
 
@@ -457,7 +682,7 @@ index 8629aaa95d48fb82b6520e5be51948037e24790f..b72455ddf8b25706b289ddcd8549274e
    async findDialogIdsByPhone(
      normalizedPhone: string,
      options: SupportDialogPhoneLookupOptions = {}
-@@ -843,7 +1086,7 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
+@@ -843,7 +1094,7 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
        return [];
      }
 
@@ -466,7 +691,7 @@ index 8629aaa95d48fb82b6520e5be51948037e24790f..b72455ddf8b25706b289ddcd8549274e
      if (activeBackends.length === 0) {
        return [];
      }
-@@ -859,7 +1102,8 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
+@@ -859,7 +1110,8 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
            {
              projection: { _id: 0 },
              sort: { createdAt: -1 },
@@ -476,7 +701,7 @@ index 8629aaa95d48fb82b6520e5be51948037e24790f..b72455ddf8b25706b289ddcd8549274e
            }
          )
          .toArray();
-@@ -910,7 +1154,61 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
+@@ -910,30 +1162,81 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
      }, 'persistResponseMetric');
    }
 
@@ -535,12 +760,73 @@ index 8629aaa95d48fb82b6520e5be51948037e24790f..b72455ddf8b25706b289ddcd8549274e
 +        .metadata(snapshot)).catch(() => this.logger.error('LEGACY_MAX_METADATA_WRITE_UNKNOWN'));
 +      return;
 +    }
++    if (isMaxConnector(command.connector) && maxOutboxMode() === 'receipt-v1') {
++      if (operation === 'enqueue') return this.enqueueMaxOutbox(command);
++      if (operation) throw new ConflictException({ code: 'LEGACY_MAX_CUSTODY_MODE_REQUIRED' });
++      // Reconciliation snapshots may move identifiers, never enqueue or resurrect delivery state.
++      const snapshot = structuredClone(command);
++      void this.trackedLegacyMax(() => this.collection<SupportOutboxCommand>(this.maxBackend(), 'outbox')
++        .updateOne({ id: snapshot.id, connector: snapshot.connector, ...maxOutboxEligible() },
++          { $set: { clientId: snapshot.clientId, dialogId: snapshot.dialogId } },
++          { writeConcern: { w: 'majority', j: true }, timeoutMS: MAX_OUTBOX_TIMEOUT_MS }))
++        .catch(() => this.logger.error('MAX_OUTBOX_METADATA_WRITE_UNCONFIRMED'));
++      return;
++    }
 +    if (operation) throw new ConflictException({ code: 'LEGACY_MAX_CUSTODY_MODE_REQUIRED' });
      supportDiagnostics.observe(command, 'max_outbox', { code: 'OUTCOME_UNKNOWN', connector: command.connector,
        outboxRef: supportDiagnostics.ref('outbox', command.id), leaseAttempt: command.attempts, outcome: 'outcome_unknown' });
      this.fireAndForget(async () => {
+-      const target = isMaxConnector(command.connector) && maxOutboxMode() === 'receipt-v1' ? this.maxBackend()
+-        : this.resolveTargetBackendForConnector(command.connector);
++      const target = this.resolveTargetBackendForConnector(command.connector);
+       if (!target) {
+         return;
+       }
+
+-      if (isMaxConnector(command.connector) && maxOutboxMode() === 'receipt-v1') {
+-        // Enqueue only. Stale process-local snapshots must never overwrite a lease/receipt.
+-        const inserted = await this.collection<SupportOutboxCommand>(target, 'outbox').updateOne(
+-          { id: command.id }, { $setOnInsert: command }, { upsert: true, timeoutMS: MAX_OUTBOX_TIMEOUT_MS }
+-        );
+-        // A matched no-op cannot attest persistence of a stale process-local snapshot.
+-        if (inserted.upsertedCount === 1) {
+-          supportDiagnostics.observe(command, 'max_outbox', { eventKind: 'operation_result', connector: command.connector,
+-            code: inserted.acknowledged === true ? 'DB_ACK' : 'DB_UNACKNOWLEDGED', acknowledged: inserted.acknowledged === true,
+-            matchedCount: inserted.matchedCount, modifiedCount: inserted.modifiedCount,
+-            outboxRef: supportDiagnostics.ref('outbox', command.id), outcome: inserted.acknowledged === true ? 'acknowledged' : 'outcome_unknown' });
+-        }
+-        return;
+-      }
+       const diagnosticWriteResult = await this.collection<SupportOutboxCommand>(target, 'outbox').updateOne(
+         { id: command.id }, { $set: command }, { upsert: true }
+       );
+@@ -961,6 +1264,15 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
+     return new MaxOutboxStore(this.collection<SupportOutboxCommand>(this.maxBackend(), 'outbox'));
+   }
+
++  enqueueMaxOutbox(command: SupportOutboxCommand): Promise<SupportOutboxCommand> {
++    const snapshot = structuredClone(command);
++    return this.trackedLegacyMax(() => this.maxOperation(() => this.maxStore().enqueue(snapshot)));
++  }
++
++  getMaxOutboxHealth(connector: SupportConnectorRoute) {
++    return this.maxOperation(() => this.maxStore().health(connector));
++  }
++
+   pullMaxOutbox(connector: SupportConnectorRoute, limit: number, leaseSec: number) {
+     const store = this.maxStore();
+     return this.maxOperation(() => store.pull(connector, limit, leaseSec));
+@@ -968,7 +1280,7 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
+
+   async hasMaxOutbox(id: string): Promise<boolean> {
+     const target = this.maxBackend();
+-    return this.maxOperation(async () => !!await this.collection<SupportOutboxCommand>(target, 'outbox').findOne({ id,
++    return this.maxOperation(async () => !!await this.collection<SupportOutboxCommand>(target, 'outbox').findOne({ id, ...maxOutboxEligible(),
+       connector: { $in: [SupportConnectorRoute.MAX_BOT, SupportConnectorRoute.MAX_ACADEMY_BOT] } },
+     { projection: { _id: 1 }, timeoutMS: MAX_OUTBOX_TIMEOUT_MS }));
+   }
 diff --git a/src/support/support.service.ts b/src/support/support.service.ts
-index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..5cbc1ac8747d838cfb51d827911a5a908c21804f 100644
+index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..91d791f2b55c011023c563c493a1e6408598be8f 100644
 --- a/src/support/support.service.ts
 +++ b/src/support/support.service.ts
 @@ -1,6 +1,9 @@
@@ -918,7 +1204,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..5cbc1ac8747d838cfb51d827911a5a90
      const now = Date.now();
      this.sweepOutboxAttemptLimit(connector, now);
      const leasedUntil = new Date(now + Math.max(5, leaseSec) * 1000).toISOString();
-@@ -1185,6 +1369,43 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -1185,6 +1369,53 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      return commands.map((command) => this.outbox.get(command.id) ?? command);
    }
 
@@ -928,9 +1214,19 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..5cbc1ac8747d838cfb51d827911a5a90
 +      this.outbox.set(durable.id, durable);
 +      return durable;
 +    }
++    if (isMaxConnector(command.connector) && maxOutboxMode() === 'receipt-v1') {
++      return this.persistence.enqueueMaxOutbox(command);
++    }
 +    this.outbox.set(command.id, command);
 +    this.persistence.persistOutboxCommand(command);
 +    return command;
++  }
++
++  getMaxOutboxHealth(connector: SupportConnectorRoute) {
++    if (!isMaxConnector(connector) || maxOutboxMode() !== 'receipt-v1') {
++      throw new ConflictException({ code: 'MAX_OUTBOX_RECEIPT_MODE_REQUIRED' });
++    }
++    return this.persistence.getMaxOutboxHealth(connector);
 +  }
 +
 +  private async pullLegacyMax(connector: SupportConnectorRoute, limit: number, leaseSec: number): Promise<SupportOutboxCommand[]> {
@@ -962,7 +1258,17 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..5cbc1ac8747d838cfb51d827911a5a90
    private sweepOutboxAttemptLimit(
      connector: SupportConnectorRoute,
      now: number
-@@ -1240,6 +1461,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -1228,7 +1459,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+       throw new ConflictException({ code: 'MAX_OUTBOX_RECEIPT_MODE_DISABLED' });
+     }
+     const known = this.outbox.get(id);
+-    if (maxOutboxMode() === 'receipt-v1' && (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id))) {
++    if (maxOutboxMode() === 'receipt-v1' && (containsMaxReceiptFields(receipt)
++      || (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id)))) {
+       const command = await this.persistence.acceptMaxReceipt(id, 'ack', receipt);
+       this.observeMaxReceipt(command);
+       return command;
+@@ -1240,6 +1472,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
        leasedUntil: undefined,
        lastError: undefined
      };
@@ -974,7 +1280,17 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..5cbc1ac8747d838cfb51d827911a5a90
      this.outbox.set(updated.id, updated);
      this.persistence.persistOutboxCommand(updated);
      supportDiagnostics.observe(updated, 'max_ack', { connector: updated.connector, code: 'OUTCOME_UNKNOWN',
-@@ -1264,6 +1490,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -1252,7 +1489,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+       throw new ConflictException({ code: 'MAX_OUTBOX_RECEIPT_MODE_DISABLED' });
+     }
+     const known = this.outbox.get(id);
+-    if (maxOutboxMode() === 'receipt-v1' && (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id))) {
++    if (maxOutboxMode() === 'receipt-v1' && (containsMaxReceiptFields(receipt)
++      || (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id)))) {
+       const command = await this.persistence.acceptMaxReceipt(id, 'fail', receipt);
+       this.observeMaxReceipt(command);
+       return command;
+@@ -1264,6 +1502,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
        leasedUntil: undefined,
        lastError: String(error ?? '').trim() || undefined
      };
@@ -988,7 +1304,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..5cbc1ac8747d838cfb51d827911a5a90
      this.outbox.set(updated.id, updated);
      this.persistence.persistOutboxCommand(updated);
      return updated;
-@@ -2426,11 +2659,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -2426,11 +2671,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      };
    }
 
@@ -1002,7 +1318,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..5cbc1ac8747d838cfb51d827911a5a90
      const context = this.buildQuickReplyMatchContext(
        dialog,
        connector,
-@@ -2454,7 +2687,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -2454,7 +2699,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      );
    }
 
@@ -1011,7 +1327,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..5cbc1ac8747d838cfb51d827911a5a90
      dialog: SupportDialog,
      clientMessage: SupportMessage,
      connector: SupportConnectorRoute,
-@@ -2476,7 +2709,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -2476,7 +2721,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
        isFirstClientMessage?: boolean;
        noClientReplyMinutes?: number;
      }
@@ -1020,7 +1336,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..5cbc1ac8747d838cfb51d827911a5a90
 
      const createdAt = new Date().toISOString();
      const attachments = this.normalizeMessageAttachments(rule.responseAttachments);
-@@ -2505,10 +2738,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -2505,10 +2750,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      this.appendMessage(dialog, serviceMessage);
      dialog.lastReplyConnector = connector;
      dialog.updatedAt = createdAt;
@@ -1033,7 +1349,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..5cbc1ac8747d838cfb51d827911a5a90
      }
 
      this.quickReplies.registerUsage(
-@@ -3121,10 +3353,12 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -3121,10 +3365,12 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
    private toDialogSummary(
      dialog: SupportDialog,
      connector?: SupportConnectorRoute,
@@ -1048,7 +1364,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..5cbc1ac8747d838cfb51d827911a5a90
      const currentDialogStationId = this.normalizeStationId(dialog.stationId);
      const currentDialogStationName = this.resolveStationName(
        dialog.stationName,
-@@ -3137,7 +3371,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -3137,7 +3383,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      const canWriteForUser = user ? this.isDialogWritableForUser(dialog, user) : true;
      const dialogSettings = this.normalizeDialogSettings(dialog.settings);
 
@@ -1057,7 +1373,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..5cbc1ac8747d838cfb51d827911a5a90
        const dialogMessages = this.messages.get(dialog.id) ?? [];
        const lastMessage =
          dialogMessages.length > 0 ? dialogMessages[dialogMessages.length - 1] : undefined;
-@@ -3321,7 +3555,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -3321,7 +3567,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      };
    }
 
@@ -1066,7 +1382,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..5cbc1ac8747d838cfb51d827911a5a90
      const rawDialog = dialog as unknown as Record<string, unknown>;
      const legacyChannels = this.readStringArray(rawDialog['channels']);
      const legacyPrimaryPhone = this.normalizePhone(this.readStringValue(rawDialog['primaryPhone']));
-@@ -3364,9 +3598,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -3364,9 +3610,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      );
      const shouldRebuildUnreadCount =
        !hasStoredUnreadCount || !Number.isFinite(parsedUnreadCount);
@@ -1078,7 +1394,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..5cbc1ac8747d838cfb51d827911a5a90
        this.dialogsNeedingUnreadRebuild.delete(dialog.id);
      }
      const resolvedUnreadCount = shouldRebuildUnreadCount
-@@ -5267,7 +5501,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5267,7 +5513,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
    private async findRelatedDialogsForHistory(
      dialog: SupportDialog,
@@ -1088,7 +1404,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..5cbc1ac8747d838cfb51d827911a5a90
    ): Promise<SupportDialog[]> {
      const related = new Map<string, SupportDialog>();
      related.set(dialog.id, dialog);
-@@ -5283,7 +5518,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5283,7 +5530,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
        return [dialog];
      }
 
@@ -1097,7 +1413,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..5cbc1ac8747d838cfb51d827911a5a90
        for (const phone of phones) {
          try {
            const candidateIds = await this.persistence.findDialogIdsByPhone(phone, {
-@@ -5341,14 +5576,16 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5341,14 +5588,16 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      user: RequestUser,
      beforeTs: number,
      limit: number,
@@ -1116,7 +1432,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..5cbc1ac8747d838cfb51d827911a5a90
          })
        )
      );
-@@ -5365,13 +5602,15 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5365,13 +5614,15 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
        limit: number;
        before?: string;
        beforeTs: number;
@@ -1133,7 +1449,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..5cbc1ac8747d838cfb51d827911a5a90
          });
          if (persisted.length > 0) {
            const filteredPersisted = persisted.filter((message) =>
-@@ -5382,6 +5621,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5382,6 +5633,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
              : filteredPersisted.slice(filteredPersisted.length - options.limit);
          }
        } catch (error) {
@@ -1143,7 +1459,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..5cbc1ac8747d838cfb51d827911a5a90
          this.logger.error(`Support service messages lookup failed: ${String(error)}`);
        }
      }
-@@ -5508,7 +5750,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5508,7 +5762,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
    }
 
    private buildSummaryClientDisplayName(
@@ -1152,7 +1468,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..5cbc1ac8747d838cfb51d827911a5a90
      dialog: SupportDialog
    ): string | undefined {
      return this.selectDialogTitleCandidate(
-@@ -5520,7 +5762,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5520,7 +5774,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
    }
 
    private buildSummaryDialogSubject(

@@ -44,19 +44,21 @@ if (existsSync(sourceBrandingDir)) {
 // The supplied font binaries remain build inputs, not arbitrary runtime binaries.
 // Ship one self-contained, locally rendered asset pack, with no Claude/CDN calls.
 const templatesDir = join(rootDir, 'assets', 'community-results-templates');
-const assets = { version: 'vnd-results-templates-v1', html: {}, resources: {} };
+const assets = { version: 'vnd-results-figma-v2', html: {}, resources: {} };
 for (const name of readdirSync(join(templatesDir, 'html')).sort()) {
-  if (!/^(01_klassika|02_temnaya_arena|03_podium|04_tablo|05_oblozhka)_(start|rokot|smash)\.html$/.test(name)) {
+  if (!/^(figma)_(start|rokot|smash)\.html$/.test(name)) {
     throw new Error('Unexpected community results template: ' + name);
   }
   const html = readFileSync(join(templatesDir, 'html', name), 'utf8');
   if (/<script|\son\w+=|https?:\/\//i.test(html)) throw new Error('Template must be static and local: ' + name);
   assets.html[name.replace('.html', '')] = html;
 }
-if (Object.keys(assets.html).length !== 15) throw new Error('Expected fifteen community results templates');
-for (const [directory, extension, mime] of [['fonts', '.ttf', 'font/ttf'], ['img', '.svg', 'image/svg+xml']]) {
+if (Object.keys(assets.html).length !== 3) throw new Error('Expected three community results templates');
+const mimeTypes = {'.ttf': 'font/ttf', '.woff': 'font/woff', '.woff2': 'font/woff2', '.svg': 'image/svg+xml'};
+for (const directory of ['fonts', 'img']) {
   for (const name of readdirSync(join(templatesDir, directory)).sort()) {
-    if (!name.endsWith(extension)) throw new Error('Unexpected community results asset: ' + name);
+    const mime = mimeTypes[name.slice(name.lastIndexOf('.'))];
+    if (!mime || (directory === 'img') !== name.endsWith('.svg')) throw new Error('Unexpected community results asset: ' + name);
     assets.resources[directory + '/' + name] = 'data:' + mime + ';base64,' + readFileSync(join(templatesDir, directory, name)).toString('base64');
   }
 }

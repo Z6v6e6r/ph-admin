@@ -11,8 +11,10 @@ import {
   Patch,
   Post,
   Query,
-  UnauthorizedException
+  UnauthorizedException,
+  UseInterceptors
 } from '@nestjs/common';
+import { SupportMediaInterceptor } from '../support/support-media.interceptor';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Permissions } from '../common/rbac/permissions.decorator';
@@ -96,6 +98,7 @@ interface MessageUpdatesResponse {
 }
 
 @Controller('messenger')
+@UseInterceptors(SupportMediaInterceptor)
 @Roles(
   Role.SUPER_ADMIN,
   Role.SUPPORT,
@@ -759,7 +762,7 @@ export class MessengerController {
     user: RequestUser
   ): Promise<ChatMessage> {
     try {
-      return this.messengerService.sendMessage(threadId, dto, user);
+      return await this.messengerService.sendMessageWithMedia(threadId, dto, user);
     } catch (error) {
       if (!(error instanceof NotFoundException)) {
         throw error;

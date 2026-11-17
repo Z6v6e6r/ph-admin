@@ -3,7 +3,6 @@ process.env.SUPPORT_MAX_OUTBOX_MODE = 'receipt-v1';
 import * as assert from 'node:assert/strict';
 import { randomUUID } from 'crypto';
 import { MongoClient, MongoOperationTimeoutError } from 'mongodb';
-import { supportDiagnostics } from '../src/support/support-diagnostics';
 import { SupportPersistenceService } from '../src/support/support-persistence.service';
 import { SupportController } from '../src/support/support.controller';
 import { SupportService } from '../src/support/support.service';
@@ -36,7 +35,7 @@ async function main() {
   const now = Date.parse('2026-01-01T00:00:00Z');
   const seed = (id: string, extra: Partial<Command> = {}): Command => ({ id,
     connector: Route.MAX_BOT, dialogId: 'synthetic-dialog', clientId: 'synthetic-client',
-    text: 'synthetic text', targetExternalChatId: 'synthetic-chat', createdAt: new Date(now).toISOString(),
+    meta: { maxOutboxProtocol: 'max-lease-v1' }, text: 'synthetic text', targetExternalChatId: 'synthetic-chat', createdAt: new Date(now).toISOString(),
     status: Status.PENDING, attempts: 0, ...extra });
   const reset = async (...commands: Command[]) => { await collection.deleteMany({}); await collection.insertMany(commands); };
   const read = async (id = 'a') => (await collection.findOne({ id }))!;
@@ -97,29 +96,12 @@ async function main() {
     assert.equal((await new MaxOutboxStore(collection).pull(Route.MAX_BOT, 5, 60, now + 90_000)).length, 0);
     assert.equal((await read()).status, Status.SENT, 'Recreated store/restart must not resurrect SENT');
 
-    // Exercise the actual persistence enqueue against Mongo: a stale process snapshot cannot
-    // replace terminal state or emit a diagnostic ACK for a matched insert-only no-op.
-    const queued: Promise<void>[] = [], diagnostics: Record<string, unknown>[] = [];
-    const savedSink = (supportDiagnostics as any).sink;
-    (supportDiagnostics as any).sink = (event: Record<string, unknown>) => diagnostics.push(event);
-    try {
-      const persistence = Object.create(SupportPersistenceService.prototype) as SupportPersistenceService;
-      Object.assign(persistence, {
-        maxBackend: () => ({ config: { key: 'synthetic-max' }, db }),
-        collection: () => collection,
-        fireAndForget: (task: () => Promise<void>) => queued.push(task()),
-        deleteFromOtherBackends: () => assert.fail('MAX must never clean another backend')
-      });
-      const before = await read();
-      persistence.persistOutboxCommand(seed('a'));
-      await Promise.all(queued.splice(0));
-      assert.deepEqual(await read(), before, 'Stale enqueue cannot resurrect SENT');
-      assert.equal(diagnostics.filter(event => event.code === 'DB_ACK').length, 0);
-      persistence.persistOutboxCommand(seed('new-enqueue'));
-      await Promise.all(queued.splice(0));
-      assert.equal((await read('new-enqueue')).status, Status.PENDING);
-      assert.equal(diagnostics.filter(event => event.code === 'DB_ACK').length, 1);
-    } finally { (supportDiagnostics as any).sink = savedSink; }
+    // Explicit insert-only enqueue is awaited; stale reconciliation never restores state.
+    const before = await read();
+    await store.enqueue(seed('a'));
+    assert.deepEqual(await read(), before, 'Idempotent enqueue cannot resurrect SENT');
+    await store.enqueue(seed('new-enqueue'));
+    assert.equal((await read('new-enqueue')).status, Status.PENDING);
 
     await reset(seed('a'));
     let command = (await store.pull(Route.MAX_BOT, 1, 60, now))[0];

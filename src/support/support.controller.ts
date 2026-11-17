@@ -1,9 +1,10 @@
 import { MaxReceipt, isMaxConnector } from './max-outbox-store';
-import { maxOutboxMode } from '../common/release-capabilities';
+import { containsMaxReceiptFields, maxOutboxMode } from '../common/release-capabilities';
 import {
   BadRequestException,
   Body,
   Controller,
+  ConflictException,
   ForbiddenException,
   Get,
   Headers,
@@ -14,8 +15,10 @@ import {
   Post,
   Query,
   ServiceUnavailableException,
-  UnauthorizedException
+  UnauthorizedException,
+  UseInterceptors
 } from '@nestjs/common';
+import { SupportMediaInterceptor } from './support-media.interceptor';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role } from '../common/rbac/role.enum';
@@ -37,6 +40,7 @@ import {
 } from './support.types';
 
 @Controller('support')
+@UseInterceptors(SupportMediaInterceptor)
 export class SupportController {
   constructor(private readonly supportService: SupportService) {}
 
@@ -64,9 +68,11 @@ export class SupportController {
   @Post('dialogs/events')
   async ingestEvent(
     @Headers('x-integration-token') token: string | undefined,
-    @Body() dto: IngestSupportEventDto
+    @Body() dto: IngestSupportEventDto,
+    @Headers('x-support-media-token') mediaToken?: string
   ): Promise<SupportIngestEventResult> {
     this.assertIntegrationToken(token);
+    if (dto.attachments?.length) this.supportService.authorizeMediaIngest(dto, mediaToken ?? token);
     return this.supportService.ingestEvent(dto);
   }
 
@@ -294,6 +300,15 @@ export class SupportController {
     return this.supportService.getRuntimeDiagnostics(user);
   }
 
+  @Get('outbox/health')
+  getMaxOutboxHealth(
+    @Headers('x-integration-token') token: string | undefined,
+    @Query('connector', new ParseEnumPipe(SupportConnectorRoute)) connector: SupportConnectorRoute
+  ) {
+    this.assertMaxOutboxIntegrationToken(token);
+    return this.supportService.getMaxOutboxHealth(connector);
+  }
+
   @Get('outbox/pull')
   async pullOutbox(
     @Headers('x-integration-token') token: string | undefined,
@@ -303,7 +318,8 @@ export class SupportController {
     @Query('leaseSec', new ParseIntPipe({ optional: true })) leaseSec?: number,
     @Query('receiptProtocol') receiptProtocol?: string
   ): Promise<{ commands: SupportOutboxCommand[] }> {
-    this.assertIntegrationToken(token, maxOutboxMode() === 'receipt-v1' && isMaxConnector(connector));
+    if (maxOutboxMode() === 'receipt-v1' && isMaxConnector(connector)) this.assertMaxOutboxIntegrationToken(token);
+    else this.assertIntegrationToken(token);
     return {
       commands: await this.supportService.pullOutbox(connector, limit ?? 20, leaseSec ?? 30, receiptProtocol)
     };
@@ -315,7 +331,9 @@ export class SupportController {
     @Param('id') id: string,
     @Body() body: MaxReceipt = {}
   ): Promise<SupportOutboxCommand> {
-    this.assertIntegrationToken(token, maxOutboxMode() === 'receipt-v1' && body?.leaseToken !== undefined);
+    this.assertDedicatedReceiptShape(token, body);
+    if (maxOutboxMode() === 'receipt-v1' && containsMaxReceiptFields(body)) this.assertMaxOutboxIntegrationToken(token);
+    else this.assertIntegrationToken(token);
     return this.supportService.ackOutbox(id, body);
   }
 
@@ -325,7 +343,9 @@ export class SupportController {
     @Param('id') id: string,
     @Body() body: MaxReceipt & { error?: string; requeue?: boolean } = {}
   ): Promise<SupportOutboxCommand> {
-    this.assertIntegrationToken(token, maxOutboxMode() === 'receipt-v1' && body?.leaseToken !== undefined);
+    this.assertDedicatedReceiptShape(token, body);
+    if (maxOutboxMode() === 'receipt-v1' && containsMaxReceiptFields(body)) this.assertMaxOutboxIntegrationToken(token);
+    else this.assertIntegrationToken(token);
     return this.supportService.failOutbox(id, body?.error, body?.requeue !== false, body);
   }
 
@@ -339,6 +359,24 @@ export class SupportController {
       return;
     }
     throw new ForbiddenException('Invalid integration token');
+  }
+
+  private assertDedicatedReceiptShape(token: string | undefined, body: unknown): void {
+    const dedicated = String(process.env.SUPPORT_MAX_OUTBOX_INTEGRATION_TOKEN ?? '').trim();
+    const ingress = String(process.env.SUPPORT_INTEGRATION_TOKEN ?? '').trim();
+    if (maxOutboxMode() === 'receipt-v1' && dedicated && dedicated !== ingress
+      && token === dedicated && !containsMaxReceiptFields(body)) {
+      throw new ConflictException({ code: 'MAX_OUTBOX_RECEIPT_REQUIRED' });
+    }
+  }
+
+  private assertMaxOutboxIntegrationToken(token?: string): void {
+    // A dedicated queue credential does not change legacy ingress/lookup callers.
+    // Existing deployments with only SUPPORT_INTEGRATION_TOKEN remain compatible.
+    const expected = String(process.env.SUPPORT_MAX_OUTBOX_INTEGRATION_TOKEN
+      ?? process.env.SUPPORT_INTEGRATION_TOKEN ?? '').trim();
+    if (!expected) throw new ServiceUnavailableException({ code: 'MAX_OUTBOX_INTEGRATION_UNCONFIGURED' });
+    if (token !== expected) throw new ForbiddenException('Invalid integration token');
   }
 
   private parseOptionalBoolean(value: string | undefined): boolean | undefined {

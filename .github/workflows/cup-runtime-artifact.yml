@@ -2,10 +2,10 @@ name: CUP immutable runtime and recovery
 on:
   pull_request:
     branches: [main]
-    paths: ['src/**', 'client-sdk/**', 'deploy/recovery/**', 'scripts/prepare-cup-runtime-release.mjs', 'scripts/prepare-cup83-recovery-tree.py', 'test/cup-recovery*', 'test/cup-runtime-artifact-workflow.test.mjs', 'test/cup-notification-scenarios.test.mjs', 'test/viva-request-governor*.ts', 'package*.json', '.github/workflows/cup-runtime-artifact.yml']
+    paths: ['src/**', 'client-sdk/**', 'deploy/recovery/**', 'scripts/prepare-cup-runtime-release.mjs', 'scripts/lib/cup-max-recovery-closure.mjs', 'scripts/lib/cup-media-recovery-closure.mjs', 'test/support-media*', 'test/support-photo*', 'scripts/prepare-cup83-recovery-tree.py', 'test/cup-recovery*', 'test/cup-runtime-artifact-workflow.test.mjs', 'test/cup-notification-scenarios.test.mjs', 'test/viva-request-governor*.ts', 'package*.json', '.github/workflows/cup-runtime-artifact.yml']
   push:
     branches: [main]
-    paths: ['src/**', 'client-sdk/**', 'deploy/recovery/**', 'scripts/prepare-cup-runtime-release.mjs', 'scripts/prepare-cup83-recovery-tree.py', 'test/cup-recovery*', 'test/cup-runtime-artifact-workflow.test.mjs', 'test/cup-notification-scenarios.test.mjs', 'test/viva-request-governor*.ts', 'package*.json', '.github/workflows/cup-runtime-artifact.yml']
+    paths: ['src/**', 'client-sdk/**', 'deploy/recovery/**', 'scripts/prepare-cup-runtime-release.mjs', 'scripts/lib/cup-max-recovery-closure.mjs', 'scripts/lib/cup-media-recovery-closure.mjs', 'test/support-media*', 'test/support-photo*', 'scripts/prepare-cup83-recovery-tree.py', 'test/cup-recovery*', 'test/cup-runtime-artifact-workflow.test.mjs', 'test/cup-notification-scenarios.test.mjs', 'test/viva-request-governor*.ts', 'package*.json', '.github/workflows/cup-runtime-artifact.yml']
 permissions:
   contents: read
 jobs:
@@ -34,17 +34,19 @@ jobs:
         with:
           node-version: 22.13.1
           cache: npm
-      - name: Verify runtime workflow identity regressions
-        run: node --test test/cup-runtime-artifact-workflow.test.mjs
-      - name: Verify offline recovery tree failures
-        run: PYTHONDONTWRITEBYTECODE=1 python3 test/cup-recovery-tree.test.py -v
-      - name: Verify admin notification scenario compatibility
-        run: node --test test/cup-notification-scenarios.test.mjs
       - run: npm ci --ignore-scripts
       - name: Verify bounded Viva request governor and retry ownership
         run: |
           npx ts-node test/viva-request-governor.test.ts
           npx ts-node test/viva-request-governor-timeout.test.ts
+      - name: Verify runtime workflow identity regressions
+        run: node --test test/cup-runtime-artifact-workflow.test.mjs
+      - name: Verify offline recovery tree failures
+        run: PYTHONDONTWRITEBYTECODE=1 python3 test/cup-recovery-tree.test.py -v
+      - name: Verify exact recovery source and compiled closure boundaries
+        run: node --test test/cup-recovery-closure.test.mjs test/support-media-recovery-closure.test.mjs
+      - name: Verify admin notification scenario compatibility
+        run: node --test test/cup-notification-scenarios.test.mjs
       - name: Start owned disposable Mongo for recovery proof
         run: |
           docker run --detach --name cup-runtime-rehearsal-mongo --publish 127.0.0.1:27017:27017 mongo:7.0 --bind_ip_all

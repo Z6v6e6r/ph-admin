@@ -36,6 +36,12 @@ The artifact manifest records candidate commit, file hashes, previous file hashe
 archive contents and successful checks. Temporary incident Inspector scripts and
 production logs are not part of this fix or artifact.
 
+The server-147 overlay is frozen at candidate source commit
+`ea35d153c1b8485b21aaab1bc146812c384ac50e`, derived from that active base. The PR
+branch subsequently merges current main only for review/CI compatibility. Its full
+CI runtime artifact is a different artifact and must not replace the active server
+as part of this narrow fix. Use the three-file overlay and its recorded base hashes.
+
 ## Rehearsal and validation
 
 - `npx ts-node test/viva-request-governor-timeout.test.ts`: timeout despite ignored

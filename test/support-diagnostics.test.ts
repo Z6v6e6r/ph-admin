@@ -33,16 +33,19 @@ async function main(): Promise<void> {
   for (const acknowledged of [true, false]) for (const rejectWrite of [true, false]) for (const isNew of [true, false]) {
     const isMax = connector !== SupportConnectorRoute.TG_BOT;
     const events: Record<string, unknown>[] = [], effects: string[] = [], tasks: Promise<void>[] = [];
+    const updates: { filter: any; update: Record<string, unknown>; options: any }[] = [];
     const saved = (supportDiagnostics as unknown as { sink: (e: Record<string, unknown>) => void }).sink;
     (supportDiagnostics as unknown as { sink: (e: Record<string, unknown>) => void }).sink = e => events.push(e);
     const persistence = Object.create(SupportPersistenceService.prototype) as SupportPersistenceService;
     Object.assign(persistence, {
+      legacyMaxWrites: new Set(), legacyMaxClosing: false, legacyMaxWriteFailures: 0,
+      logger: { error: () => {} },
       fireAndForget: (task: () => Promise<void>) => { tasks.push(task().catch(() => {})); },
       maxBackend: () => ({ config: { key: 'synthetic-max' } }),
       resolveTargetBackendForConnector: () => { assert(!isMax, 'MAX must not use fallback routing'); return { config: { key: 'synthetic' } }; },
-      collection: () => ({ updateOne: async (_filter: unknown, update: Record<string, unknown>) => {
+      collection: () => ({ updateOne: async (filter: any, update: Record<string, unknown>, options: any) => {
         effects.push('update');
-        assert.deepEqual(Object.keys(update), [isMax ? '$setOnInsert' : '$set']);
+        updates.push({ filter, update, options });
         if (rejectWrite) throw Error('private');
         return { acknowledged, matchedCount: isNew ? 0 : 1, modifiedCount: 0, upsertedCount: isNew ? 1 : 0 };
       } }),
@@ -51,10 +54,19 @@ async function main(): Promise<void> {
     const command = { id: 'synthetic-outbox', connector, status: SupportOutboxStatus.LEASED, attempts: 2 } as SupportOutboxCommand;
     persistence.persistOutboxCommand(command);
     assert(events.every(e => e.code !== 'DB_ACK'));
-    await Promise.all(tasks);
+    await Promise.allSettled([...tasks, ...(persistence as any).legacyMaxWrites]);
+    const { filter, update, options } = updates[0];
+    assert.deepEqual(Object.keys(update), ['$set']);
+    if (isMax) {
+      assert.equal(options.upsert, undefined, 'Metadata cannot enqueue or resurrect a command');
+      assert.deepEqual(Object.keys(update.$set as object).sort(), ['clientId', 'dialogId']);
+      assert.equal(filter['meta.maxOutboxProtocol'], 'max-lease-v1');
+      assert.deepEqual(filter['meta.legacyMaxArchive'], { $exists: false });
+      assert.deepEqual(filter['meta.legacyMaxRestartCustody'], { $exists: false });
+    }
     assert.equal(effects.filter(e => e === 'update').length, 1);
     assert.equal(effects.filter(e => e === 'cleanup').length, rejectWrite || isMax ? 0 : 1);
-    assert.equal(events.filter(e => e.code === 'DB_ACK').length, isMax && !rejectWrite && acknowledged && isNew ? 1 : 0);
+    assert.equal(events.filter(e => e.code === 'DB_ACK').length, 0, 'Metadata writes never attest delivery or enqueue');
     assert(!JSON.stringify(events).includes('synthetic-outbox'));
     (supportDiagnostics as unknown as { sink: (e: Record<string, unknown>) => void }).sink = saved;
   }

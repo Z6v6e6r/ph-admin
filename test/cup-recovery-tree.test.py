@@ -102,6 +102,7 @@ class RecoveryTests(unittest.TestCase):
 
     def test_schema_scope_and_duplicate_delta_rejected(self):
         for key, value in [('schema', 'PHAB_CUP_PAYMENT_SAFE_RECOVERY_V1'), ('baselineCommit', '0' * 40),
+                           ('derivedSourceTree', '0' * 40), ('patchSha256', '0' * 64),
                            ('firstRestartCustodyProven', True), ('persistenceSyncIntervalMs', False),
                            ('automaticHydrationAllowed', True), ('delta', [self.manifest['delta'][0]] * 3)]:
             with self.subTest(key=key), patch.dict(self.manifest, {key: value}):

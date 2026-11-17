@@ -1,7 +1,7 @@
 name: MAX outbox receipts
 on:
   pull_request:
-    paths: ['src/support/**', 'scripts/lib/cup-legacy-max-snapshot.mjs', 'scripts/lib/cup83-*.mjs', 'test/cup-legacy-max-snapshot.test.mjs', 'test/cup83-*.test.mjs', 'test/cup83-inventory-budget-child.mjs', 'test/*outbox*', 'test/legacy-max-restart-custody.test.ts', 'test/support-web-history-custody.test.ts', 'test/support-dialog-list-readthrough*.ts', 'test/support-cold-reply.test.ts', 'test/support-client-resolve.test.ts', 'test/support-contact-identity-isolation.test.ts', 'test/support-diagnostics.test.ts', 'package*.json', 'tsconfig*.json', '.github/workflows/max-outbox-receipts.yml']
+    paths: ['src/support/**', 'src/messenger/**', 'client-sdk/**', 'test/support-media*', 'test/support-photo*', 'scripts/lib/cup-media-recovery-closure.mjs', 'deploy/recovery/support-media-custody-83.patch', 'scripts/lib/cup-legacy-max-snapshot.mjs', 'scripts/lib/cup83-*.mjs', 'scripts/lib/cup3cc-max-*.mjs', 'test/cup3cc-max-*.test.mjs', 'test/cup-legacy-max-snapshot.test.mjs', 'test/cup83-*.test.mjs', 'test/cup83-inventory-budget-child.mjs', 'test/*outbox*', 'test/legacy-max-restart-custody.test.ts', 'test/support-web-history-custody.test.ts', 'test/support-dialog-list-readthrough*.ts', 'test/support-cold-reply.test.ts', 'test/support-client-resolve.test.ts', 'test/support-contact-identity-isolation.test.ts', 'test/support-diagnostics.test.ts', 'package*.json', 'tsconfig*.json', '.github/workflows/max-outbox-receipts.yml']
   push:
     branches: ['codex/max-retry-receipts']
 permissions:
@@ -11,11 +11,14 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: npm run test:support-photos
       - name: Start isolated Mongo with physical timeout failpoints
         run: |
           docker run --detach --name phab-max-receipts-mongo --publish 127.0.0.1:27017:27017 mongo:7.0 --bind_ip_all --setParameter enableTestCommands=1
@@ -31,6 +34,8 @@ jobs:
       - run: npm run build
       - name: Offline diagnostic snapshot provenance and compiled importer compatibility
         run: node --test test/cup-legacy-max-snapshot.test.mjs test/cup83-*.test.mjs
+      - name: CUP3cc terminal MAX admission fence and private custody
+        run: node --test test/cup3cc-max-cutover.test.mjs test/cup3cc-max-containment.test.mjs
       - name: Compatibility defaults and guarded feature UI
         run: |
           npx ts-node test/release-capabilities.test.ts
@@ -53,6 +58,8 @@ jobs:
           npx ts-node test/max-outbox-release-compat.mongodb.test.ts mongodb://127.0.0.1:27017
       - run: npm run test:support-outbox-max-attempts
       - run: npm run test:support-max-receipts -- mongodb://127.0.0.1:27017
+      - name: Durable acceptance, restart recovery and immutable archive fence
+        run: npm run test:support-max-durable -- mongodb://127.0.0.1:27017
       - name: Remove owned Mongo fixture
         if: always()
         run: docker rm --force --volumes phab-max-receipts-mongo

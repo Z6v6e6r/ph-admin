@@ -10,6 +10,7 @@ export interface MaxFailure {
 const codes = new Set(['bot.blocked', 'bot.not.started', 'bot.removed', 'chat.not.found',
   'dialog.not.found', 'dialog.suspended', 'access.denied', 'forbidden', 'invalid_input']);
 export const MAX_DELIVERY_ATTEMPTS = 5;
+export const MAX_LOCAL_DEFERRALS = 20;
 export function maxFailure(value: unknown, now: number): MaxFailure {
   const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const status = typeof raw.status === 'number' && Number.isInteger(raw.status)

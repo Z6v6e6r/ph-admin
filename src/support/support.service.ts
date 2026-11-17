@@ -5,6 +5,8 @@ import { maxOutboxMode, containsMaxReceiptFields } from '../common/release-capab
 import { MaxReceipt, isMaxConnector } from './max-outbox-store';
 import { legacyMaxHeld } from './legacy-max-custody';
 import { supportDiagnostics } from './support-diagnostics';
+import { SupportMediaService } from './support-media.service';
+import { authorizeSupportMedia } from './support-media-auth';
 import {
   BadRequestException,
   ConflictException,
@@ -161,7 +163,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   constructor(
     private readonly persistence: SupportPersistenceService,
     private readonly connectorRegistry: SupportConnectorRegistry,
-    private readonly quickReplies: QuickRepliesService
+    private readonly quickReplies: QuickRepliesService,
+    private readonly media: SupportMediaService = new SupportMediaService()
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -197,6 +200,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const startedAt = process.hrtime.bigint();
     const memoryBefore = this.captureMemoryUsageSnapshot();
     const state = await this.persistence.loadState();
+    const persistedClientIds = new Set(state.clients.map(client => client.id));
     this.clients.clear();
     this.dialogs.clear();
     this.messages.clear();
@@ -226,7 +230,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
       this.ensureClientAndDialogFromMessage(
         normalizedMessage,
-        message as unknown as Record<string, unknown>
+        message as unknown as Record<string, unknown>,
+        persistedClientIds.has(normalizedMessage.clientId)
       );
 
       const existing = this.messages.get(normalizedMessage.dialogId) ?? [];
@@ -537,8 +542,27 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     return Math.min(Math.max(1, Math.floor(rawValue)), 500000);
   }
 
+  authorizeMediaIngest(dto: IngestSupportEventDto, token?: string): void {
+    if (!this.media.managedIngestEnabled) return;
+    const connector = this.resolveIncomingConnector(dto);
+    if (this.isMaxConnector(connector) || this.isLkConnector(connector)) authorizeSupportMedia(token);
+  }
+
   async ingestEvent(dto: IngestSupportEventDto): Promise<SupportIngestEventResult> {
+    // References belong to storage/read paths only. A raw ingress must never persist a forged
+    // reference that later prevents reading the whole history page, even with media disabled.
+    if (Array.isArray(dto.attachments) && dto.attachments.some(a => a &&
+        (/^cup-media:/i.test(String(a.url ?? '').trim()) ||
+          Object.prototype.hasOwnProperty.call(a, 'mediaRef') || Object.prototype.hasOwnProperty.call(a, 'mediaScope')))) {
+      throw new BadRequestException({ code: 'SUPPORT_MEDIA_INPUT_INVALID', message: 'Прикрепите фото заново с устройства.' });
+    }
     const normalizedDto = this.normalizeIncomingEvent(dto);
+    if (dto.attachments?.length && this.media.managedIngestEnabled &&
+        (this.isMaxConnector(normalizedDto.connector) || this.isLkConnector(normalizedDto.connector))) {
+      normalizedDto.attachments = await this.media.prepare(dto.attachments,
+        JSON.stringify([normalizedDto.connector, normalizedDto.externalUserId, normalizedDto.externalChatId]),
+        this.isMaxConnector(normalizedDto.connector));
+    }
     supportDiagnostics.observe(dto, 'max_ingress', { connector: normalizedDto.connector,
       targetSource: 'inbound', targetPresent: Boolean(normalizedDto.externalChatId || normalizedDto.externalUserId),
       targetType: normalizedDto.externalChatId ? 'chat' : normalizedDto.externalUserId ? 'user' : 'UNKNOWN',
@@ -593,7 +617,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       normalizedPhone,
       normalizedEmail,
       createdAt,
-      ownedContact ? identityOwner.id : undefined
+      // A validated channel owner outranks incidental phone/email matches for
+      // every event, including text. Never merge historical profiles on send.
+      identityOwner?.id
     );
 
     const selectedStationId = this.normalizeStationId(normalizedDto.selectedStationId);
@@ -1176,7 +1202,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       const context = await this.persistence.loadReplyContext(dialogId);
       if (!context) throw new NotFoundException(`Support dialog ${dialogId} not found`);
       // An inbound event or another reply may have warmed the cache while Mongo was read.
-      // No await is allowed between choosing current objects and the existing synchronous send.
+      // Photo replies perform another bounded binding read after materialization; text keeps the
+      // existing synchronous path between choosing the cached objects and appending the reply.
       const dialog = this.dialogs.get(dialogId) ?? this.normalizeLoadedDialog(context.dialog);
       if (dialog.clientId !== context.client.id) {
         throw new ServiceUnavailableException({ code: 'SUPPORT_REPLY_CONTEXT_CONFLICT' });
@@ -1223,7 +1250,28 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     this.ensureReplyRecipient(this.clients.get(dialog.clientId), connector);
     const createdAt = new Date().toISOString();
     const senderRole = this.resolveSenderRole(user.roles);
-    const attachments = this.normalizeMessageAttachments(dto.attachments);
+    const binding = supportClientReplyBinding(this.clients.get(dialog.clientId)!);
+    const dialogBinding = supportDialogHistoryBinding(dialog);
+    const attachments = dto.attachments?.length
+      ? await this.media.prepare(dto.attachments, JSON.stringify([dialog.clientId, dialog.id])) : [];
+    if (attachments.length && this.persistence.isEnabled()) {
+      const fresh = await this.persistence.loadReplyContext(dialogId);
+      if (!fresh || supportClientReplyBinding(fresh.client) !== binding ||
+          supportDialogHistoryBinding(this.normalizeLoadedDialog(fresh.dialog)) !== dialogBinding ||
+          fresh.dialog.status === SupportDialogStatus.CLOSED) {
+        throw new ConflictException({ code: 'SUPPORT_REPLY_CONTEXT_CONFLICT' });
+      }
+    }
+    // S3 and image decoding yield. Recheck the reply authority and recipient after those awaits.
+    const currentDialog = this.getDialogOrThrow(dialogId);
+    this.ensureDialogAccess(currentDialog, user);
+    if (currentDialog !== dialog || currentDialog.status === SupportDialogStatus.CLOSED || !this.isDialogActiveForUser(currentDialog, user) ||
+        supportDialogHistoryBinding(currentDialog) !== dialogBinding ||
+        supportClientReplyBinding(this.clients.get(dialog.clientId)!) !== binding) {
+      throw new ConflictException({ code: 'SUPPORT_REPLY_CONTEXT_CONFLICT' });
+    }
+    this.resolveAllowedReplyConnector(dialog, user, connector);
+    this.ensureReplyRecipient(this.clients.get(dialog.clientId), connector);
     const text = String(dto.text ?? '').trim();
     const lastClientMessage = this.getLatestClientMessage(dialog.id);
     this.ensureMessageHasBody(text, attachments);
@@ -1375,9 +1423,19 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       this.outbox.set(durable.id, durable);
       return durable;
     }
+    if (isMaxConnector(command.connector) && maxOutboxMode() === 'receipt-v1') {
+      return this.persistence.enqueueMaxOutbox(command);
+    }
     this.outbox.set(command.id, command);
     this.persistence.persistOutboxCommand(command);
     return command;
+  }
+
+  getMaxOutboxHealth(connector: SupportConnectorRoute) {
+    if (!isMaxConnector(connector) || maxOutboxMode() !== 'receipt-v1') {
+      throw new ConflictException({ code: 'MAX_OUTBOX_RECEIPT_MODE_REQUIRED' });
+    }
+    return this.persistence.getMaxOutboxHealth(connector);
   }
 
   private async pullLegacyMax(connector: SupportConnectorRoute, limit: number, leaseSec: number): Promise<SupportOutboxCommand[]> {
@@ -1449,7 +1507,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       throw new ConflictException({ code: 'MAX_OUTBOX_RECEIPT_MODE_DISABLED' });
     }
     const known = this.outbox.get(id);
-    if (maxOutboxMode() === 'receipt-v1' && (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id))) {
+    if (maxOutboxMode() === 'receipt-v1' && (containsMaxReceiptFields(receipt)
+      || (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id)))) {
       const command = await this.persistence.acceptMaxReceipt(id, 'ack', receipt);
       this.observeMaxReceipt(command);
       return command;
@@ -1478,7 +1537,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       throw new ConflictException({ code: 'MAX_OUTBOX_RECEIPT_MODE_DISABLED' });
     }
     const known = this.outbox.get(id);
-    if (maxOutboxMode() === 'receipt-v1' && (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id))) {
+    if (maxOutboxMode() === 'receipt-v1' && (containsMaxReceiptFields(receipt)
+      || (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id)))) {
       const command = await this.persistence.acceptMaxReceipt(id, 'fail', receipt);
       this.observeMaxReceipt(command);
       return command;
@@ -2308,7 +2368,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     normalizedPhone: string | undefined,
     normalizedEmail: string | undefined,
     createdAt: string,
-    ownedContactClientId?: string
+    identityOwnerClientId?: string
   ): SupportClientProfile {
     const resolvedDisplayName = this.resolveIncomingDisplayName(dto);
     const matchingIds = new Set<string>();
@@ -2351,9 +2411,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       }
     );
 
-    if (ownedContactClientId) {
+    if (identityOwnerClientId) {
       matchingIds.clear();
-      matchingIds.add(ownedContactClientId);
+      matchingIds.add(identityOwnerClientId);
     }
 
     let client: SupportClientProfile;
@@ -2712,7 +2772,29 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   ): Promise<SupportOutboxCommand | undefined> {
 
     const createdAt = new Date().toISOString();
-    const attachments = this.normalizeMessageAttachments(rule.responseAttachments);
+    let attachments = this.normalizeMessageAttachments(rule.responseAttachments);
+    if (attachments.length && this.isMaxConnector(connector) && this.media.managedIngestEnabled) {
+      const binding = supportClientReplyBinding(this.clients.get(dialog.clientId)!);
+      const dialogBinding = supportDialogHistoryBinding(dialog);
+      try {
+        attachments = await this.media.prepareTemplate(rule.responseAttachments, JSON.stringify([dialog.clientId, dialog.id]));
+        if (this.persistence.isEnabled()) {
+          const fresh = await this.persistence.loadReplyContext(dialog.id);
+          if (!fresh || fresh.dialog.status === SupportDialogStatus.CLOSED ||
+              supportClientReplyBinding(fresh.client) !== binding ||
+              supportDialogHistoryBinding(this.normalizeLoadedDialog(fresh.dialog)) !== dialogBinding) throw new Error('context changed');
+        }
+        if (this.dialogs.get(dialog.id) !== dialog || dialog.status === SupportDialogStatus.CLOSED ||
+            supportDialogHistoryBinding(dialog) !== dialogBinding ||
+            supportClientReplyBinding(this.clients.get(dialog.clientId)!) !== binding) throw new Error('context changed');
+        this.ensureReplyRecipient(this.clients.get(dialog.clientId), connector);
+      } catch {
+        // The incoming message is already accepted. Preserve its receipt and history; do not
+        // send a caption without its image or retry an uncertain outgoing operation.
+        this.logger.warn('SUPPORT_AUTO_REPLY_MEDIA_UNAVAILABLE');
+        return undefined;
+      }
+    }
     const serviceMessage: SupportMessage = {
       id: randomUUID(),
       dialogId: dialog.id,
@@ -3839,7 +3921,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
   private ensureClientAndDialogFromMessage(
     message: SupportMessage,
-    rawMessage: Record<string, unknown>
+    rawMessage: Record<string, unknown>,
+    hasPersistedProfile: boolean
   ): void {
     const rawClientSnapshot = this.readRecord(rawMessage['clientSnapshot']);
     const snapshotDisplayName = this.readStringValue(rawClientSnapshot?.['displayName']);
@@ -3885,22 +3968,20 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       };
       this.clients.set(client.id, client);
     } else {
-      current.authStatus =
-        current.authStatus === SupportClientAuthStatus.VERIFIED || authStatus === SupportClientAuthStatus.VERIFIED
-          ? SupportClientAuthStatus.VERIFIED
-          : SupportClientAuthStatus.UNVERIFIED;
+      // Stored profiles own their current authentication and channel bindings.
+      // Message snapshots describe history, including bindings later removed by
+      // a repair. Hydration must not re-grant them or expand contact ownership.
       current.displayName = current.displayName ?? snapshotDisplayName ?? message.senderName;
-      current.primaryPhone = current.primaryPhone ?? snapshotPhone ?? message.phone;
-      current.phones = this.mergeStrings(
-        current.phones,
-        [snapshotPhone, message.phone].filter(Boolean) as string[]
-      );
-      current.emails = this.mergeStrings(
-        current.emails,
-        [snapshotEmail, message.email].filter(Boolean) as string[]
-      );
-      if (identity) {
-        current.identities = this.upsertIdentity(current.identities, identity);
+      if (!hasPersistedProfile) {
+        // Preserve the legacy reconstruction path for orphaned history only.
+        current.authStatus =
+          current.authStatus === SupportClientAuthStatus.VERIFIED || authStatus === SupportClientAuthStatus.VERIFIED
+            ? SupportClientAuthStatus.VERIFIED
+            : SupportClientAuthStatus.UNVERIFIED;
+        current.primaryPhone = current.primaryPhone ?? snapshotPhone ?? message.phone;
+        current.phones = this.mergeStrings(current.phones, [snapshotPhone, message.phone].filter(Boolean) as string[]);
+        current.emails = this.mergeStrings(current.emails, [snapshotEmail, message.email].filter(Boolean) as string[]);
+        if (identity) current.identities = this.upsertIdentity(current.identities, identity);
       }
       current.currentStationId = current.currentStationId ?? message.stationId;
       current.currentStationName = current.currentStationName ?? message.stationName;
@@ -5392,7 +5473,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       url,
       name,
       mimeType,
-      size
+      size,
+      ...(typeof source['mediaRef'] === 'string' ? { mediaRef: source['mediaRef'] } : {}),
+      ...(typeof source['mediaScope'] === 'string' ? { mediaScope: source['mediaScope'] } : {})
     };
   }
 
@@ -5403,6 +5486,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
 
     if (type === MessageAttachmentType.IMAGE) {
+      if (/^cup-media:v1:[A-Za-z0-9_-]+\.[a-f0-9]{64}$/.test(normalizedUrl)) return true;
       if (/^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\r\n]+$/i.test(normalizedUrl)) {
         return true;
       }
