@@ -1,3 +1,4 @@
+import { withCanonicalTournamentActor } from './tournament-admission-fixture';
 import * as assert from 'node:assert/strict';
 import { MongoWriteConcernError } from 'mongodb';
 import { TournamentsService } from '../src/tournaments/tournaments.service';
@@ -93,13 +94,13 @@ function createService(
   tournament: CustomTournament,
   readAdminBookings: () => Record<string, unknown>[] = () => []
 ): TournamentsService {
-  return new TournamentsService(
+  return withCanonicalTournamentActor(new TournamentsService(
     { listTournaments: async () => [] } as never,
     { listTournaments: async () => [] } as never,
     { getTournamentResults: async () => { throw new Error('Not used in test'); } } as never,
     {
       isEnabled: () => true,
-    readPublicAdmissionRule: async () => ({ gender: tournament.gender, updatedAt: tournament.updatedAt }),
+    readPublicAdmissionRule: async () => ({ gender: tournament.gender, updatedAt: tournament.updatedAt, accessLevels: tournament.accessLevels, levelTolerance: tournament.levelTolerance }),
       findCustomTournamentById: async (id: string) =>
         id === tournament.id ? tournament : null,
       findCustomTournamentBySlug: async (slug: string) =>
@@ -310,7 +311,7 @@ function createService(
       listExerciseBookings: async () => readAdminBookings(),
       lookupClientCabinetByPhone: async () => null
     } as never
-  );
+  ));
 }
 
 function buildSubscriptions(): TournamentClientSubscription[] {
@@ -379,7 +380,7 @@ async function verifyWriteConcernFailures(baseFetch: typeof fetch): Promise<void
       const input = {
         name: 'Synthetic acknowledgment test',
         phone: '79990008701',
-        levelLabel: 'C',
+        levelLabel: '3.25',
         selectedPurchaseOptionId: 'catalog-one-time',
         subscriptions: [],
         successUrl: 'https://padlhub.ru/padel_torneos?paymentsuccess=true',
@@ -524,13 +525,13 @@ async function main(): Promise<void> {
     authSource: 'headers',
     name: 'Игрок',
     phone: '+7 999 000-11-22',
-    levelLabel: 'B',
+    levelLabel: '4.35',
     onboardingCompleted: true,
     subscriptions: buildSubscriptions()
   });
   assert.equal(disallowedLevelFlow.code, 'LEVEL_NOT_ALLOWED');
-  assert.equal(disallowedLevelFlow.waitlistAllowed, true);
-  assert.match(disallowedLevelFlow.message, /D\+ - C/);
+  assert.equal(disallowedLevelFlow.waitlistAllowed, false);
+  assert.match(disallowedLevelFlow.message, /D\+, C/);
 
   const subscriptionFlow = await service.getPublicJoinFlow(tournament.slug, {
     id: 'user-2',
@@ -538,7 +539,7 @@ async function main(): Promise<void> {
     authSource: 'headers',
     name: 'Игрок',
     phone: '+7 999 000-11-23',
-    levelLabel: 'C',
+    levelLabel: '3.25',
     onboardingCompleted: true,
     subscriptions: buildSubscriptions()
   });
@@ -551,7 +552,7 @@ async function main(): Promise<void> {
     authSource: 'headers',
     name: 'Игрок',
     phone: '+7 999 000-11-24',
-    levelLabel: 'C',
+    levelLabel: '3.25',
     onboardingCompleted: true,
     subscriptions: []
   });
@@ -617,7 +618,7 @@ async function main(): Promise<void> {
     authSource: 'headers',
     name: 'Игрок',
     phone: '+7 999 000-11-21',
-    levelLabel: 'C',
+    levelLabel: '3.25',
     onboardingCompleted: true,
     subscriptions: []
   });
@@ -631,7 +632,7 @@ async function main(): Promise<void> {
   const energyPurchaseStart = await service.createPublicJoinPurchaseTransaction(tournament.slug, {
     name: 'Игрок Энергия',
     phone: '+7 999 000-11-21',
-    levelLabel: 'C',
+    levelLabel: '3.25',
     selectedPurchaseOptionId: 'energy-tournaments',
     subscriptions: [],
     successUrl: 'https://padlhub.ru/padel_torneos?paymentsuccess=true',
@@ -690,7 +691,7 @@ async function main(): Promise<void> {
     authSource: 'headers',
     name: 'Игрок',
     phone: '+7 999 000-11-29',
-    levelLabel: 'C',
+    levelLabel: '3.25',
     onboardingCompleted: true,
     subscriptions: []
   });
@@ -746,7 +747,7 @@ async function main(): Promise<void> {
       clientId: 'viva-client-24',
       name: 'Игрок со stale выбором',
       phone: '+7 999 000-11-24',
-      levelLabel: 'C',
+      levelLabel: '3.25',
       selectedSubscriptionId: 'stale-subscription-id',
       subscriptions: [
         ...buildSubscriptions(),
@@ -768,7 +769,7 @@ async function main(): Promise<void> {
     clientId: 'viva-client-25',
     name: 'Игорь Махнов',
     phone: '+7 999 000-11-25',
-    levelLabel: 'C',
+    levelLabel: '3.25',
     selectedSubscriptionId: 'tournament-pass',
     subscriptions: buildSubscriptions(),
     successUrl: 'https://padlhub.ru/padel_torneos?paymentsuccess=true',
@@ -817,7 +818,7 @@ async function main(): Promise<void> {
     clientId: 'viva-client-26',
     name: 'Игрок recovery абонемента',
     phone: '+7 999 000-11-26',
-    levelLabel: 'C',
+    levelLabel: '3.25',
     selectedSubscriptionId: 'tournament-pass',
     subscriptions: buildSubscriptions(),
     successUrl: 'https://padlhub.ru/padel_torneos?paymentsuccess=true',
@@ -839,7 +840,7 @@ async function main(): Promise<void> {
     clientId: 'viva-client-26',
     name: 'Игрок recovery абонемента',
     phone: '+7 999 000-11-26',
-    levelLabel: 'C',
+    levelLabel: '3.25',
     selectedSubscriptionId: 'tournament-pass',
     subscriptions: buildSubscriptions(),
     successUrl: 'https://padlhub.ru/padel_torneos?paymentsuccess=true',
@@ -887,7 +888,7 @@ async function main(): Promise<void> {
     clientId: 'viva-client-27',
     name: 'Параллельный игрок',
     phone: '+7 999 000-11-27',
-    levelLabel: 'C',
+    levelLabel: '3.25',
     selectedSubscriptionId: 'tournament-pass',
     subscriptions: buildSubscriptions(),
     successUrl: 'https://padlhub.ru/padel_torneos?paymentsuccess=true',
@@ -912,7 +913,7 @@ async function main(): Promise<void> {
     clientId: 'viva-client-29',
     phone: '79990001129',
     name: 'Ambiguous readback',
-    levelLabel: 'C',
+    levelLabel: '3.25',
     selectedPurchaseOptionId: 'tournament-pass',
     productType: 'SUBSCRIPTION',
     exerciseId: 'ee4aef31-7fc9-4dbc-976c-86ecbde5a11c',
@@ -963,7 +964,7 @@ async function main(): Promise<void> {
     clientId: 'viva-client-29',
     name: 'Ambiguous readback',
     phone: '+7 999 000-11-29',
-    levelLabel: 'C',
+    levelLabel: '3.25',
     selectedSubscriptionId: 'tournament-pass',
     subscriptions: buildSubscriptions(),
     successUrl: 'https://padlhub.ru/padel_torneos?paymentsuccess=true',
@@ -976,7 +977,7 @@ async function main(): Promise<void> {
   const lkWidgetRegistration = await service.registerPublicParticipantByTournamentRef(tournament.id, {
     name: 'LK Игрок',
     phone: '+7 999 000-11-28',
-    levelLabel: 'C',
+    levelLabel: '3.25',
     purchaseConfirmed: true,
     selectedPurchaseOptionId: 'single-entry',
     subscriptions: []
@@ -985,8 +986,8 @@ async function main(): Promise<void> {
 
   const lkWidgetTournamentDetail = await service.findById(tournament.id);
   assert.equal(lkWidgetTournamentDetail.format, 'Американо');
-  assert.equal(lkWidgetTournamentDetail.participants?.at(-1)?.level, 'C');
-  assert.equal(lkWidgetTournamentDetail.participants?.at(-1)?.ratingLabel, 'C');
+  assert.equal(lkWidgetTournamentDetail.participants?.at(-1)?.level, '3.25');
+  assert.equal(lkWidgetTournamentDetail.participants?.at(-1)?.ratingLabel, '3.25');
 
   const lkWidgetRegistrationStatus = await service.getPublicRegistrationByTournamentRef(
     tournament.id,
@@ -1002,8 +1003,8 @@ async function main(): Promise<void> {
 
   const blockedPurchaseRegistration = await service.registerPublicParticipant(tournament.slug, {
     name: 'Игрок без оплаты',
-    phone: '+7 999 000-11-26',
-    levelLabel: 'C',
+    phone: '+1 202 555-0198',
+    levelLabel: '3.25',
     subscriptions: []
   });
   assert.equal(blockedPurchaseRegistration.code, 'PURCHASE_REQUIRED');
@@ -1055,7 +1056,7 @@ async function main(): Promise<void> {
     const purchaseStart = await service.createPublicJoinPurchaseTransaction(tournament.slug, {
       name: 'Игрок с покупкой Viva',
       phone: '+7 999 000-11-28',
-      levelLabel: 'C',
+      levelLabel: '3.25',
       selectedPurchaseOptionId: 'single-entry',
       subscriptions: [],
       successUrl: 'https://padlhub.ru/padel_torneos?paymentsuccess=true',
@@ -1091,8 +1092,8 @@ async function main(): Promise<void> {
 
   const paidRegistration = await service.registerPublicParticipant(tournament.slug, {
     name: 'Игрок с покупкой',
-    phone: '+7 999 000-11-27',
-    levelLabel: 'C',
+    phone: '+1 202 555-0199',
+    levelLabel: '3.25',
     purchaseConfirmed: true,
     selectedPurchaseOptionId: 'catalog-subscription',
     subscriptions: []

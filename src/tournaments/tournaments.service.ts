@@ -1,6 +1,21 @@
 import { LocalOperation, commandInput, commandIdentity, digest, object, uuid, assertLocalOnly, operations, operationView, LOCAL_OPERATION_LIMIT } from './tournament-local-operation.contract';
 import { TRUSTED_TOURNAMENT_CLIENT, TournamentGenderDecision, TournamentAdmissionRule } from './tournaments.types';
 import { PrepareTournamentOwnerDto } from './dto/prepare-tournament-owner.dto';
+import {
+  PlayerLevelEvidence,
+  TournamentLevelAdmissionMode,
+  TournamentLevelAdmissionReport,
+  TournamentLevelDecision,
+  TournamentLevelRuleInput,
+  describeTournamentLevelRule,
+  evaluateTournamentLevelAdmission,
+  isTournamentLevelRestricted,
+  readTournamentLevelAdmissionMode
+} from './tournament-level-admission';
+import {
+  parseTournamentServerBookingPrice,
+  type TournamentServerBookingAdmission
+} from './tournament-server-booking';
 import { TournamentOwnerPreparation, TournamentOwnerPreparationReason } from './tournaments.types';
 import {
   BadRequestException,
@@ -686,7 +701,9 @@ export class TournamentsService {
     let rule: TournamentAdmissionRule | null;
     try { rule = await this.tournamentsPersistence.readPublicAdmissionRule(tournament.id); }
     catch { return changed; }
-    if (!rule || rule.updatedAt !== tournament.updatedAt || rule.gender !== tournament.gender) return changed;
+    if (!rule || rule.updatedAt !== tournament.updatedAt || rule.gender !== tournament.gender
+      || (rule.accessLevels && (JSON.stringify(rule.accessLevels) !== JSON.stringify(tournament.accessLevels)
+        || (rule.levelTolerance ?? 0) !== (tournament.levelTolerance ?? 0)))) return changed;
     if (rule.gender === 'MIXED') return { ok: true, decision: { ...rule,
       playerGender: null, evaluatedAt: new Date().toISOString() } };
     const unknown = { ok: false as const, code: 'PLAYER_GENDER_REQUIRED' as const,
@@ -1209,7 +1226,9 @@ export class TournamentsService {
       throw new NotFoundException(`Custom tournament with id ${id} not found`);
     }
     this.ensureTournamentVisibleForUser(current, user, 'tournaments:write');
-    const updated = await this.tournamentsPersistence.updateCustomTournament(id, mutation);
+    await this.checkRosterAdditions(current, mutation, current.id);
+    const updated = await this.tournamentsPersistence.updateCustomTournament(id, mutation,
+      mutation.participants !== undefined || mutation.waitlist !== undefined ? current : undefined);
     if (!updated) {
       throw new NotFoundException(`Custom tournament with id ${id} not found`);
     }
@@ -1523,7 +1542,11 @@ export class TournamentsService {
     const publicTournament = this.toPublicView(tournament);
     const normalizedPhone = this.normalizePhone(client.phone) ?? undefined;
     const normalizedLevel = this.normalizeLevel(client.levelLabel) ?? undefined;
-    const access = this.evaluateAccess(tournament, normalizedLevel);
+    // v2 compares the unrounded canonical value; LEGACY keeps its historical normalized input.
+    const access = this.evaluateAccess(
+      tournament,
+      this.tournamentLevelMode() === 'LEGACY' ? normalizedLevel : client.levelLabel
+    );
     const vivaSubscriptions =
       normalizedPhone && (client.authorized || client.phoneVerified)
         ? await this.fetchVivaBookingSubscriptions(tournament, normalizedPhone)
@@ -1567,7 +1590,10 @@ export class TournamentsService {
     if (!normalizedPhone) {
       missingFields.push('phone');
     }
-    if (tournament.accessLevels.length > 0 && !normalizedLevel) {
+    const levelRestricted = this.tournamentLevelMode() === 'LEGACY'
+      ? tournament.accessLevels.length > 0
+      : this.tournamentLevelMode() === 'ENFORCE' && isTournamentLevelRestricted(tournament);
+    if (levelRestricted && !normalizedLevel) {
       missingFields.push('levelLabel');
     }
 
@@ -1662,12 +1688,29 @@ export class TournamentsService {
       return {
         ok: false,
         code: 'LEVEL_NOT_ALLOWED',
-        message: `Турнир для уровня ${levelRangeLabel}. Вы не можете записаться в турнир, но можете записаться в лист ожидания и отправить организатору заявку на рассмотрение вашего участия.`,
+        message: access.levelDecision
+          ? access.levelDecision.message
+          : `Турнир для уровня ${levelRangeLabel}. Ваш уровень не соответствует условиям участия.`,
         tournament: publicTournament,
         client: normalizedClient,
         access,
         missingFields: [],
-        waitlistAllowed: true,
+        waitlistAllowed: false,
+        payment
+      };
+    }
+
+    if (!access.ok && (access.code === 'PLAYER_LEVEL_UNKNOWN' || access.code === 'LEVEL_CHECK_UNAVAILABLE'
+      || access.code === 'ACTIVITY_LEVEL_INVALID' || access.code === 'PLAYER_LEVEL_REQUIRED')) {
+      return {
+        ok: false,
+        code: access.code,
+        message: access.message,
+        tournament: publicTournament,
+        client: normalizedClient,
+        access,
+        missingFields: [],
+        waitlistAllowed: false,
         payment
       };
     }
@@ -1731,7 +1774,7 @@ export class TournamentsService {
     this.ensurePersistenceEnabled();
     const tournament = await this.requireCustomBySlug(slug);
     const normalizedPhone = this.normalizePhone(input.phone);
-    const normalizedLevel = this.normalizeLevel(input.levelLabel) ?? undefined;
+    let normalizedLevel = this.normalizeLevel(input.levelLabel) ?? undefined;
     if (!normalizedPhone) {
       return {
         ok: false,
@@ -1741,13 +1784,18 @@ export class TournamentsService {
       };
     }
 
-    const access = this.evaluateAccess(tournament, input.levelLabel);
+    const registered = this.findParticipantByPhone(tournament.participants, normalizedPhone);
+    if (registered) return { ok: true, code: 'ALREADY_REGISTERED', message: 'Игрок уже записан в турнир.',
+      tournamentId: tournament.id, tournamentSlug: tournament.slug, participant: registered };
+    const access = await this.checkFreshTournamentLevel(tournament, input);
+    normalizedLevel = access.levelLabel;
     if (!access.ok) {
       return {
         ok: false,
         code: access.code,
         message: access.message,
-        tournamentSlug: tournament.slug
+        tournamentSlug: tournament.slug,
+        ...(access.levelDecision ? { levelDecision: access.levelDecision } : {})
       };
     }
 
@@ -1823,6 +1871,10 @@ export class TournamentsService {
       ok: false, code: 'BOOKING_FAILED', message: 'Существующая оплата требует продолжения исходной операции.',
       tournamentId: tournament.id, tournamentSlug: tournament.slug
     };
+    const finalAccess = await this.checkFreshTournamentLevel(tournament, input);
+    if (!finalAccess.ok) return { ok: false, code: finalAccess.code, message: finalAccess.message,
+      tournamentSlug: tournament.slug, levelDecision: finalAccess.levelDecision };
+    normalizedLevel = finalAccess.levelLabel;
     const gender = await this.checkGenderAdmission(tournament, input);
     if (!gender.ok) return this.genderRefusal(tournament, gender);
 
@@ -1872,7 +1924,8 @@ export class TournamentsService {
       };
     }
 
-    if (gender.decision.gender !== 'MIXED' && this.resolveSourceTournamentProvider(tournament) !== 'NON_VIVA') {
+    if ((gender.decision.gender !== 'MIXED' || isTournamentLevelRestricted(tournament))
+      && this.resolveSourceTournamentProvider(tournament) !== 'NON_VIVA') {
       return { ok: false, code: 'TOURNAMENT_SECURE_JOIN_REQUIRED', tournamentId: tournament.id,
         tournamentSlug: tournament.slug,
         message: 'Для этого турнира нужна защищённая запись. Бесплатная внешняя запись пока недоступна; выберите защищённый способ участия, если он предложен.' };
@@ -2130,6 +2183,18 @@ export class TournamentsService {
     if (!authProfile.clientId || (suppliedClientId && suppliedClientId !== authProfile.clientId)) {
       throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH', message: 'Не удалось подтвердить игрока.' });
     }
+    if (this.tournamentLevelMode() === 'ENFORCE' && isTournamentLevelRestricted(tournament)) {
+      // Level comes only from CUP canonical state for the verified actor; body fields are ignored.
+      const levelDecision = this.decideTournamentLevel(
+        tournament,
+        await this.resolveTournamentAdmissionLevel({ clientId: authProfile.clientId, phone: clientPhone })
+      );
+      if (!levelDecision.allowed) {
+        const unavailable = levelDecision.reasonCode === 'LEVEL_CHECK_UNAVAILABLE';
+        const payload = { code: levelDecision.reasonCode, message: levelDecision.message, levelDecision };
+        throw unavailable ? new ServiceUnavailableException(payload) : new ForbiddenException(payload);
+      }
+    }
     const booking = this.resolveBookingConfig(tournament);
     const bookingExerciseId =
       this.pickString(booking.vivaExerciseId)
@@ -2200,7 +2265,7 @@ export class TournamentsService {
     this.ensurePersistenceEnabled();
     const tournament = await this.requireCustomBySlug(slug);
     const normalizedPhone = this.normalizePhone(input.phone);
-    const normalizedLevel = this.normalizeLevel(input.levelLabel) ?? undefined;
+    let normalizedLevel = this.normalizeLevel(input.levelLabel) ?? undefined;
     if (!normalizedPhone) {
       return {
         ok: false,
@@ -2210,13 +2275,21 @@ export class TournamentsService {
       };
     }
 
-    const access = this.evaluateAccess(tournament, input.levelLabel);
-    if (!access.ok) {
+    // A payment that already started passed the level gate at its start. Recovery/finalization
+    // keeps that decision instead of refusing paid participation after a later range, tolerance
+    // or rating change (ENFORCE only; LEGACY keeps the historical order).
+    const startedPayment = this.tournamentLevelMode() === 'ENFORCE'
+      && Boolean(this.findPendingJoinPayment(tournament, normalizedPhone));
+    const access = startedPayment ? this.evaluateAccess(tournament, normalizedLevel)
+      : await this.checkFreshTournamentLevel(tournament, input);
+    if (!startedPayment) normalizedLevel = access.levelLabel;
+    if (!access.ok && !startedPayment) {
       return {
         ok: false,
         code: access.code,
         message: access.message,
-        tournamentSlug: tournament.slug
+        tournamentSlug: tournament.slug,
+        ...(access.levelDecision ? { levelDecision: access.levelDecision } : {})
       };
     }
 
@@ -2386,7 +2459,16 @@ export class TournamentsService {
         payment
       };
     }
+    if (!access.ok) {
+      // Defensive: a new payment is never created without a passing level decision.
+      return { ok: false, code: access.code, message: access.message, tournamentSlug: tournament.slug,
+        ...(access.levelDecision ? { levelDecision: access.levelDecision } : {}) };
+    }
 
+    const finalAccess = await this.checkFreshTournamentLevel(tournament, input);
+    if (!finalAccess.ok) return { ok: false, code: finalAccess.code, message: finalAccess.message,
+      tournamentSlug: tournament.slug, levelDecision: finalAccess.levelDecision };
+    normalizedLevel = finalAccess.levelLabel;
     const gender = await this.checkGenderAdmission(tournament, input);
     if (!gender.ok) return this.genderRefusal(tournament, gender);
 
@@ -2596,6 +2678,9 @@ export class TournamentsService {
       };
     }
 
+    const access = await this.checkFreshTournamentLevel(tournament, input);
+    if (!access.ok) return { ok: false, code: access.code, message: access.message,
+      tournamentId: tournament.id, tournamentSlug: tournament.slug, levelDecision: access.levelDecision };
     const gender = await this.checkGenderAdmission(tournament, input);
     if (!gender.ok) return this.genderRefusal(tournament, gender);
 
@@ -4166,10 +4251,22 @@ export class TournamentsService {
       sourceTournament.id
     );
     const normalizedMutation = this.buildCreateMutation(sourceTournament, mutation);
-
     if (existing) {
-      return this.updateExistingFromCreate(existing.id, normalizedMutation);
+      // A repeated import is not an implicit rule edit or roster replacement. Do not copy a
+      // stale snapshot here: updateCustom reads the current rule and fences roster additions.
+      return this.updateExistingFromCreate(existing.id, {
+        ...normalizedMutation,
+        accessLevels: mutation.accessLevels,
+        levelTolerance: mutation.levelTolerance,
+        gender: mutation.gender,
+        participants: mutation.participants,
+        waitlist: mutation.waitlist
+      });
     }
+    await this.checkRosterAdditions({ ...normalizedMutation,
+      id: sourceTournament.id, participants: sourceTournament.participants ?? [], waitlist: [],
+      accessLevels: normalizedMutation.accessLevels ?? [], levelTolerance: normalizedMutation.levelTolerance ?? 0
+    }, { participants: mutation.participants, waitlist: mutation.waitlist });
 
     const created = await this.tournamentsPersistence.createCustomTournament(normalizedMutation);
     const withSnapshot = await this.rebuildPersistedPricingSnapshot(created, {
@@ -4533,6 +4630,7 @@ export class TournamentsService {
         this.pickString(mutation.tournamentType) ?? sourceTournament.tournamentType ?? 'AMERICANO',
       isPublic: mutation.isPublic !== undefined ? mutation.isPublic : sourceTournament.isPublic !== false,
       accessLevels: Array.isArray(mutation.accessLevels) ? mutation.accessLevels : [],
+      ...(mutation.levelTolerance !== undefined ? { levelTolerance: mutation.levelTolerance } : {}),
       gender: mutation.gender ?? 'MIXED',
       maxPlayers: Number(mutation.maxPlayers || 0) || Number(sourceTournament.maxPlayers || 0) || 8,
       participants: Array.isArray(mutation.participants)
@@ -4578,7 +4676,7 @@ export class TournamentsService {
 
   private async updateExistingFromCreate(
     id: string,
-    mutation: CreateCustomTournamentMutation
+    mutation: Partial<CreateCustomTournamentMutation>
   ): Promise<CustomTournament> {
     return this.updateCustom(id, {
       exerciseId: mutation.exerciseId,
@@ -4589,6 +4687,7 @@ export class TournamentsService {
       tournamentType: mutation.tournamentType,
       isPublic: mutation.isPublic,
       accessLevels: mutation.accessLevels,
+      ...(mutation.levelTolerance !== undefined ? { levelTolerance: mutation.levelTolerance } : {}),
       gender: mutation.gender,
       maxPlayers: mutation.maxPlayers,
       participants: mutation.participants,
@@ -5577,7 +5676,257 @@ export class TournamentsService {
     };
   }
 
+  private tournamentLevelMode(): TournamentLevelAdmissionMode {
+    return readTournamentLevelAdmissionMode(process.env);
+  }
+
+  /** Single mandatory owner rule; caller labels are only used by read-only previews. */
   private evaluateAccess(
+    tournament: CustomTournament,
+    levelLabel?: string
+  ): TournamentAccessCheckResponse {
+    const mode = this.tournamentLevelMode();
+    if (mode === 'LEGACY') return this.evaluateLegacyAccess(tournament, levelLabel);
+    const decision = this.decideTournamentLevel(tournament, this.levelEvidenceFromCanonicalLabel(levelLabel));
+    const code: TournamentAccessCheckResponse['code'] = decision.allowed
+      ? 'OK'
+      : decision.reasonCode === 'PLAYER_LEVEL_REQUIRED' || decision.reasonCode === 'PLAYER_LEVEL_UNKNOWN'
+        || decision.reasonCode === 'LEVEL_CHECK_UNAVAILABLE' || decision.reasonCode === 'ACTIVITY_LEVEL_INVALID'
+        ? decision.reasonCode
+        : 'LEVEL_NOT_ALLOWED';
+    return {
+      ok: decision.allowed,
+      code,
+      message: decision.message,
+      tournamentSlug: tournament.slug,
+      accessLevels: tournament.accessLevels,
+      ...(decision.playerLevel !== null ? { levelLabel: String(decision.playerLevel) } : {}),
+      levelDecision: decision
+    };
+  }
+
+  private async checkFreshTournamentLevel(tournament: CustomTournament, input: {
+    phone?: string; clientId?: string; trustedIdentity?: object; vivaAuthorizationHeader?: string;
+  }): Promise<TournamentAccessCheckResponse> {
+    let rule: TournamentAdmissionRule | null;
+    try { rule = await this.tournamentsPersistence.readPublicAdmissionRule(tournament.id); }
+    catch { rule = null; }
+    if (!rule || !Array.isArray(rule.accessLevels) || rule.updatedAt !== tournament.updatedAt
+      || JSON.stringify(rule.accessLevels) !== JSON.stringify(tournament.accessLevels)
+      || (rule.levelTolerance ?? 0) !== (tournament.levelTolerance ?? 0)) {
+      return { ok: false, code: 'TOURNAMENT_RULE_CHANGED', message: 'Правила турнира изменились. Повторите запись.',
+        tournamentSlug: tournament.slug, accessLevels: tournament.accessLevels };
+    }
+    let evidence: PlayerLevelEvidence = { status: 'UNAVAILABLE' };
+    if (isTournamentLevelRestricted(tournament)) {
+      try {
+        let identity = input.trustedIdentity && this.trustedRegistrationIdentities.get(input.trustedIdentity);
+        if (!identity && input.vivaAuthorizationHeader && this.lkIdentityService) {
+          const verified = await this.lkIdentityService.verifyTrustedBearer(input.vivaAuthorizationHeader);
+          identity = { clientId: verified.actor.clientId, phone: verified.actor.phoneNorm };
+        }
+        if (!identity || this.normalizePhone(input.phone) !== this.normalizePhone(identity.phone)
+          || (input.clientId !== undefined && input.clientId !== identity.clientId)) {
+          throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+        }
+        evidence = await this.resolveTournamentAdmissionLevel(identity);
+      } catch (error) {
+        if (error instanceof ForbiddenException) throw error;
+      }
+    }
+    return this.levelAccessResponse(tournament, this.decideTournamentLevel(tournament, evidence));
+  }
+
+  private levelAccessResponse(tournament: CustomTournament, decision: TournamentLevelDecision): TournamentAccessCheckResponse {
+    return { ok: decision.allowed, code: decision.allowed ? 'OK' : decision.reasonCode as TournamentAccessCheckResponse['code'],
+      message: decision.message, tournamentSlug: tournament.slug, accessLevels: tournament.accessLevels,
+      ...(decision.playerLevel !== null ? { levelLabel: String(decision.playerLevel) } : {}), levelDecision: decision };
+  }
+
+  /** Admin additions and manual waitlist promotion are admissions, even on a full-roster PATCH. */
+  private async checkRosterAdditions(current: TournamentLevelRuleInput & Pick<CustomTournament, 'participants' | 'waitlist'>, mutation: UpdateCustomTournamentMutation, persistedId?: string): Promise<void> {
+    const next = { ...current, ...Object.fromEntries(Object.entries(mutation).filter(([, value]) => value !== undefined)) };
+    if (mutation.participants) {
+      const phones = mutation.participants.map(p => this.normalizePhone(p.phone));
+      if (phones.some(p => !p) || new Set(phones).size !== phones.length) {
+        throw new ConflictException({ code: 'TOURNAMENT_ROSTER_IDENTITY_INVALID' });
+      }
+      const maxPlayers = Number((next as Partial<CustomTournament>).maxPlayers);
+      if (Number.isFinite(maxPlayers) && phones.length > maxPlayers) throw new ConflictException({ code: 'TOURNAMENT_FULL' });
+    }
+    const active = new Set(current.participants.map(p => this.normalizePhone(p.phone)).filter(Boolean));
+    const waiting = new Set(current.waitlist.map(p => this.normalizePhone(p.phone)).filter(Boolean));
+    const additions = [
+      ...(mutation.participants ?? []).filter(p => !active.has(this.normalizePhone(p.phone))),
+      ...(mutation.waitlist ?? []).filter(p => !active.has(this.normalizePhone(p.phone)) && !waiting.has(this.normalizePhone(p.phone)))
+    ];
+    if (additions.length && persistedId && mutation.accessLevels === undefined) {
+      let raw: TournamentAdmissionRule | null;
+      try { raw = await this.tournamentsPersistence.readPublicAdmissionRule(persistedId); }
+      catch { raw = null; }
+      if (!raw || !Array.isArray(raw.accessLevels) || raw.updatedAt !== current.updatedAt
+        || JSON.stringify(raw.accessLevels) !== JSON.stringify(current.accessLevels)
+        || (raw.levelTolerance ?? 0) !== (current.levelTolerance ?? 0)) {
+        throw new ConflictException({ code: 'TOURNAMENT_RULE_CHANGED' });
+      }
+    }
+    for (const participant of additions) {
+      const phone = this.normalizePhone(participant.phone);
+      if (!phone) throw new ConflictException({ code: 'PLAYER_LEVEL_REQUIRED' });
+      const decision = this.decideTournamentLevel(next, await this.resolveTournamentAdmissionLevel({ phone }));
+      if (!decision.allowed) throw new ConflictException({ code: decision.reasonCode, message: decision.message, levelDecision: decision });
+    }
+  }
+
+  private levelEvidenceFromCanonicalLabel(levelLabel?: string): PlayerLevelEvidence {
+    const raw = this.pickString(levelLabel);
+    if (!raw) return { status: 'MISSING' };
+    const numeric = Number(raw);
+    return Number.isFinite(numeric) ? { status: 'OK', ratingNumeric: numeric } : { status: 'UNKNOWN' };
+  }
+
+  private decideTournamentLevel(tournament: TournamentLevelRuleInput, player: PlayerLevelEvidence): TournamentLevelDecision {
+    return evaluateTournamentLevelAdmission(tournament, player, { mode: this.tournamentLevelMode() });
+  }
+
+  /**
+   * Trusted player level for admission: CUP canonical `player_rating_state` only. There is no
+   * provider read and no fallback; a missing state, an inconsistent state and an unavailable
+   * rating store are reported as different evidence.
+   */
+  async resolveTournamentAdmissionLevel(identity: { clientId?: string; phone?: string }): Promise<PlayerLevelEvidence> {
+    if (!this.playerRatingsService) return { status: 'UNAVAILABLE' };
+    const phone = this.normalizePhone(identity.phone);
+    if (!identity.clientId && !phone) return { status: 'UNKNOWN' };
+    try {
+      const canonical = await this.playerRatingsService.resolveCanonicalLevelByIdentity({
+        clientId: identity.clientId,
+        phone: phone ?? ''
+      });
+      if (!canonical) return { status: 'MISSING' };
+      return Number.isFinite(canonical.ratingNumeric)
+        ? { status: 'OK', ratingNumeric: canonical.ratingNumeric }
+        : { status: 'UNKNOWN' };
+    } catch (error) {
+      return error instanceof ConflictException ? { status: 'UNKNOWN' } : { status: 'UNAVAILABLE' };
+    }
+  }
+
+  /** Level decision for the authenticated LK player; the decision clients and gateways consume. */
+  async getLevelDecisionByTournamentRef(
+    tournamentRef: string,
+    authorizationHeader?: string
+  ): Promise<TournamentLevelDecision & { tournamentId: string; exerciseId: string | null; actorClientId: string }> {
+    this.ensurePersistenceEnabled();
+    if (!this.lkIdentityService) {
+      throw new ServiceUnavailableException({ code: 'TOURNAMENT_ELIGIBILITY_NOT_CONFIGURED' });
+    }
+    const tournament = await this.requireCustomByPublicRef(tournamentRef);
+    const { actor } = await this.lkIdentityService.verifyTrustedBearer(authorizationHeader);
+    if (!actor.clientId || !actor.phoneNorm) throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+    const access = await this.checkFreshTournamentLevel(tournament, {
+      phone: actor.phoneNorm, clientId: actor.clientId,
+      trustedIdentity: this.rememberRegistrationIdentity({ phone: actor.phoneNorm, clientId: actor.clientId })
+    });
+    if (!access.levelDecision) throw new ConflictException({ code: access.code, message: access.message });
+    return { ...access.levelDecision, tournamentId: tournament.id,
+      exerciseId: this.resolveBookingConfig(tournament).vivaExerciseId ?? null, actorClientId: actor.clientId };
+  }
+
+  /**
+   * Admission input for the server-owned booking (disabled by default). Verifies the LK bearer,
+   * evaluates the CUP level decision and the existing gender check for that actor and reads the
+   * organizer-configured price. No provider write happens here.
+   */
+  async resolveServerBookingAdmission(
+    tournamentRef: string,
+    authorizationHeader?: string
+  ): Promise<TournamentServerBookingAdmission> {
+    this.ensurePersistenceEnabled();
+    if (!this.lkIdentityService) {
+      throw new ServiceUnavailableException({ code: 'TOURNAMENT_ELIGIBILITY_NOT_CONFIGURED' });
+    }
+    const tournament = await this.requireCustomByPublicRef(tournamentRef);
+    const { actor } = await this.lkIdentityService.verifyTrustedBearer(authorizationHeader);
+    const phone = this.normalizePhone(actor.phoneNorm);
+    if (!actor.clientId || !phone) {
+      throw new ForbiddenException({ code: 'TOURNAMENT_SERVER_BOOKING_ACTOR_INVALID' });
+    }
+    const player: PlayerLevelEvidence = isTournamentLevelRestricted(tournament)
+      ? await this.resolveTournamentAdmissionLevel({ clientId: actor.clientId, phone })
+      : { status: 'UNAVAILABLE' };
+    const decision = this.decideTournamentLevel(tournament, player);
+    const gender = await this.checkGenderAdmission(tournament, {
+      phone, clientId: actor.clientId, vivaAuthorizationHeader: authorizationHeader
+    });
+    const booking = this.resolveBookingConfig(tournament);
+    const details = this.toRecord(tournament.details) ?? {};
+    const rawBooking = this.toRecord(details.booking) ?? {};
+    return {
+      tournamentId: tournament.id,
+      exerciseId: booking.vivaExerciseId ?? null,
+      studioId: booking.vivaStudioId ?? null,
+      levelMode: decision.mode,
+      decision,
+      actor: { clientId: actor.clientId, phone },
+      price: parseTournamentServerBookingPrice(rawBooking.serverBooking),
+      otherRefusal: !this.isTournamentRegistrationOpen(tournament)
+        ? { code: 'TOURNAMENT_LOCAL_CLOSED', message: 'Запись на турнир закрыта.' }
+        : gender.ok ? null : { code: gender.code, message: gender.message }
+    };
+  }
+
+  /**
+   * Read-only organizer report: what the v2 rule decides for everyone already on the roster,
+   * including players whose booking reached CUP from Viva (e.g. a direct Viva end-user booking
+   * that bypassed PadlHub). Nothing is removed, cancelled or refunded, and nothing is written to
+   * Viva; the organizer decides manually. The level comes only from CUP canonical state.
+   */
+  async getLevelAdmissionReport(id: string, user?: RequestUser): Promise<TournamentLevelAdmissionReport> {
+    this.ensurePersistenceEnabled();
+    const stored = await this.tournamentsPersistence.findCustomTournamentById(id);
+    if (!stored) throw new NotFoundException(`Custom tournament with id ${id} not found`);
+    const tournament = await this.hydrateCustomTournament(stored);
+    this.ensureTournamentVisibleForUser(tournament, user, 'tournaments:read');
+    const rule = describeTournamentLevelRule(tournament, this.tournamentLevelMode());
+    const roster = [
+      ...tournament.participants.map((participant) => ({ participant, list: 'PARTICIPANT' as const })),
+      ...tournament.waitlist.map((participant) => ({ participant, list: 'WAITLIST' as const }))
+    ];
+    const limit = 200;
+    const entries: TournamentLevelAdmissionReport['entries'] = [];
+    if (rule.ruleKind !== 'NONE') {
+      for (const { participant, list } of roster.slice(0, limit)) {
+        const phone = this.normalizePhone(participant.phone);
+        const evidence: PlayerLevelEvidence = phone
+          ? await this.resolveTournamentAdmissionLevel({ phone })
+          : { status: 'UNKNOWN' };
+        const decision = evaluateTournamentLevelAdmission(tournament, evidence, { mode: 'ENFORCE' });
+        entries.push({
+          participantId: participant.id ?? null,
+          name: participant.name,
+          phoneMasked: phone ? this.maskPhoneForLog(phone) : null,
+          list,
+          status: participant.status ?? null,
+          paymentStatus: participant.paymentStatus ?? null,
+          allowed: decision.allowed,
+          reasonCode: decision.reasonCode,
+          playerLevel: decision.playerLevel
+        });
+      }
+    }
+    return {
+      tournamentId: tournament.id,
+      rule,
+      generatedAt: new Date().toISOString(),
+      truncated: rule.ruleKind !== 'NONE' && roster.length > limit,
+      checked: entries.length,
+      outsideRule: entries.filter((entry) => !entry.allowed).length,
+      entries
+    };
+  }
+
+  private evaluateLegacyAccess(
     tournament: CustomTournament,
     levelLabel?: string
   ): TournamentAccessCheckResponse {
@@ -7649,6 +7998,7 @@ export class TournamentsService {
       tournamentTypeBadgeLabel: this.formatTournamentTypeBadgeLabel(tournament),
       gender: tournament.gender,
       accessLevels: tournament.accessLevels,
+      levelAdmission: describeTournamentLevelRule(tournament, this.tournamentLevelMode()),
       startsAt: tournament.startsAt,
       endsAt: tournament.endsAt,
       studioName: tournament.studioName,

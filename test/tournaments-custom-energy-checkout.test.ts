@@ -155,7 +155,7 @@ function createService(tournament: CustomTournament, vivaAdmin: Record<string, u
     { getTournamentResults: async () => { throw new Error('Not used in test'); } } as never,
     {
       isEnabled: () => true,
-      readPublicAdmissionRule: async () => ({ gender: tournament.gender, updatedAt: tournament.updatedAt }),
+      readPublicAdmissionRule: async () => ({ gender: tournament.gender, updatedAt: tournament.updatedAt, accessLevels: tournament.accessLevels, levelTolerance: tournament.levelTolerance }),
       listCustomTournaments: async () => [tournament],
       findCustomTournamentById: async (id: string) => id === tournament.id ? tournament : null,
       findCustomTournamentBySlug: async (slug: string) => slug === tournament.slug ? tournament : null,
@@ -164,7 +164,8 @@ function createService(tournament: CustomTournament, vivaAdmin: Record<string, u
     } as never,
     { generateSchedule: () => { throw new Error('Not used in test'); } } as never,
     { simulateRating: () => { throw new Error('Not used in test'); } } as never,
-    vivaAdmin as never
+    vivaAdmin as never, undefined, undefined, undefined,
+    { resolveCanonicalLevelByIdentity: async () => ({ levelLabel: '3.25', ratingNumeric: 3.25 }) } as never
   );
 }
 
