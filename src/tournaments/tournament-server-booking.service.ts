@@ -59,6 +59,10 @@ export class TournamentServerBookingService {
     @Optional() vivaAdminService?: VivaAdminService
   ) {
     const viva = new VivaAdminTournamentBookingAdapter({
+      createExerciseBooking: async (input) => {
+        if (!vivaAdminService) return { outcome: 'REJECTED', reasonCode: 'VIVA_ADMIN_UNAVAILABLE' };
+        return vivaAdminService.createExerciseBooking(input);
+      },
       listExerciseBookings: async (exerciseId) => {
         if (!vivaAdminService) throw new Error('viva admin unavailable');
         return vivaAdminService.listExerciseBookings(exerciseId);

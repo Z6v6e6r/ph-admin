@@ -41,10 +41,15 @@ function memoryCollection() {
 }
 
 function build(row: CustomTournament, rating: number | null) {
-  const viva = { listed: 0, checkouts: 0 };
+  const viva = { listed: 0, checkouts: 0, bookings: [] as unknown[] };
   const vivaAdmin = {
+    createExerciseBooking: async (input: unknown) => { viva.bookings.push(input); return { outcome: 'CREATED', bookingId: 'booking-1' }; },
     listExerciseBookings: async () => { viva.listed += 1; return []; },
-    createBookingPaymentCheckout: async () => { viva.checkouts += 1; throw new Error('must not be called'); }
+    createBookingPaymentCheckout: async (input: any) => {
+      viva.checkouts += 1;
+      return { clientId: 'client-1', productId: 'p', bookingIds: input.bookingIds, transactionId: 'tx-1',
+        paymentUrl: 'https://pay.example/tx-1', toPayMinor: input.amountMinor, paid: false };
+    }
   };
   const tournaments = new TournamentsService(
     { listTournaments: async () => [] } as never,
@@ -124,19 +129,23 @@ async function main() {
     // No configured price: fail closed.
     const unpriced = build(tournament(undefined), 3.31);
     await status(unpriced.service.join('level-cup', 'Bearer synthetic', 'fixture-key-0001'), 409, 'SERVER_BOOKING_PRICE_NOT_CONFIGURED');
-    // Allowed: the unconfigured Viva booking method rejects without any provider call or payment.
+    // Allowed: one admin booking with the verified actor, then one checkout with the server price.
     const allowed = build(tournament(price), 3.31);
     const view = await allowed.service.join('level-cup', 'Bearer synthetic', 'fixture-key-0001');
-    assert.equal(view.state, 'FAILED');
-    assert.equal(view.errorCode, 'PROVIDER_BOOKING_METHOD_NOT_CONFIGURED');
+    assert.equal(view.state, 'PAYMENT_PENDING');
+    assert.equal(view.paymentUrl, 'https://pay.example/tx-1');
+    assert.equal(view.toPayMinor, 250000);
     assert.equal(view.levelDecision.reasonCode, 'LEVEL_ALLOWED');
-    assert.equal(allowed.viva.checkouts, 0);
+    assert.deepEqual(allowed.viva.bookings, [{ exerciseId: 'exercise-level-1', clientId: 'client-1', phone: PHONE }]);
+    assert.equal(allowed.viva.checkouts, 1);
+    await allowed.service.join('level-cup', 'Bearer synthetic', 'fixture-key-0001');
+    assert.equal(allowed.viva.bookings.length, 1, 'retry never books twice');
     const stored = allowed.collection.rows.get('custom-level-1:client-1');
     assert.equal(stored.price.baseAmountMinor, 250000);
     assert.equal(stored.startDecision.ruleVersion, view.levelDecision.ruleVersion);
     assert.equal(JSON.stringify(stored).includes(PHONE), false, 'attempt does not store the phone');
     const current = await allowed.service.status('level-cup', 'Bearer synthetic');
-    assert.equal(current.state, 'FAILED');
+    assert.equal(current.state, 'PAYMENT_PENDING');
   });
   // Level gate not enforced: server booking does not run.
   await withEnv({ TOURNAMENT_SERVER_BOOKING_MODE: 'enabled', TOURNAMENT_LEVEL_ADMISSION_MODE: undefined }, async () => {

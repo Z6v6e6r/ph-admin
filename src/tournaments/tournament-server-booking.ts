@@ -129,7 +129,7 @@ export type ProviderBookingResult =
 
 export interface VivaAdminBookingPort {
   /** Admin booking for the client. `operationKey` is stable per attempt generation. */
-  createBooking(input: { clientId: string; exerciseId: string; studioId: string; operationKey: string }): Promise<ProviderBookingResult>;
+  createBooking(input: { clientId: string; exerciseId: string; studioId: string; phone: string; operationKey: string }): Promise<ProviderBookingResult>;
   /** Read-only recovery: the client's active booking on this exercise, if any. */
   findBooking(input: { clientId: string; exerciseId: string }): Promise<{ bookingId: string } | null | 'UNAVAILABLE'>;
 }
@@ -361,6 +361,7 @@ export class TournamentServerBookingCoordinator {
             clientId: claimed.clientId,
             exerciseId: claimed.exerciseId,
             studioId: claimed.studioId,
+            phone: admission.actor.phone,
             operationKey: `${claimed._id}:${claimed.generation}`
           });
         } catch {

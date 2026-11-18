@@ -1,9 +1,9 @@
 /**
  * Viva admin ports for the server-owned tournament booking.
  *
- * - `createBooking` is intentionally NOT implemented: no admin booking-create call is known yet
- *   (it will be taken from a captured Viva admin request). Until then it rejects without any
- *   network call, so enabling the mode by mistake cannot write to Viva.
+ * - `createBooking` is the Viva cabinet's admin call `POST /api/v1/exercises/{id}/bookings`
+ *   (`paymentType: ON_PLACE`), taken from the cabinet bundle. Without `createExerciseBooking`
+ *   wired it rejects without any network call.
  * - `findBooking` reuses the existing read-only admin booking list.
  * - `createCheckout` reuses the existing admin booking checkout (`/api/v1/transactions` with
  *   `bookingIds`); a 100% discount confirms without a payment link.
@@ -21,6 +21,7 @@ import type {
 } from './viva-admin.service';
 
 export interface VivaAdminTournamentBookingDeps {
+  createExerciseBooking?(input: { exerciseId: string; clientId: string; phone: string }): Promise<ProviderBookingResult>;
   listExerciseBookings(exerciseId: string): Promise<Record<string, unknown>[]>;
   createBookingPaymentCheckout(input: VivaAdminBookingPaymentCheckoutInput): Promise<VivaAdminBookingPaymentCheckoutResult>;
 }
@@ -33,8 +34,15 @@ const text = (value: unknown): string | null =>
 export class VivaAdminTournamentBookingAdapter implements VivaAdminBookingPort, VivaAdminBookingCheckoutPort {
   constructor(private readonly deps: VivaAdminTournamentBookingDeps) {}
 
-  async createBooking(): Promise<ProviderBookingResult> {
-    return { outcome: 'REJECTED', reasonCode: 'PROVIDER_BOOKING_METHOD_NOT_CONFIGURED' };
+  async createBooking(input: { clientId: string; exerciseId: string; phone: string }): Promise<ProviderBookingResult> {
+    if (!this.deps.createExerciseBooking) {
+      return { outcome: 'REJECTED', reasonCode: 'PROVIDER_BOOKING_METHOD_NOT_CONFIGURED' };
+    }
+    try {
+      return await this.deps.createExerciseBooking({ exerciseId: input.exerciseId, clientId: input.clientId, phone: input.phone });
+    } catch {
+      return { outcome: 'UNKNOWN', reasonCode: 'PROVIDER_EXCEPTION' };
+    }
   }
 
   async findBooking(input: { clientId: string; exerciseId: string }): Promise<{ bookingId: string } | null | 'UNAVAILABLE'> {

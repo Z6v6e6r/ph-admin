@@ -108,6 +108,7 @@ Code: `src/tournaments/tournament-server-booking.ts` (state machine),
 - States:
   - path: `ADMITTED → BOOKING → BOOKED → PAYMENT_CREATING → PAYMENT_PENDING | CONFIRMED`;
   - failures: `BOOKING_UNKNOWN`, `PAYMENT_UNKNOWN`, `REJECTED`, `FAILED`.
+- Q1 (owner, 2026-11-18): self-booking is closed in Viva for all exercises.
 - Fencing: one document per tournament and player. Every transition is a CAS on `revision`, and
   only the CAS winner calls Viva. A second key while `BOOKING` gets `SERVER_BOOKING_IN_PROGRESS`.
 - Decision: a started attempt keeps its start decision. The decision is re-evaluated once just
@@ -116,9 +117,17 @@ Code: `src/tournaments/tournament-server-booking.ts` (state machine),
   - an unknown booking result is never reposted. After the 60 s lease it is resolved by reading
     the exercise bookings, otherwise it stays `BOOKING_UNKNOWN` for an operator;
   - an unknown checkout becomes `PAYMENT_UNKNOWN` and is reconciled manually.
-- Viva booking-create is **not configured**. `createBooking` rejects with
-  `PROVIDER_BOOKING_METHOD_NOT_CONFIGURED` and makes no network call. It is filled in from a
-  captured Viva admin request (HAR) and needs a specialist review before activation.
+- Viva booking create is `POST /api/v1/exercises/{exerciseId}/bookings` with the body
+  `{ "phone": "<digits>", "clientId": "<viva id>", "paymentType": "ON_PLACE" }`. The response
+  `id` is the booking id.
+  - Source: the Viva cabinet bundle (`cabinet.vivacrm.ru`). For "create transaction" the cabinet
+    books `ON_PLACE` and then posts `/transactions` with that `bookingId`, which is what
+    `createBookingPaymentCheckout` does.
+  - Viva has no idempotency key (the cabinet books one client into several spots). A definite
+    4xx is `REJECTED`; 408, 5xx, transport errors and a response without `id` are `UNKNOWN`.
+    `UNKNOWN` is never reposted.
+  - Not yet verified against live Viva: needs one synthetic booking on a test exercise, plus a
+    specialist review.
 - The attempt stores no phone. The payment phone comes from the verified actor on each request.
 - Tests:
   ```sh

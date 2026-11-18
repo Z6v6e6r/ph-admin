@@ -324,7 +324,14 @@ async function main() {
       },
       createBookingPaymentCheckout: async (input) => { deps.checkouts.push(input); return { clientId: 'client-1', productId: 'p', bookingIds: input.bookingIds, paid: input.amountMinor === 0, toPayMinor: input.amountMinor, transactionId: 'tx', paymentUrl: input.amountMinor ? 'https://pay.example' : undefined }; }
     });
-    assert.deepEqual(await adapter.createBooking(), { outcome: 'REJECTED', reasonCode: 'PROVIDER_BOOKING_METHOD_NOT_CONFIGURED' });
+    assert.deepEqual(await adapter.createBooking({ clientId: 'client-1', exerciseId: 'exercise-1', phone: '79990000000' }),
+      { outcome: 'REJECTED', reasonCode: 'PROVIDER_BOOKING_METHOD_NOT_CONFIGURED' });
+    const wired = new VivaAdminTournamentBookingAdapter({
+      createExerciseBooking: async (input) => (input.exerciseId === 'boom' ? Promise.reject(new Error('x')) : { outcome: 'CREATED', bookingId: 'b-9' }),
+      listExerciseBookings: async () => [], createBookingPaymentCheckout: async () => { throw new Error('unused'); }
+    });
+    assert.deepEqual(await wired.createBooking({ clientId: 'c', exerciseId: 'e', phone: '7' }), { outcome: 'CREATED', bookingId: 'b-9' });
+    assert.deepEqual(await wired.createBooking({ clientId: 'c', exerciseId: 'boom', phone: '7' }), { outcome: 'UNKNOWN', reasonCode: 'PROVIDER_EXCEPTION' });
     assert.equal(deps.listed, 0);
     assert.deepEqual(await adapter.findBooking({ clientId: 'client-1', exerciseId: 'exercise-1' }), { bookingId: 'b-1' });
     assert.equal(await adapter.findBooking({ clientId: 'client-3', exerciseId: 'exercise-1' }), null);
