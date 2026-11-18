@@ -22,4 +22,5 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run build
       - run: npm run test:player-ratings
+      - run: npx --no-install ts-node test/cup-only-player-level.test.ts
       - run: npm run test:auth-rbac

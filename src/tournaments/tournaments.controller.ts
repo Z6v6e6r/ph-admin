@@ -379,9 +379,9 @@ export class TournamentsController {
 
   @Post(':id/checkout/reconcile')
   @Roles()
-  checkoutStatus(@Param('id') id: string, @Req() request: Request) {
+  checkoutStatus(@Param('id') id: string, @Req() request: Request, @Body() body?: Record<string, unknown>) {
     if (!this.checkoutService) throw new ServiceUnavailableException();
-    return this.checkoutService.reconcile(id, this.pickString(request.headers.authorization));
+    return this.checkoutService.reconcile(id, this.pickString(request.headers.authorization), body?.cancelledBookingId);
   }
 
   @Post(':id/subscription-admission/abort')

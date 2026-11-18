@@ -26,12 +26,14 @@ const sdk = ['phab-admin-panel.js', 'client-sdk/phab-admin-panel.js'];
 // nor server-module differences qualify for this exact compatibility pair.
 export const MEDIA_RECOVERY_SDK_SHA256 = 'e67b6151067caffe5ee111c444ebe01d01e20274b681ee6b6ee566ff3f6609bb';
 export const MEDIA_FPR_CANDIDATE_SDK_SHA256 = '3eec0814027643f0c26e15ad68d2f0e9d530eb5688b37ce2b39562eecbed9a65';
+// Source #119 adds canonical level controls. The support recovery SDK remains byte-for-byte historical.
+export const MEDIA_CUP_LEVEL_CANDIDATE_SDK_SHA256 = 'a8b2ed6c78ebd1c71c53b7e1a70e9dff959d408632a05e13f4afadbd8e329542';
 const digest = body => createHash('sha256').update(body).digest('hex');
 
 export function verifyMediaRecoveryCandidateHash(name, candidateSha256, recoverySha256) {
   if (sdk.includes(name)) {
     assert.equal(recoverySha256, MEDIA_RECOVERY_SDK_SHA256, 'Media recovery SDK drift');
-    assert.ok([MEDIA_RECOVERY_SDK_SHA256, MEDIA_FPR_CANDIDATE_SDK_SHA256].includes(candidateSha256), 'Unreviewed candidate SDK drift');
+    assert.ok([MEDIA_RECOVERY_SDK_SHA256, MEDIA_FPR_CANDIDATE_SDK_SHA256, MEDIA_CUP_LEVEL_CANDIDATE_SDK_SHA256].includes(candidateSha256), 'Unreviewed candidate SDK drift');
     return;
   }
   assert.equal(candidateSha256, recoverySha256, 'Candidate/media recovery compiled closure mismatch');

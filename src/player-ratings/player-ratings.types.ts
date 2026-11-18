@@ -55,6 +55,30 @@ export interface PlayerRatingStateDocument {
   padlHubProjectionRevision?: number;
 }
 
+// Historical computed events share the canonical ledger with manual changes.
+export const PADLHUB_CALCULATED_RATING_EVENTS = [
+  'RATING_BOOTSTRAPPED_FROM_GAME_RESULT',
+  'RATING_BOOTSTRAPPED_FROM_TOURNAMENT',
+  'RATING_TOURNAMENT_CANONICAL_RECONCILED',
+  'RATING_LEVEL_CORRECTION_APPLIED',
+  'FPR_CANONICAL_RECONCILIATION_APPLIED',
+  'GAME_RESULT_SUBMITTED_APPLIED',
+  'GAME_RESULT_CORRECTION_APPLIED',
+  'GAME_RESULT_CORRECTION_REVERTED',
+  'GAME_RESULT_DISPUTED_REVERTED',
+  'GAME_RESULT_EXPIRED_REVERTED',
+  'GAME_RESULT_CONFIRMED',
+  'GAME_RESULT_TIMEOUT_CONFIRMED',
+  'TOURNAMENT_RATING_FINALIZED',
+  'TOURNAMENT_RATING_CORRECTION_APPLIED',
+  'TOURNAMENT_RATING_REOPENED_REVERTED',
+  'TOURNAMENT_RATING_ANNULLED',
+  'TOURNAMENT_RATING_CORRECTION_REVERTED',
+  'TOURNAMENT_START_RATING_CHANGED',
+] as const;
+
+export type PadlHubProjectionEventType = PlayerRatingEventType | (typeof PADLHUB_CALCULATED_RATING_EVENTS)[number];
+
 export interface PadlHubPlayerLevelProjectionPayload {
   schemaVersion: 1;
   sourceEventId: string;
@@ -67,7 +91,7 @@ export interface PadlHubPlayerLevelProjectionPayload {
     numericValue: number;
   };
   source: {
-    eventType: PlayerRatingEventType;
+    eventType: PadlHubProjectionEventType;
     formulaVersion: 'padel-rating-grade-v1';
   };
 }

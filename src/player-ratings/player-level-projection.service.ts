@@ -1,7 +1,9 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import {
+  PADLHUB_CALCULATED_RATING_EVENTS,
   PadlHubPlayerLevelProjectionPayload,
+  PadlHubProjectionEventType,
   PlayerRatingStateDocument,
   ratingNumericToGrade
 } from './player-ratings.types';
@@ -265,10 +267,11 @@ function isLoopback(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
 }
 
-function isProjectionEventType(
-  value: string
-): value is 'RATING_INITIAL_ASSIGNED' | 'RATING_INITIAL_IMPORTED' | 'RATING_BOOTSTRAPPED_FROM_VIVA' | 'RATING_MANUALLY_CHANGED' {
-  return value === 'RATING_INITIAL_ASSIGNED' || value === 'RATING_INITIAL_IMPORTED'
-    || value === 'RATING_BOOTSTRAPPED_FROM_VIVA'
-    || value === 'RATING_MANUALLY_CHANGED';
+const projectionEventTypes = new Set<string>([
+  'RATING_INITIAL_ASSIGNED', 'RATING_INITIAL_IMPORTED', 'RATING_BOOTSTRAPPED_FROM_VIVA', 'RATING_MANUALLY_CHANGED',
+  ...PADLHUB_CALCULATED_RATING_EVENTS
+]);
+
+function isProjectionEventType(value: string): value is PadlHubProjectionEventType {
+  return projectionEventTypes.has(value);
 }

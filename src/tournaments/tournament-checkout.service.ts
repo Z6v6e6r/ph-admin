@@ -4,11 +4,13 @@ import { TournamentsService } from './tournaments.service';
 import { TournamentsPersistenceService } from './tournaments-persistence.service';
 
 type Row = Record<string, any>;
+type CheckoutContext = Awaited<ReturnType<TournamentsService['resolveCheckoutIdentity']>>;
 const record = (x: unknown): x is Row => !!x && typeof x === 'object' && !Array.isArray(x);
 const str = (x: Row, keys: string[]) => keys.map(k => x?.[k]).find(v => typeof v === 'string' && v.trim())?.trim();
 const id = (x: unknown): x is string => typeof x === 'string' && /^[A-Za-z0-9._:-]{1,200}$/.test(x);
 const safelyRefused = (operation: Row) => operation.state === 'FAILED' && operation.ownerNoDispatch === true
   && !operation.providerCreateAttemptedAt && !operation.providerTransactionId && !operation.providerBookingId && !operation.ownerReceipt;
+const permitsFreshAttempt = (operation: Row) => safelyRefused(operation) || operation.state === 'OWNER_CANCELLED';
 const pending = (operation: Row) => ({ operationId: operation.transactionId, state: 'PENDING_CONFIRMATION',
   code: 'TOURNAMENT_CHECKOUT_OUTCOME_UNRESOLVED', message: 'Результат записи уточняется. Повторная оплата заблокирована.' });
 
@@ -63,6 +65,10 @@ export class TournamentCheckoutService {
   }
 
   private view(operation: Row): Row {
+    if (operation.state === 'OWNER_CANCELLED') return {
+      operationId: operation.transactionId, state: 'CANCELLED', code: 'TOURNAMENT_BOOKING_CANCELLED',
+      actorClientId: operation.clientId, requestKey: operation.ownerCommand?.requestKey
+    };
     if (operation.state === 'FAILED') return { operationId: operation.transactionId, state: 'REJECTED', code: operation.ownerRefusal };
 
     if (operation.ownerCommand?.kind === 'SUBSCRIPTION') return {
@@ -78,11 +84,14 @@ export class TournamentCheckoutService {
     if (!id(requestKey)) throw new BadRequestException({ code: 'IDEMPOTENCY_KEY_REQUIRED' });
     if (!record(body)) throw new BadRequestException('Invalid checkout');
     // Identity and operation lookup precede every fresh rule/catalog read, including alternate keys.
-    const context = await this.tournaments.resolveCheckoutIdentity(ref, auth);
+    let context = await this.tournaments.resolveCheckoutIdentity(ref, auth);
     const replay = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm, { requestKey });
     if (replay) return this.resume(context, auth, replay);
-    const previous = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm);
-    if (previous && !safelyRefused(previous)) return this.resume(context, auth, previous);
+    const reconciled = await this.reconcilePreviousCancellation(context, auth);
+    const previous = reconciled.operation;
+    context = reconciled.context;
+    if (previous && !permitsFreshAttempt(previous)) return this.resume(context, auth, previous);
+    this.tournaments.assertTournamentOwnerNewOperationsOpen();
     if (!id(body.productId) || !['one-time', 'client-one-time', 'subscription'].includes(body.source)
       || (body.promoCode != null && (typeof body.promoCode !== 'string' || body.promoCode.length > 100))) {
       throw new BadRequestException({ code: 'TOURNAMENT_CHECKOUT_INVALID' });
@@ -117,7 +126,7 @@ export class TournamentCheckoutService {
       // seat. Resolve that original operation before surfacing a rule conflict.
       const winner = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm, { requestKey })
         ?? await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm);
-      if (!winner || safelyRefused(winner)) throw error;
+      if (!winner || permitsFreshAttempt(winner)) throw error;
       return this.resume(context, auth, winner);
     }
     const operation = this.operation(context, requestKey, { kind: 'CHECKOUT', payload });
@@ -125,7 +134,7 @@ export class TournamentCheckoutService {
     if (!reserved) {
       const winner = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm, { requestKey })
         ?? await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm);
-      if (winner) return this.resume(context, auth, winner);
+      if (winner && !permitsFreshAttempt(winner)) return this.resume(context, auth, winner);
       throw new ConflictException({ code: 'TOURNAMENT_RULE_OR_CAPACITY_CHANGED' });
     }
     return this.resume(context, auth, operation);
@@ -133,49 +142,113 @@ export class TournamentCheckoutService {
 
   async subscriptionAdmission(ref: string, auth: string | undefined, body: unknown): Promise<Row> {
     if (!record(body) || !id(body.operationId) || !id(body.clientSubscriptionId)) throw new BadRequestException('Invalid subscription admission');
-    const context = await this.tournaments.resolveCheckoutIdentity(ref, auth);
+    let context = await this.tournaments.resolveCheckoutIdentity(ref, auth);
     const replay = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm, { requestKey: body.operationId });
-    const previous = replay ?? await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm);
-    if (previous && (replay || !safelyRefused(previous))) {
-      if (previous.ownerCommand?.kind !== 'SUBSCRIPTION'
+    const reconciled = replay ? { operation: replay, context } : await this.reconcilePreviousCancellation(context, auth);
+    const previous = reconciled.operation;
+    context = reconciled.context;
+    if (previous && (replay || !permitsFreshAttempt(previous))) {
+      if (!this.boundToContext(previous, context) || previous.ownerCommand?.kind !== 'SUBSCRIPTION'
         || previous.ownerCommand.requestOperationId !== body.operationId
         || previous.ownerCommand.clientSubscriptionId !== body.clientSubscriptionId) {
         throw new ConflictException({ code: 'TOURNAMENT_OPERATION_ALREADY_STARTED', operationId: previous.transactionId });
       }
       return this.view(previous);
     }
+    this.tournaments.assertTournamentOwnerNewOperationsOpen();
     const rule = await this.tournaments.checkCheckoutAdmission(context, auth);
     const operation = this.operation(context, body.operationId, { kind: 'SUBSCRIPTION',
       requestOperationId: body.operationId, clientSubscriptionId: body.clientSubscriptionId });
     const saved = await this.persistence.reservePublicJoinPayment(context.tournament.id, operation, rule);
     if (!saved) {
       const winner = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm);
-      if (winner?.ownerCommand?.kind === 'SUBSCRIPTION' && winner.ownerCommand.requestOperationId === body.operationId
+      if (winner?.ownerCommand?.kind === 'SUBSCRIPTION' && this.boundToContext(winner, context) && winner.ownerCommand.requestOperationId === body.operationId
         && winner.ownerCommand.clientSubscriptionId === body.clientSubscriptionId) return this.view(winner);
       throw new ConflictException({ code: 'TOURNAMENT_RULE_OR_CAPACITY_CHANGED' });
     }
     return this.view(operation);
   }
 
-  async reconcile(ref: string, auth: string | undefined): Promise<Row> {
+  private boundToContext(operation: Row, context: CheckoutContext): boolean {
+    return operation.clientId === context.actor.clientId && operation.phone === context.actor.phoneNorm
+      && operation.exerciseId === context.exerciseId && operation.studioId === context.studioId
+      && operation.widgetId === context.tenantKey && operation.ownerCommand?.version === 1;
+  }
+
+  private async readProviderBookings(operation: Row, auth?: string, history = false): Promise<Row[]> {
+    const storedBooking = operation.providerBookingId ?? operation.ownerReceipt?.bookingId;
+    const tx = operation.ownerReceipt?.transactionId;
+    if (operation.ownerCommand?.kind === 'CHECKOUT' ? !id(tx) : !id(storedBooking)) return [];
+    const page = history ? '/history?includeCanceled=true&size=1000' : '?size=1000';
+    const raw = await this.http(`https://api.vivacrm.ru/end-user/api/v2/${encodeURIComponent(operation.widgetId)}/bookings${page}`, auth);
+    return this.rows(raw).filter(row => id(row.id)
+      && (row.exerciseId ?? row.exercise?.id) === operation.exerciseId
+      && (row.clientId ?? row.client?.id) === operation.clientId
+      && (!storedBooking || row.id === storedBooking)
+      && (operation.ownerCommand.kind !== 'CHECKOUT' || (row.transactionId ?? row.transactionStatus?.transactionId) === tx));
+  }
+
+  private bookingCancelled(booking: Row): boolean {
+    const status = String(booking.status ?? '').toUpperCase();
+    const flags = [booking.cancelled, booking.canceled, booking.isCancelled];
+    if (flags.some(flag => flag === false)) return false;
+    return status === 'CANCELLED' || status === 'CANCELED' || (!status && flags.some(flag => flag === true));
+  }
+
+  private async readCancelledBooking(operation: Row, auth?: string, bookingId?: string): Promise<Row | undefined> {
+    if (bookingId && operation.providerBookingId && bookingId !== operation.providerBookingId) return undefined;
+    const history = await this.readProviderBookings(operation, auth, true);
+    if (history.length !== 1 || (bookingId && history[0].id !== bookingId) || !this.bookingCancelled(history[0])) return undefined;
+    const active = await this.readProviderBookings(operation, auth);
+    return active.some(booking => !this.bookingCancelled(booking)) ? undefined : history[0];
+  }
+
+  private async reconcilePreviousCancellation(context: CheckoutContext, auth?: string): Promise<{ operation: Row | null; context: CheckoutContext }> {
+    const operation = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm);
+    if (!operation || !this.boundToContext(operation, context) || permitsFreshAttempt(operation)) return { operation, context };
+    let booking: Row | undefined;
+    try { booking = await this.readCancelledBooking(operation, auth); } catch { return { operation, context }; }
+    if (!booking || !await this.persistence.cancelTournamentCheckout(context.tournament.id, operation, booking.id)) return { operation, context };
+    // Re-read both the fresh rule revision and a possible concurrent successor.
+    const refreshed = await this.tournaments.resolveCheckoutIdentity(context.exerciseId, auth);
+    if (refreshed.tournament.id !== context.tournament.id || !this.boundToContext(operation, refreshed)) {
+      throw new ConflictException({ code: 'TOURNAMENT_TARGET_CHANGED' });
+    }
+    return { context: refreshed, operation: await this.persistence.readTournamentCheckoutOperation(
+      refreshed.tournament.id, refreshed.actor.phoneNorm
+    ) };
+  }
+
+  async reconcile(ref: string, auth: string | undefined, cancelledBookingId?: unknown): Promise<Row> {
+    if (cancelledBookingId !== undefined && !id(cancelledBookingId)) throw new BadRequestException();
     const context = await this.tournaments.resolveCheckoutIdentity(ref, auth);
     const operation = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm);
-    if (!operation || operation.clientId !== context.actor.clientId) throw new ConflictException({ code: 'TOURNAMENT_OPERATION_NOT_FOUND' });
-    if (operation.ownerCommand?.kind !== 'CHECKOUT' || !id(operation.ownerReceipt?.transactionId)) return this.view(operation);
-    const tx = operation.ownerReceipt.transactionId;
-    const raw = await this.http(`https://api.vivacrm.ru/end-user/api/v2/${encodeURIComponent(operation.widgetId)}/bookings?size=1000`, auth);
-    // A matching exercise alone is not attribution: require this acknowledged transaction.
-    const bookings = this.rows(raw).filter(row => (row.exerciseId ?? row.exercise?.id) === operation.exerciseId
-      && (row.clientId ?? row.client?.id) === operation.clientId
-      && (row.transactionId ?? row.transactionStatus?.transactionId) === tx
-      && !row.cancelled && !row.canceled && !row.isCancelled
-      && !/CANCEL|REFUND|FAIL|EXPIRE|DELETE/.test(String(row.status ?? '').toUpperCase()));
-    if (bookings.length === 1 && id(bookings[0].id)) {
-      const status = bookings[0].transactionStatus;
-      const paid = ['PAID', 'COMPLETED'].includes(typeof status === 'string' ? status : status?.transactionStatus);
-      if (paid) await this.persistence.completeTournamentCheckout(context.tournament.id, operation, bookings[0].id, true);
+    if (!operation || !this.boundToContext(operation, context)) {
+      if (cancelledBookingId) return { state: 'NOT_TRACKED' };
+      throw new ConflictException({ code: 'TOURNAMENT_OPERATION_NOT_FOUND' });
     }
-    return this.view(operation);
+    if (operation.state === 'OWNER_CANCELLED') {
+      return cancelledBookingId && operation.providerBookingId !== cancelledBookingId
+        ? { state: 'NOT_TRACKED' } : this.view(operation);
+    }
+    let cancelled: Row | undefined;
+    try { cancelled = await this.readCancelledBooking(operation, auth, cancelledBookingId); }
+    catch (error) { if (cancelledBookingId) throw error; }
+    if (cancelled && await this.persistence.cancelTournamentCheckout(context.tournament.id, operation, cancelled.id)) {
+      return this.view({ ...operation, state: 'OWNER_CANCELLED' });
+    }
+    const matches = cancelledBookingId || operation.ownerCommand?.kind !== 'CHECKOUT'
+      ? [] : await this.readProviderBookings(operation, auth);
+    const booking = matches.length === 1 ? matches[0] : undefined;
+    if (booking
+      && !booking.cancelled && !booking.canceled && !booking.isCancelled
+      && !/CANCEL|REFUND|FAIL|EXPIRE|DELETE/.test(String(booking.status ?? '').toUpperCase())) {
+      const status = booking.transactionStatus;
+      const paid = ['PAID', 'COMPLETED'].includes(typeof status === 'string' ? status : status?.transactionStatus);
+      if (paid) await this.persistence.completeTournamentCheckout(context.tournament.id, operation, booking.id, true);
+    }
+    if (cancelledBookingId && operation.providerBookingId !== cancelledBookingId && !operation.ownerReceipt?.transactionId) return { state: 'NOT_TRACKED' };
+    return cancelledBookingId ? pending(operation) : this.view(operation);
   }
 
   async completeSubscription(ref: string, auth: string | undefined, token: string | undefined, body: unknown): Promise<Row> {
@@ -191,10 +264,11 @@ export class TournamentCheckoutService {
       return { state: 'LEGACY_UNTRACKED', requestOperationId: body.operationId };
     }
     if ((body.ownerOperationId !== undefined && operation.transactionId !== body.ownerOperationId)
-      || operation.ownerCommand?.kind !== 'SUBSCRIPTION' || operation.ownerCommand.requestOperationId !== body.operationId
+      || !this.boundToContext(operation, context) || operation.ownerCommand?.kind !== 'SUBSCRIPTION' || operation.ownerCommand.requestOperationId !== body.operationId
       || operation.ownerCommand.clientSubscriptionId !== body.clientSubscriptionId || operation.clientId !== actor.clientId) {
       throw new ConflictException({ code: 'TOURNAMENT_OPERATION_BINDING_MISMATCH' });
     }
+    if (operation.state === 'OWNER_CANCELLED') throw new ConflictException({ code: 'TOURNAMENT_BOOKING_CANCELLED' });
     if (!await this.persistence.completeTournamentCheckout(context.tournament.id, operation, body.bookingId, false)) {
       throw new ServiceUnavailableException({ code: 'TOURNAMENT_COMPLETION_UNRESOLVED' });
     }
@@ -228,14 +302,14 @@ export class TournamentCheckoutService {
     throw new ServiceUnavailableException({ code: 'TOURNAMENT_ABORT_UNRESOLVED' });
   }
 
-  private operation(context: Awaited<ReturnType<TournamentsService['resolveCheckoutIdentity']>>, key: string, command: Row): Row {
+  private operation(context: CheckoutContext, key: string, command: Row): Row {
     return { transactionId: `tournament-owner:${randomUUID()}`, state: 'PROVIDER_CREATE_PENDING', operationType: 'TRANSACTION',
       ownerCommand: { ...command, version: 1, requestKey: key }, clientId: context.actor.clientId,
       phone: context.actor.phoneNorm, exerciseId: context.exerciseId, studioId: context.studioId, widgetId: context.tenantKey,
       createdAt: new Date().toISOString() };
   }
 
-  private async resume(context: Awaited<ReturnType<TournamentsService['resolveCheckoutIdentity']>>, auth: string | undefined, operation: Row): Promise<Row> {
+  private async resume(context: CheckoutContext, auth: string | undefined, operation: Row): Promise<Row> {
     if (operation.clientId !== context.actor.clientId || operation.exerciseId !== context.exerciseId
       || operation.studioId !== context.studioId || operation.widgetId !== context.tenantKey
       || operation.ownerCommand?.version !== 1 || operation.ownerCommand.kind !== 'CHECKOUT') {

@@ -1657,8 +1657,10 @@ export class TournamentsService {
         missingFields: [], waitlistAllowed: false, payment };
       const occupied = tournament.participants.length + this.getPendingJoinPayments(tournament)
         .filter(item => this.isCapacityHoldingPendingJoinPayment(item)).length;
+      const sourceProvider = this.resolveSourceTournamentProvider(tournament);
+      const secureFreeSupported = sourceProvider === 'VIVA' && isTournamentLevelRestricted(tournament) && !!this.vivaAdminService;
       if (gender.decision.gender !== 'MIXED' && !payment.required
-        && this.resolveSourceTournamentProvider(tournament) !== 'NON_VIVA'
+        && sourceProvider !== 'NON_VIVA' && !secureFreeSupported
         && occupied < Math.max(2, Number(tournament.maxPlayers || 0) || 8)) {
         return { ok: false, code: 'TOURNAMENT_SECURE_JOIN_REQUIRED',
           message: 'Бесплатная внешняя запись для этого турнира пока недоступна. Нужен защищённый способ участия.',
@@ -1799,6 +1801,28 @@ export class TournamentsService {
     const registered = this.findParticipantByPhone(tournament.participants, normalizedPhone);
     if (registered) return { ok: true, code: 'ALREADY_REGISTERED', message: 'Игрок уже записан в турнир.',
       tournamentId: tournament.id, tournamentSlug: tournament.slug, participant: registered };
+    const pendingBeforeAdmission = this.findPendingJoinPayment(tournament, normalizedPhone);
+    if (pendingBeforeAdmission && input.vivaAuthorizationHeader && this.resolveSourceTournamentProvider(tournament) === 'VIVA') {
+      const original = await this.tournamentsPersistence.readTournamentCheckoutOperation(tournament.id, normalizedPhone, {
+        transactionId: pendingBeforeAdmission.transactionId
+      });
+      if (original?.ownerCommand?.kind === 'FREE_BOOKING' && original.state === 'PROVIDER_RESULT_UNKNOWN') {
+        const bookingId = this.pickString(original.ownerReceipt?.bookingId);
+        if (bookingId) {
+          const identity = await this.resolveCheckoutIdentity(String(original.exerciseId), input.vivaAuthorizationHeader);
+          if (identity.tournament.id === tournament.id && identity.actor.clientId === original.clientId
+              && identity.actor.phoneNorm === original.phone && identity.tenantKey === original.widgetId
+              && identity.studioId === original.studioId
+              && await this.tournamentsPersistence.completeTournamentCheckout(tournament.id, original, bookingId, false)) {
+            this.invalidatePublicDirectoryCache();
+            return { ok: true, code: 'REGISTERED', message: 'Игрок успешно записан в турнир.',
+              tournamentId: tournament.id, tournamentSlug: tournament.slug };
+          }
+        }
+        return { ok: false, code: 'BOOKING_FAILED', message: 'Подтверждение записи ожидается. Повторная запись не создана.',
+          tournamentId: tournament.id, tournamentSlug: tournament.slug };
+      }
+    }
     const access = await this.checkFreshTournamentLevel(tournament, input);
     normalizedLevel = access.levelLabel;
     if (!access.ok) {
@@ -1879,10 +1903,16 @@ export class TournamentsService {
       };
     }
 
-    if (this.findPendingJoinPayment(tournament, normalizedPhone)) return {
-      ok: false, code: 'BOOKING_FAILED', message: 'Существующая оплата требует продолжения исходной операции.',
-      tournamentId: tournament.id, tournamentSlug: tournament.slug
-    };
+    const pendingPayment = this.findPendingJoinPayment(tournament, normalizedPhone);
+    let pendingFree: Record<string, any> | null = null;
+    if (pendingPayment) {
+      const original = await this.tournamentsPersistence.readTournamentCheckoutOperation(tournament.id, normalizedPhone, {
+        transactionId: pendingPayment.transactionId
+      });
+      if (original?.ownerCommand?.kind === 'FREE_BOOKING') pendingFree = original;
+      else return { ok: false, code: 'BOOKING_FAILED', message: 'Существующая оплата требует продолжения исходной операции.',
+        tournamentId: tournament.id, tournamentSlug: tournament.slug };
+    }
     const finalAccess = await this.checkFreshTournamentLevel(tournament, input);
     if (!finalAccess.ok) return { ok: false, code: finalAccess.code, message: finalAccess.message,
       tournamentSlug: tournament.slug, levelDecision: finalAccess.levelDecision };
@@ -1910,7 +1940,7 @@ export class TournamentsService {
     const reservedPaymentSeats = this.getPendingJoinPayments(tournament).filter(
       (item) => this.isCapacityHoldingPendingJoinPayment(item)
     ).length;
-    if (tournament.participants.length + reservedPaymentSeats >= maxPlayers) {
+    if (!pendingFree && tournament.participants.length + reservedPaymentSeats >= maxPlayers) {
       const nextWaitlist: TournamentParticipant[] = [
         ...tournament.waitlist,
         {
@@ -1936,12 +1966,17 @@ export class TournamentsService {
       };
     }
 
-    if ((gender.decision.gender !== 'MIXED' || isTournamentLevelRestricted(tournament))
-      && this.resolveSourceTournamentProvider(tournament) !== 'NON_VIVA') {
+    const sourceProvider = this.resolveSourceTournamentProvider(tournament);
+    if (isTournamentLevelRestricted(tournament) && sourceProvider === 'VIVA'
+        && this.vivaAdminService && input.vivaAuthorizationHeader) {
+      return this.registerRestrictedFreeViva(tournament, participant, gender.decision, input.vivaAuthorizationHeader, pendingFree);
+    }
+    if ((gender.decision.gender !== 'MIXED' || isTournamentLevelRestricted(tournament)) && sourceProvider !== 'NON_VIVA') {
       return { ok: false, code: 'TOURNAMENT_SECURE_JOIN_REQUIRED', tournamentId: tournament.id,
         tournamentSlug: tournament.slug,
         message: 'Для этого турнира нужна защищённая запись. Бесплатная внешняя запись пока недоступна; выберите защищённый способ участия, если он предложен.' };
     }
+    this.assertTournamentOwnerNewOperationsOpen();
     const vivaBookingCreated = await this.createSourceTournamentBooking(tournament, {
       name: participant.name,
       phone: normalizedPhone,
@@ -1997,6 +2032,70 @@ export class TournamentsService {
       participant,
       payment
     };
+  }
+
+  private async registerRestrictedFreeViva(
+    tournament: CustomTournament, participant: TournamentParticipant, rule: TournamentAdmissionRule, auth: string,
+    original: Record<string, any> | null
+  ): Promise<TournamentRegistrationResponse> {
+    const response = { tournamentId: tournament.id, tournamentSlug: tournament.slug };
+    const pending: TournamentRegistrationResponse = { ...response, ok: false, code: 'BOOKING_FAILED',
+      message: 'Подтверждение записи ожидается. Повторная запись не создана.' };
+    const exerciseId = this.resolveBookingConfig(tournament, true).vivaExerciseId;
+    if (!exerciseId || !this.vivaAdminService) return pending;
+    if (!original) this.assertTournamentOwnerNewOperationsOpen();
+    const identity = await this.resolveCheckoutIdentity(exerciseId, auth);
+    const { clientId, phoneNorm } = identity.actor;
+    if (!clientId || !phoneNorm || identity.tournament.id !== tournament.id || phoneNorm !== participant.phone) {
+      throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+    }
+    const operationId = `tournament-owner:${randomUUID()}`;
+    const operation = original ?? {
+      transactionId: operationId, phone: phoneNorm, clientId,
+      exerciseId, studioId: identity.studioId, widgetId: identity.tenantKey,
+      state: 'PROVIDER_CREATE_PENDING', ownerCommand: { kind: 'FREE_BOOKING', version: 1, requestKey: operationId },
+      createdAt: new Date().toISOString()
+    };
+    if (operation.ownerCommand.kind !== 'FREE_BOOKING' || operation.state !== 'PROVIDER_CREATE_PENDING'
+        || operation.clientId !== clientId || operation.phone !== phoneNorm || operation.widgetId !== identity.tenantKey
+        || operation.exerciseId !== exerciseId || operation.studioId !== identity.studioId) return pending;
+    // A valid, complete empty catalog and both stored payment configurations must permit free booking.
+    // Read them before creating a hold so catalog outages cannot strand new reservations.
+    const details = this.toRecord(identity.tournament.details) ?? {};
+    const catalog = await this.fetchVivaJoinPurchaseOptions(identity.tournament, { throwOnError: true });
+    if (catalog.length || this.resolveBookingConfig(identity.tournament, true).required
+        || this.resolveBookingConfig({ ...identity.tournament, details: { joinFlow: details.joinFlow } }).required) {
+      if (original) await this.tournamentsPersistence.rejectTournamentCheckoutPreparation(tournament.id, operation, 'FREE_BOOKING_PAYMENT_RULE_CHANGED');
+      return { ...response, ok: false, code: 'PURCHASE_REQUIRED', message: 'Условия турнира требуют оплаты или абонемента.' };
+    }
+    if (!original && !await this.tournamentsPersistence.reservePublicJoinPayment(tournament.id, operation, rule)) return pending;
+    const current = await this.resolveCheckoutIdentity(exerciseId, auth);
+    if (current.tournament.id !== tournament.id || current.actor.clientId !== operation.clientId
+        || current.actor.phoneNorm !== operation.phone || current.studioId !== operation.studioId
+        || current.tenantKey !== operation.widgetId) return pending;
+    let currentRule;
+    try { currentRule = await this.checkCheckoutAdmission(current, auth); }
+    catch (error) {
+      // No provider write was attempted. Keep an immutable refusal and release the hold.
+      await this.tournamentsPersistence.rejectTournamentCheckoutPreparation(tournament.id, operation, 'FREE_BOOKING_ADMISSION_CHANGED');
+      throw error;
+    }
+    const currentDetails = this.toRecord(current.tournament.details) ?? {};
+    if (this.resolveBookingConfig(current.tournament, true).required
+        || this.resolveBookingConfig({ ...current.tournament, details: { joinFlow: currentDetails.joinFlow } }).required) {
+      await this.tournamentsPersistence.rejectTournamentCheckoutPreparation(tournament.id, operation, 'FREE_BOOKING_PAYMENT_RULE_CHANGED');
+      return { ...response, ok: false, code: 'PURCHASE_REQUIRED', message: 'Условия турнира требуют оплаты или абонемента.' };
+    }
+    if (!await this.tournamentsPersistence.claimTournamentCheckout(tournament.id, operation, currentRule, current.mappingChecks)) return pending;
+    const result = await this.vivaAdminService.createExerciseBooking({
+      exerciseId, clientId, phone: phoneNorm
+    });
+    if (result.outcome !== 'CREATED') return pending;
+    if (!await this.tournamentsPersistence.recordFreeTournamentBookingReceipt(tournament.id, operation, result.bookingId)
+      || !await this.tournamentsPersistence.completeTournamentCheckout(tournament.id, operation, result.bookingId, false, participant)) return pending;
+    this.invalidatePublicDirectoryCache();
+    return { ...response, ok: true, code: 'REGISTERED', message: 'Игрок успешно записан в турнир.',
+      participant };
   }
 
   async getPublicRegistrationByTournamentRef(
@@ -2250,6 +2349,7 @@ export class TournamentsService {
     if (!latestRule || !this.sameAdmissionRule(latestRule, rule)) {
       throw new ForbiddenException({ code: 'TOURNAMENT_SECURE_JOIN_REQUIRED', message: 'Правила изменились. Используйте защищённую запись на странице турнира.' });
     }
+    this.assertTournamentOwnerNewOperationsOpen();
     const vivaCheckout = await this.vivaAdminService.createTournamentEnergyCheckout({
       clientPhone,
       clientId: authProfile.clientId,
@@ -2392,6 +2492,8 @@ export class TournamentsService {
       };
     }
     }
+
+    this.assertTournamentOwnerNewOperationsOpen();
 
     // A payment that already started passed the level gate at its start. Recovery/finalization
     // keeps that decision instead of refusing paid participation after a later range, tolerance
@@ -5646,7 +5748,7 @@ export class TournamentsService {
       name: sourceParticipant.name || customParticipant.name,
       phone: sourceParticipant.phone ?? customParticipant.phone,
       avatarUrl: sourceParticipant.avatarUrl ?? customParticipant.avatarUrl,
-      levelLabel: sourceParticipant.levelLabel ?? customParticipant.levelLabel,
+      levelLabel: customParticipant.levelLabel,
       gender: sourceParticipant.gender ?? customParticipant.gender,
       paymentStatus: sourceParticipant.paymentStatus ?? customParticipant.paymentStatus,
       status: sourceParticipant.status ?? customParticipant.status,
@@ -5856,6 +5958,12 @@ export class TournamentsService {
         : { status: 'UNKNOWN' };
     } catch (error) {
       return error instanceof ConflictException ? { status: 'UNKNOWN' } : { status: 'UNAVAILABLE' };
+    }
+  }
+
+  assertTournamentOwnerNewOperationsOpen(): void {
+    if (process.env.TOURNAMENT_OWNER_RECOVERY_ONLY === 'true') {
+      throw new ServiceUnavailableException({ code: 'TOURNAMENT_NEW_OPERATIONS_PAUSED' });
     }
   }
 
@@ -6892,7 +7000,7 @@ export class TournamentsService {
   private parsePendingJoinPayment(
     record: Record<string, unknown> | null
   ): PendingJoinPayment | null {
-    if (!record || (record.ownerCommand && record.state === 'OWNER_COMPLETED')) {
+    if (!record || (record.ownerCommand && ['OWNER_COMPLETED', 'OWNER_CANCELLED'].includes(String(record.state)))) {
       return null;
     }
     const transactionId = this.pickString(record.transactionId);
@@ -7702,6 +7810,7 @@ export class TournamentsService {
     const widgetId = this.pickString(booking.vivaWidgetId) ?? this.vivaEndUserWidgetId;
     const exerciseId = this.pickString(booking.vivaExerciseId);
     if (!widgetId || !exerciseId) {
+      if (options?.throwOnError) throw new Error('Missing Viva product catalog identity');
       return [];
     }
 
@@ -7732,7 +7841,11 @@ export class TournamentsService {
         const list =
           (record && (record.items ?? record.products ?? record.result ?? record.data))
           ?? payload;
-        return this.normalizeVivaProductCatalog(list, productType);
+        const normalized = this.normalizeVivaProductCatalog(list, productType);
+        if (options?.throwOnError && (!Array.isArray(list) || normalized.length !== list.length)) {
+          throw new Error(`Viva product catalog ${path} returned incomplete data`);
+        }
+        return normalized;
       };
 
       const [subscriptions, oneTimes] = await Promise.all([
@@ -8423,8 +8536,7 @@ export class TournamentsService {
           normalizedPhone
         ),
         phone: normalizedPhone,
-        avatarUrl: participant.avatarUrl ?? lookup.avatarUrl ?? undefined,
-        levelLabel: participant.levelLabel ?? lookup.levelLabel ?? undefined
+        avatarUrl: participant.avatarUrl ?? lookup.avatarUrl ?? undefined
       };
     } catch (error) {
       this.logger.warn(

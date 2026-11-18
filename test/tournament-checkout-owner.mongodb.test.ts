@@ -369,6 +369,134 @@ async function main() {
       const replay = await owner(300).service.subscriptionAdmission('exercise-abort-seat', 'Bearer synthetic-token', subscription('original'));
       assert.equal(replay.state, 'REJECTED');
     });
+    await check('verified paid cancellation retires only the original hold and rechecks current level', async () => {
+      const name = 'paid-cancel-rejoin';
+      await seedLastSeat(name);
+      const f = instance(350);
+      const originalCount = postCount;
+      result = async () => ({ transactionId: 'paid-cancel-tx-' + postCount, paymentUrl: 'https://pay.example/synthetic' });
+      const original = await checkout(f.service, name, 'first');
+      const booking = { id: 'original-paid-booking', exerciseId: 'exercise-' + name, clientId: actor(350).clientId,
+        transactionId: original.transactionId, transactionStatus: 'PAID' };
+      let cancelled = false;
+      let contradictory = false;
+      const mockBookings = (service: TournamentCheckoutService) => {
+        const next = (service as any).http;
+        (service as any).http = async (url: string, auth: string, data?: Row) => {
+          if (!url.includes('/bookings')) return next(url, auth, data);
+          if (url.includes('/history?')) return { content: [cancelled ? { ...booking, status: 'CANCELLED', isCancelled: true } : booking] };
+          return { content: !cancelled || contradictory ? [booking] : [] };
+        };
+      };
+      mockBookings(f.service);
+      await f.service.reconcile('exercise-' + name, 'Bearer synthetic-token');
+      const old = await f.repo.readTournamentCheckoutOperation(name, actor(350).phoneNorm);
+      assert.equal(old?.state, 'OWNER_COMPLETED');
+      // An older complete receipt may have been normalized without vivaBookingId.
+      await collection.updateOne({ id: name, 'participants.id': 'owner:' + old?.transactionId },
+        { $unset: { 'participants.$.vivaBookingId': '' } });
+      assert.equal((await collection.findOne({ id: name }))!.participants.length, 2);
+      cancelled = true;
+      contradictory = true;
+      assert.equal((await f.service.reconcile('exercise-' + name, 'Bearer synthetic-token', booking.id)).state, 'PENDING_CONFIRMATION');
+      assert.equal((await collection.findOne({ id: name }))!.participants.length, 2);
+      contradictory = false;
+      assert.equal((await f.service.reconcile('exercise-' + name, 'Bearer synthetic-token', booking.id)).state, 'CANCELLED');
+      assert.equal((await checkout(f.service, name, 'first')).state, 'CANCELLED');
+      rating = 6;
+      try { await assert.rejects(checkout(f.service, name, 'refused-after-cancel'), /Forbidden/); }
+      finally { rating = 3.25; }
+      const restarted = instance(350);
+      mockBookings(restarted.service);
+      const fresh = await checkout(restarted.service, name, 'fresh-after-cancel');
+      assert.notEqual(fresh.operationId, original.operationId);
+      assert.notEqual(fresh.transactionId, original.transactionId);
+      assert.equal(postCount - originalCount, 2);
+      assert.equal(await f.repo.completeTournamentCheckout(name, old!, booking.id, true), false);
+      const row = (await collection.findOne({ id: name }))!;
+      assert.deepEqual(row.participants.map((p: Row) => p.phone), ['12025550999']);
+      assert.equal(row.details.booking.pendingJoinPayments[0].state, 'OWNER_CANCELLED');
+      assert.equal(row.details.booking.pendingJoinPayments[1].transactionId, fresh.operationId);
+    });
+    await check('cancelled subscription re-admits a new request and late complete/abort preserve its owner hold', async () => {
+      const name = 'subscription-cancel-rejoin';
+      await seedLastSeat(name);
+      const f = owner(351);
+      const grant = await f.service.subscriptionAdmission('exercise-' + name, 'Bearer synthetic-token', subscription('first'));
+      const finish = (service: TournamentCheckoutService) => service.completeSubscription('exercise-' + name, 'Bearer synthetic-token',
+        'synthetic-owner-token', { ...subscription('first'), ownerOperationId: grant.operationId, bookingId: 'old-subscription-booking' });
+      await finish(f.service);
+      const restarted = owner(351);
+      (restarted.service as any).http = async (url: string) => url.includes('/history?') ? [{
+        id: 'old-subscription-booking', exerciseId: 'exercise-' + name,
+        clientId: actor(351).clientId, status: 'CANCELLED'
+      }] : [];
+      const successor = await restarted.service.subscriptionAdmission('exercise-' + name, 'Bearer synthetic-token', subscription('next'));
+      assert.notEqual(successor.operationId, grant.operationId);
+      await assert.rejects(finish(restarted.service), /Conflict/);
+      await assert.rejects(abort(restarted, name, grant));
+      const row = (await collection.findOne({ id: name }))!;
+      assert.deepEqual(row.participants.map((p: Row) => p.phone), ['12025550999']);
+      assert.equal(row.details.booking.pendingJoinPayments[0].state, 'OWNER_CANCELLED');
+      assert.equal(row.details.booking.pendingJoinPayments[1].transactionId, successor.operationId);
+    });
+    await check('exact cancelled booking with a pending payment releases its only held seat', async () => {
+      const name = 'paid-cancelled-before-completion';
+      await seedLastSeat(name);
+      const f = instance(352);
+      const original = await checkout(f.service, name, 'original');
+      const booking = { id: 'cancelled-before-commit', exerciseId: 'exercise-' + name, clientId: actor(352).clientId,
+        transactionId: original.transactionId, status: 'CANCELLED' };
+      (f.service as any).http = async (url: string) => url.includes('/history?') ? [booking] : [];
+      assert.equal((await f.service.reconcile('exercise-' + name, 'Bearer synthetic-token', booking.id)).state, 'CANCELLED');
+      const row = (await collection.findOne({ id: name }))!;
+      assert.equal(row.participants.length, 1);
+      assert.equal(row.details.booking.pendingJoinPayments[0].state, 'OWNER_CANCELLED');
+      await checkout(instance(353).service, name, 'last-seat');
+    });
+    await check('level-restricted linked free registration uses one booking, no checkout or visit, and rejects invalid candidates', async () => {
+      const name = 'free-restricted';
+      await seedLastSeat(name);
+      await collection.updateOne({ id: name }, { $set: { 'details.sourceTournamentSnapshot': { source: 'VIVA' } } });
+      let bookingPosts = 0;
+      const before = postCount;
+      const fixture = () => {
+        const f = instance(354);
+        Object.assign(f.tournaments, {
+          requireCustomBySlug: async () => collection.findOne({ id: name }),
+          requireCustomByPublicRef: async () => collection.findOne({ id: name }),
+          resolveSourceTournamentProvider: () => 'VIVA',
+          fetchVivaJoinPurchaseOptions: async () => [],
+          enrichTournamentParticipantWithViva: async (p: Row) => p,
+          invalidatePublicDirectoryCache: () => {},
+          vivaAdminService: { createExerciseBooking: async (binding: Row) => {
+            assert.deepEqual(binding, { exerciseId: 'exercise-' + name, clientId: actor(354).clientId, phone: actor(354).phoneNorm });
+            bookingPosts += 1;
+            return { outcome: 'CREATED', bookingId: 'free-provider-booking' };
+          } }
+        });
+        return f;
+      };
+      const register = (f = fixture()) => f.tournaments.registerPublicParticipantByTournamentRef(name, {
+        phone: actor(354).phoneNorm, name: 'Synthetic', vivaAuthorizationHeader: 'Bearer synthetic-token',
+        trustedIdentity: f.tournaments.rememberRegistrationIdentity({ phone: actor(354).phoneNorm, clientId: actor(354).clientId })
+      });
+      rating = 6;
+      try { assert.equal((await register()).code, 'LEVEL_NOT_ALLOWED'); }
+      finally { rating = 3.25; }
+      assert.equal(bookingPosts, 0);
+      assert.equal((await collection.findOne({ id: name }))!.details.booking.pendingJoinPayments.length, 0);
+      const results = await Promise.all([register(), register()]);
+      assert.ok(results.some(response => response.code === 'REGISTERED'));
+      assert.equal((await register()).code, 'ALREADY_REGISTERED');
+      const row = (await collection.findOne({ id: name }))!;
+      assert.equal(row.participants.length, 2);
+      assert.equal(row.details.booking.pendingJoinPayments[0].ownerCommand.kind, 'FREE_BOOKING');
+      assert.equal(row.details.booking.pendingJoinPayments[0].providerBookingId, 'free-provider-booking');
+      assert.equal(row.details.booking.pendingJoinPayments[0].providerTransactionId, undefined);
+      assert.equal(bookingPosts, 1);
+      assert.equal(postCount, before);
+    });
     await check('abort/complete race never leaves a completed participant without capacity accounting', async () => {
       for (const order of ['abort', 'complete', 'concurrent']) {
         const name = 'abort-race-' + order; await seedLastSeat(name); const f = owner(310);

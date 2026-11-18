@@ -627,7 +627,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     if (selector) return rows.find((p: Record<string, any>) =>
       (selector.requestKey === undefined || p.ownerCommand?.requestKey === selector.requestKey)
       && (selector.transactionId === undefined || p.transactionId === selector.transactionId)) ?? null;
-    return rows.find((p: Record<string, unknown>) => !['EXPIRED', 'FAILED', 'OWNER_COMPLETED'].includes(String(p.state)))
+    return rows.find((p: Record<string, unknown>) => !['EXPIRED', 'FAILED', 'OWNER_COMPLETED', 'OWNER_CANCELLED'].includes(String(p.state)))
       ?? rows.at(-1) ?? null;
   }
 
@@ -656,12 +656,65 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       { writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } });
   }
 
-  async completeTournamentCheckout(id: string, operation: Record<string, any>, bookingId: string, paid: boolean): Promise<boolean> {
+  async recordFreeTournamentBookingReceipt(id: string, operation: Record<string, any>, bookingId: string): Promise<boolean> {
     const collection = await this.collection(false);
-    const participant = { id: `owner:${operation.transactionId}`, phone: operation.phone, name: 'Player',
+    const saved = await collection.updateOne({ ...this.buildIdFilter(id),
+      'details.booking.pendingJoinPayments': { $elemMatch: {
+        transactionId: operation.transactionId, phone: operation.phone, clientId: operation.clientId,
+        ownerCommand: operation.ownerCommand, state: 'PROVIDER_RESULT_UNKNOWN', ownerReceipt: { $exists: false }
+      } }
+    }, { $set: { 'details.booking.pendingJoinPayments.$.ownerReceipt': { bookingId } } },
+    { writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } });
+    return saved.acknowledged && saved.matchedCount === 1;
+  }
+
+  /** Provider cancellation proof has already bound this exact booking to the original operation. */
+  async cancelTournamentCheckout(id: string, operation: Record<string, any>, bookingId: string): Promise<boolean> {
+    const collection = await this.collection(false);
+    const original = {
+      transactionId: operation.transactionId, phone: operation.phone, clientId: operation.clientId,
+      exerciseId: operation.exerciseId, studioId: operation.studioId, widgetId: operation.widgetId,
+      ownerCommand: operation.ownerCommand,
+      ownerReceipt: operation.ownerReceipt ?? { $exists: false }
+    };
+    const result = await collection.updateOne({
+      ...this.buildIdFilter(id),
+      'details.booking.pendingJoinPayments': { $elemMatch: { ...original,
+        $or: [
+          { state: 'OWNER_COMPLETED', providerBookingId: bookingId },
+          ...(operation.ownerCommand?.kind === 'CHECKOUT' && operation.ownerReceipt?.transactionId
+            ? [{ state: 'PROVIDER_RESULT_UNKNOWN', providerBookingId: { $exists: false },
+              providerTransactionId: operation.ownerReceipt.transactionId }] : [])
+        ]
+      } }
+    }, [{ $set: {
+      participants: { $filter: { input: { $ifNull: ['$participants', []] }, as: 'participant', cond: { $not: [
+        { $and: [
+          { $eq: ['$$participant.id', { $literal: `owner:${operation.transactionId}` }] },
+          { $eq: ['$$participant.phone', { $literal: operation.phone }] },
+          { $eq: [{ $ifNull: ['$$participant.vivaBookingId', { $literal: bookingId }] }, { $literal: bookingId }] }
+        ] }
+      ] } } },
+      'details.booking.pendingJoinPayments': { $map: { input: '$details.booking.pendingJoinPayments', as: 'op',
+        in: { $cond: [{ $eq: ['$$op.transactionId', { $literal: operation.transactionId }] },
+          { $mergeObjects: ['$$op', { $literal: { state: 'OWNER_CANCELLED', providerBookingId: bookingId } }] }, '$$op'] } } },
+      updatedAt: new Date().toISOString()
+    } }], { writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } });
+    if (result.acknowledged && result.matchedCount === 1) return true;
+    const current = await this.readTournamentCheckoutOperation(id, operation.phone, { transactionId: operation.transactionId });
+    return current?.state === 'OWNER_CANCELLED' && current.clientId === operation.clientId
+      && current.exerciseId === operation.exerciseId && current.widgetId === operation.widgetId
+      && current.providerBookingId === bookingId;
+  }
+
+  async completeTournamentCheckout(id: string, operation: Record<string, any>, bookingId: string, paid: boolean, display?: TournamentParticipant): Promise<boolean> {
+    const collection = await this.collection(false);
+    const participant = { name: 'Player', ...display, id: `owner:${operation.transactionId}`, phone: operation.phone,
       status: 'REGISTERED', paymentStatus: paid ? 'PAID' : 'UNPAID', registeredAt: new Date().toISOString(),
       vivaBookingId: bookingId };
-    const result = await collection.updateOne({ ...this.buildIdFilter(id), 'details.booking.pendingJoinPayments': { $elemMatch: {
+    const result = await collection.updateOne({ ...this.buildIdFilter(id),
+      $nor: [{ participants: { $elemMatch: { phone: operation.phone, vivaBookingId: { $ne: bookingId } } } }],
+      'details.booking.pendingJoinPayments': { $elemMatch: {
       transactionId: operation.transactionId, phone: operation.phone, clientId: operation.clientId,
       ownerCommand: operation.ownerCommand,
       state: { $in: ['PROVIDER_CREATE_PENDING', 'PROVIDER_RESULT_UNKNOWN'] },
