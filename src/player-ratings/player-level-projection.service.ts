@@ -165,7 +165,7 @@ export class PlayerLevelProjectionService implements OnModuleInit, OnModuleDestr
       sportCode: 'PADEL',
       level: { code: state.rating, numericValue: state.ratingNumeric },
       source: {
-        eventType: state.lastEventType,
+        eventType: state.lastEventType === 'RATING_INITIAL_ASSIGNED' ? 'RATING_MANUALLY_CHANGED' : state.lastEventType,
         formulaVersion: 'padel-rating-grade-v1'
       }
     };
@@ -267,8 +267,8 @@ function isLoopback(hostname: string): boolean {
 
 function isProjectionEventType(
   value: string
-): value is 'RATING_INITIAL_IMPORTED' | 'RATING_BOOTSTRAPPED_FROM_VIVA' | 'RATING_MANUALLY_CHANGED' {
-  return value === 'RATING_INITIAL_IMPORTED'
+): value is 'RATING_INITIAL_ASSIGNED' | 'RATING_INITIAL_IMPORTED' | 'RATING_BOOTSTRAPPED_FROM_VIVA' | 'RATING_MANUALLY_CHANGED' {
+  return value === 'RATING_INITIAL_ASSIGNED' || value === 'RATING_INITIAL_IMPORTED'
     || value === 'RATING_BOOTSTRAPPED_FROM_VIVA'
     || value === 'RATING_MANUALLY_CHANGED';
 }

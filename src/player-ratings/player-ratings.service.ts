@@ -8,6 +8,7 @@ import {
   ServiceUnavailableException,
   UnauthorizedException
 } from '@nestjs/common';
+import { AssignPlayerRatingDto } from './dto/assign-player-rating.dto';
 import { randomUUID } from 'crypto';
 import { Filter } from 'mongodb';
 import { RequestUser } from '../common/rbac/request-user.interface';
@@ -31,7 +32,6 @@ import {
   ratingNumericToGrade
 } from './player-ratings.types';
 
-const VIVA_NUMERIC_RATING_FIELD_ID = 'eabfe27b-3f72-4496-9185-1a2ec6e6465e';
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
@@ -160,6 +160,47 @@ export class PlayerRatingsService implements OnModuleDestroy {
     };
   }
 
+  async assign(dto: AssignPlayerRatingDto, identity: { clientId: string; displayName?: string | null; phone?: string | null }, user?: RequestUser): Promise<PlayerRatingChangeResult> {
+    dto = { ...dto, idempotencyKey: String(dto.idempotencyKey || '').trim(), reason: String(dto.reason || '').trim() };
+    if (dto.idempotencyKey.length < 12) throw new BadRequestException('idempotencyKey must contain at least 12 non-blank characters');
+    const actor = this.actorFromUser(user), numeric = normalizeRatingNumeric(dto.ratingNumeric);
+    if (String(dto.reason || '').trim().length < 10) throw new BadRequestException('reason must contain at least 10 non-blank characters');
+    if (!identity || identity.clientId !== dto.clientId || numeric === null) throw new BadRequestException('Verified client identity and level are required');
+    const existing = await this.call(() => this.repository.eventByIdempotencyKey(dto.idempotencyKey));
+    if (existing) {
+      if (existing.eventType !== 'RATING_INITIAL_ASSIGNED' || existing.player.clientId !== dto.clientId
+        || existing.change.after !== numeric || existing.source.reason !== dto.reason.trim() || existing.actor.id !== actor.id) throw new ConflictException('Idempotency key belongs to another assignment');
+      return this.resultFromExistingEvent(existing);
+    }
+    const now = new Date().toISOString(), eventId = 'rating_evt:' + randomUUID(), key = 'client:' + dto.clientId;
+    const grade = ratingNumericToGrade(numeric)!;
+    const event: PlayerRatingEventDocument = { id: eventId, schemaVersion: 1, eventType: 'RATING_INITIAL_ASSIGNED', idempotencyKey: dto.idempotencyKey,
+      occurredAt: now, createdAt: now, player: { key, clientId: dto.clientId, name: identity.displayName || 'Игрок' },
+      change: { before: null, delta: null, after: numeric, gradeBefore: null, gradeAfter: grade }, formula: { version: 'padel-rating-grade-v1' },
+      source: { domain: 'CUP_ADMIN', reason: dto.reason.trim() }, actor, projectionIntent: { viva: 'NONE_CUP_ONLY' } };
+    const nextState: PlayerRatingStateDocument = { schemaVersion: 1, playerKey: key, clientId: dto.clientId,
+      ...(normalizePlayerPhone(identity.phone) ? { phoneNorm: normalizePlayerPhone(identity.phone) } : {}),
+      name: event.player.name, nameSearch: normalizePlayerName(event.player.name), ratingNumeric: numeric, rating: grade,
+      ownership: 'CUP_CANONICAL', source: 'CUP', createdAt: now, updatedAt: now,
+      lastEventId: eventId, lastEventAt: now, lastEventType: event.eventType, lastSource: event.source.domain, lastChangedBy: actor,
+      ...(this.padlHubProjectionEnabled ? { padlHubProjectionRevision: 1 } : {}) };
+    event.stateSnapshot = nextState;
+    const padlHubOutbox = this.padlHubProjectionEnabled ? this.padlHubProjectionOutbox(nextState, event) : undefined;
+    try {
+      const outcome = await this.call(() => this.repository.runAtomicInitialAssignment({ event, nextState,
+        compatibility: this.compatibilityProjection(nextState), ...(padlHubOutbox ? { padlHubOutbox } : {}) }));
+      if (outcome !== 'ok') throw new ConflictException('У игрока уже есть уровень или история. Откройте текущую карточку или восстановите состояние.');
+    } catch (error) {
+      if (this.repository.isDuplicateKey(error)) {
+        const retry = await this.call(() => this.repository.eventByIdempotencyKey(dto.idempotencyKey));
+        if (retry?.eventType === event.eventType && retry.player.clientId === dto.clientId && retry.change.after === numeric && retry.source.reason === dto.reason.trim() && retry.actor.id === actor.id) return this.resultFromExistingEvent(retry);
+        throw new ConflictException('Первоначальное назначение изменилось одновременно');
+      }
+      throw error;
+    }
+    return { state: await this.toStateDto(nextState, null), event: await this.toEventDto(event, null), projection: { status: 'NOT_REQUIRED' } };
+  }
+
   async change(playerKey: string, dto: ChangePlayerRatingDto, user?: RequestUser): Promise<PlayerRatingChangeResult> {
     const actor = this.actorFromUser(user);
     const nextNumeric = normalizeRatingNumeric(dto.ratingNumeric);
@@ -167,8 +208,12 @@ export class PlayerRatingsService implements OnModuleDestroy {
     const reason = String(dto.reason ?? '').trim();
     if (reason.length < 10) throw new BadRequestException('reason must contain at least 10 characters');
     const idempotencyKey = String(dto.idempotencyKey ?? '').trim();
+    if (idempotencyKey.length < 12) throw new BadRequestException('idempotencyKey must contain at least 12 non-blank characters');
     const existing = await this.call(() => this.repository.eventByIdempotencyKey(idempotencyKey));
-    if (existing) return this.resultFromExistingEvent(existing);
+    if (existing) {
+      if (existing.player.key !== playerKey || existing.change.after !== nextNumeric || existing.source.reason !== reason || existing.actor.id !== actor.id) throw new ConflictException('Idempotency key belongs to another change');
+      return this.resultFromExistingEvent(existing);
+    }
 
     const current = await this.findState(playerKey);
     if (current.lastEventId !== dto.expectedLastEventId) throw await this.conflict(playerKey);
@@ -191,7 +236,7 @@ export class PlayerRatingsService implements OnModuleDestroy {
       formula: { version: 'padel-rating-grade-v1' },
       source: { domain: 'CUP_ADMIN', reason },
       actor,
-      projectionIntent: { viva: 'REQUIRED_DURING_MIGRATION' }
+      projectionIntent: { viva: 'NONE_CUP_ONLY' }
     };
     const nextState: PlayerRatingStateDocument = {
       ...current,
@@ -211,22 +256,6 @@ export class PlayerRatingsService implements OnModuleDestroy {
         : {})
     };
     event.stateSnapshot = nextState;
-    const outbox: PlayerRatingProjectionOutboxDocument = {
-      id: `rating_projection:${randomUUID()}`,
-      schemaVersion: 1,
-      ratingEventId: eventId,
-      playerKey: current.playerKey,
-      ...(current.clientId ? { clientId: current.clientId } : {}),
-      ...(current.phoneNorm ? { phoneNorm: current.phoneNorm } : {}),
-      ratingNumeric: nextNumeric,
-      status: 'PENDING',
-      attempts: 0,
-      maxAttempts: 20,
-      nextAttemptAt: now,
-      createdAt: now,
-      updatedAt: now,
-      payload: { vivaNumericFieldId: VIVA_NUMERIC_RATING_FIELD_ID, ratingNumeric: nextNumeric }
-    };
     const padlHubOutbox = this.padlHubProjectionEnabled && current.clientId
       ? this.padlHubProjectionOutbox(nextState, event)
       : undefined;
@@ -236,26 +265,25 @@ export class PlayerRatingsService implements OnModuleDestroy {
         nextState,
         expectedLastEventId: dto.expectedLastEventId,
         compatibility: this.compatibilityProjection(nextState),
-        outbox,
         ...(padlHubOutbox ? { padlHubOutbox } : {})
       }));
       if (written !== 'ok') throw await this.conflict(playerKey);
     } catch (error) {
       if (this.repository.isDuplicateKey(error)) {
         const duplicated = await this.call(() => this.repository.eventByIdempotencyKey(idempotencyKey));
-        if (duplicated) return this.resultFromExistingEvent(duplicated);
+        if (duplicated) {
+          if (duplicated.player.key !== playerKey || duplicated.change.after !== nextNumeric || duplicated.source.reason !== reason || duplicated.actor.id !== actor.id) throw new ConflictException('Idempotency key belongs to another change');
+          return this.resultFromExistingEvent(duplicated);
+        }
       }
       throw error;
     }
-    return { state: await this.toStateDto(nextState, outbox), event: await this.toEventDto(event, outbox), projection: { status: 'PENDING' } };
+    return { state: await this.toStateDto(nextState, null), event: await this.toEventDto(event, null), projection: { status: 'NOT_REQUIRED' } };
   }
 
   async retryProjection(playerKey: string, user?: RequestUser): Promise<{ state: PlayerRatingStateDto; projection: { status: PlayerRatingProjectionStatus } }> {
-    const actor = this.actorFromUser(user);
-    const state = await this.findState(playerKey);
-    const outbox = await this.call(() => this.repository.retryLatestFailedProjection(playerKey, actor));
-    if (!outbox) throw new NotFoundException('No failed Viva projection exists for this player');
-    return { state: await this.toStateDto(state, outbox), projection: { status: 'PENDING' } };
+    this.actorFromUser(user);
+    throw new ConflictException({ code: 'VIVA_LEVEL_PROJECTION_RETIRED', message: 'Уровень хранится только в ЦУП' });
   }
 
   async retryPlayerLevelProjection(
@@ -308,9 +336,8 @@ export class PlayerRatingsService implements OnModuleDestroy {
     const outbox = knownOutbox === undefined ? await this.call(() => this.repository.latestOutbox(event.player.key)) : knownOutbox;
     return { id: event.id, eventType: event.eventType, occurredAt: event.occurredAt, before: event.change.before, delta: event.change.delta, after: event.change.after, gradeBefore: event.change.gradeBefore, gradeAfter: event.change.gradeAfter, source: event.source, actor: event.actor, projectionStatus: this.projectionStatus(outbox) };
   }
-  private projectionStatus(outbox?: PlayerRatingProjectionOutboxDocument | null): PlayerRatingProjectionStatus {
-    if (!outbox) return 'PENDING';
-    return outbox.status === 'SYNCED' ? 'SYNCED' : outbox.status === 'PENDING' ? 'PENDING' : 'FAILED_RETRYABLE';
+  private projectionStatus(_outbox?: PlayerRatingProjectionOutboxDocument | null): PlayerRatingProjectionStatus {
+    return 'NOT_REQUIRED';
   }
   private compatibilityProjection(state: PlayerRatingStateDocument): Record<string, unknown> {
     return { playerKey: state.playerKey, clientId: state.clientId, phoneNorm: state.phoneNorm, name: state.name, ratingNumeric: state.ratingNumeric, rating: state.rating, lastEventId: state.lastEventId, lastEventAt: state.lastEventAt, lastEventType: state.lastEventType, updatedAt: state.updatedAt, source: 'CUP_COMPATIBILITY_PROJECTION' };
@@ -360,6 +387,7 @@ function escapeRegex(value: string): string { return value.replace(/[.*+?^${}()|
 function padlHubProjectionEventType(
   value: string
 ): 'RATING_INITIAL_IMPORTED' | 'RATING_BOOTSTRAPPED_FROM_VIVA' | 'RATING_MANUALLY_CHANGED' {
+  if (value === 'RATING_INITIAL_ASSIGNED') return 'RATING_MANUALLY_CHANGED';
   if (
     value === 'RATING_INITIAL_IMPORTED'
     || value === 'RATING_BOOTSTRAPPED_FROM_VIVA'

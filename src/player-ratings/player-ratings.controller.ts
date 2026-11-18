@@ -1,3 +1,7 @@
+import { AssignPlayerRatingDto } from './dto/assign-player-rating.dto';
+import { VivaAdminService } from '../integrations/viva/viva-admin.service';
+import { Permissions } from '../common/rbac/permissions.decorator';
+import { NotFoundException } from '@nestjs/common';
 import { Controller, Get, Param, Post, Body, Query } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequestUser } from '../common/rbac/request-user.interface';
@@ -10,11 +14,22 @@ import { PlayerRatingChangeResult, PlayerRatingEventDto, PlayerRatingEventsResul
 @Controller('admin/player-ratings')
 @Roles(...STAFF_ROLES)
 export class PlayerRatingsController {
-  constructor(private readonly service: PlayerRatingsService) {}
-  @Get('search') search(@Query('q') q?: string, @Query('limit') limit?: string, @Query('cursor') cursor?: string): Promise<PlayerRatingSearchResult> { return this.service.search(q, limit ? Number(limit) : undefined, cursor); }
-  @Get(':playerKey/events') events(@Param('playerKey') playerKey: string, @Query('limit') limit?: string, @Query('cursor') cursor?: string, @Query('eventType') eventType?: string, @Query('dateFrom') dateFrom?: string, @Query('dateTo') dateTo?: string): Promise<PlayerRatingEventsResult> { return this.service.events(playerKey, { limit: limit ? Number(limit) : undefined, cursor, eventType, dateFrom, dateTo }); }
-  @Post(':playerKey/changes') @Roles(Role.SUPER_ADMIN) change(@Param('playerKey') playerKey: string, @Body() dto: ChangePlayerRatingDto, @CurrentUser() user?: RequestUser): Promise<PlayerRatingChangeResult> { return this.service.change(playerKey, dto, user); }
+  constructor(private readonly service: PlayerRatingsService, private readonly viva: VivaAdminService) {}
+  @Get('assignment-candidates') @Permissions('player-ratings:write')
+  async candidates(@Query('q') q?: string) {
+    const rows = await this.viva.searchClients(q);
+    return { items: rows.slice(0, 20).map(row => ({ clientId: row.clientId, name: row.clientLabel || row.clientId })) };
+  }
+  @Post('assignments') @Permissions('player-ratings:write')
+  async assign(@Body() dto: AssignPlayerRatingDto, @CurrentUser() user?: RequestUser) {
+    const identity = await this.viva.getClientProfile(dto.clientId, true);
+    if (!identity || identity.clientId !== dto.clientId) throw new NotFoundException('Клиент не найден');
+    return this.service.assign(dto, identity, user);
+  }
+  @Get('search') @Permissions('player-ratings:read') search(@Query('q') q?: string, @Query('limit') limit?: string, @Query('cursor') cursor?: string): Promise<PlayerRatingSearchResult> { return this.service.search(q, limit ? Number(limit) : undefined, cursor); }
+  @Get(':playerKey/events') @Permissions('player-ratings:read') events(@Param('playerKey') playerKey: string, @Query('limit') limit?: string, @Query('cursor') cursor?: string, @Query('eventType') eventType?: string, @Query('dateFrom') dateFrom?: string, @Query('dateTo') dateTo?: string): Promise<PlayerRatingEventsResult> { return this.service.events(playerKey, { limit: limit ? Number(limit) : undefined, cursor, eventType, dateFrom, dateTo }); }
+  @Post(':playerKey/changes') @Permissions('player-ratings:write') change(@Param('playerKey') playerKey: string, @Body() dto: ChangePlayerRatingDto, @CurrentUser() user?: RequestUser): Promise<PlayerRatingChangeResult> { return this.service.change(playerKey, dto, user); }
   @Post(':playerKey/projection/retry') @Roles(Role.SUPER_ADMIN) retry(@Param('playerKey') playerKey: string, @CurrentUser() user?: RequestUser) { return this.service.retryProjection(playerKey, user); }
   @Post(':playerKey/padlhub-projection/retry') @Roles(Role.SUPER_ADMIN) retryPadlHubProjection(@Param('playerKey') playerKey: string, @CurrentUser() user?: RequestUser) { return this.service.retryPlayerLevelProjection(playerKey, user); }
-  @Get(':playerKey') get(@Param('playerKey') playerKey: string): Promise<PlayerRatingStateDto & { lastEvent?: PlayerRatingEventDto; projection: { status: PlayerRatingProjectionStatus } }> { return this.service.get(playerKey); }
+  @Get(':playerKey') @Permissions('player-ratings:read') get(@Param('playerKey') playerKey: string): Promise<PlayerRatingStateDto & { lastEvent?: PlayerRatingEventDto; projection: { status: PlayerRatingProjectionStatus } }> { return this.service.get(playerKey); }
 }
