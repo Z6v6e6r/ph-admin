@@ -5,6 +5,8 @@ import {
   IsIn,
   IsInt,
   IsISO8601,
+  IsNumber,
+  Max,
   IsOptional,
   IsPhoneNumber,
   IsString,
@@ -14,6 +16,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { TournamentGender, TournamentStatus } from '../tournaments.types';
+import { LEVEL_TOLERANCE_MAX, TOURNAMENT_LEVEL_GRID } from '../tournament-level-admission';
 import { TournamentMechanicsDto } from './tournament-mechanics.dto';
 import { TournamentParticipantInputDto } from './tournament-participant-input.dto';
 import { TournamentSkinDto } from './tournament-skin.dto';
@@ -43,10 +46,18 @@ export class UpdateCustomTournamentDto {
 
   @IsOptional()
   @IsArray()
-  @ArrayMaxSize(20)
+  // The admin slider grid has 29 points; a wide range must still be storable.
+  @ArrayMaxSize(TOURNAMENT_LEVEL_GRID.length)
   @IsString({ each: true })
   @MaxLength(40, { each: true })
   accessLevels?: string[];
+
+  /** Symmetric level tolerance ±; 0 is strict. Bounds come from the shared admission scale. */
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false, maxDecimalPlaces: 5 })
+  @Min(0)
+  @Max(LEVEL_TOLERANCE_MAX)
+  levelTolerance?: number;
 
   @IsOptional()
   @IsIn(['MALE', 'FEMALE', 'MIXED'])

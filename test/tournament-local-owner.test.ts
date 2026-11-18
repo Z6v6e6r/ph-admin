@@ -30,7 +30,7 @@ function fixture() {
   };
   Object.assign(service,{tournamentsPersistence:persistence,trustedRegistrationIdentities:new WeakMap(),
     lkIdentityService:{verify:async(a:string,t:string)=>{auth++;assert.equal(a,'Bearer fixture');assert.equal(t,'integration-fixture');return {actor:clone(actor)};}},
-    playerRatingsService:{resolveCanonicalLevelByIdentity:async()=>({levelLabel:'C'})},
+    playerRatingsService:{resolveCanonicalLevelByIdentity:async()=>({levelLabel:'3.25',ratingNumeric:3.25})},
     vivaAdminService:{readTournamentProfileSex:async()=> 'MALE'},
     prepareTournamentOwner:async()=>{prepares++;return {status:'RESOLVED',owner:'CUP_CUSTOM',binding:{exerciseId:null,customTournamentId:row.id,customUpdatedAt:row.updatedAt,mappingSha256:'sha256:'+'a'.repeat(64)}};},
     invalidatePublicDirectoryCache:()=>{}
@@ -86,9 +86,14 @@ test('raw provider/payment/missing evidence never downgrades to free and leaves 
  {pricePopover:{rows:[]}},{skin:{priceLabel:'Free'}},{summerSubscriptionOffer:{}},{details:{booking:{enabled:false,paymentRequired:false,acceptedSubscriptions:[],purchaseOptions:[],pendingJoinPayments:[]}}}];
  for(const delta of deltas){const f=fixture();f.row={...f.row,...delta};await assert.rejects(f.command(),code('TOURNAMENT_LOCAL_UNSUPPORTED'));assert.equal(f.counts.commits,0);}
 });
-test('canonical gender/level fail before mutation and MIXED needs no profile',async()=>{
- const f=fixture();f.row.gender='FEMALE';await assert.rejects(f.command(),code('GENDER_NOT_ALLOWED'));assert.equal(f.counts.commits,0);
- const g=fixture();g.row.accessLevels=['A'];await assert.rejects(g.command(),code('LEVEL_NOT_ALLOWED'));assert.equal(g.counts.commits,0);
+test('canonical refusal is durably replayed without roster mutation; MIXED needs no profile',async()=>{
+ for(const [field,value,reason] of [['gender','FEMALE','GENDER_NOT_ALLOWED'],['accessLevels',['A'],'LEVEL_NOT_ALLOWED']] as const){
+  const f=fixture();f.row[field]=value;const refused=await f.command();
+  assert.equal(refused.operation.outcome,'REJECTED');assert.equal(refused.operation.reason,reason);
+  assert.equal(f.row.participants.length,0);assert.equal(f.counts.commits,1);
+  f.row.gender='MIXED';f.row.accessLevels=['C'];
+  assert.deepEqual((await f.command()).operation,refused.operation);assert.equal(f.counts.commits,1);
+ }
  const h=fixture();h.service.vivaAdminService.readTournamentProfileSex=()=>{throw Error('MIXED cannot query sex');};await h.command();
 });
 test('operation corruption and bounded ledger are closed, not evicted',async()=>{
@@ -132,3 +137,24 @@ test('foreign canonical actor with colliding phone cannot read or leave original
  await assert.rejects(f.command('foreign-leave',{action:'LEAVE',originalJoinOperationId:original.operation.operationId}),code('TOURNAMENT_LOCAL_ORIGINAL_REQUIRED'));
  const duplicate=await f.command('foreign-join');assert.equal(duplicate.operation.reason,'MEMBERSHIP_EXISTS');assert.equal(f.row.participants.length,1);
 });
+
+for (const [profileSex, reason] of [['MALE', 'GENDER_NOT_ALLOWED'], [null, 'PLAYER_GENDER_REQUIRED']] as const) {
+ test(`persisted ${reason} remains readable and does not poison a later actor admission`, async () => {
+  const f=fixture(); f.row.gender='FEMALE';
+  f.service.vivaAdminService.readTournamentProfileSex=async()=>profileSex;
+  const refusal=await f.command();
+  assert.equal(refusal.operation.reason,reason);
+  assert.deepEqual((await f.read(refusal.operation.operationId)).operation,refusal.operation);
+  assert.deepEqual((await f.command()).operation,refusal.operation);
+  assert.equal(f.counts.commits,1); assert.equal(f.row.participants.length,0);
+  f.actor({clientId:'actor-B',phoneNorm:'12025550102'});
+  f.service.vivaAdminService.readTournamentProfileSex=async()=> 'FEMALE';
+  const admitted=await f.command('other-actor-key');
+  assert.equal(admitted.operation.outcome,'REGISTERED');
+  assert.equal(f.row.participants.length,1); assert.equal(f.row.participants[0].phone,'12025550102');
+  assert.deepEqual(operations(f.row,'synthetic-tenant').map(op=>op.reason),[reason,'REGISTERED']);
+  const malformed=clone(f.row); malformed.localParticipationOperations[1].eligibility.playerGender=null;
+  assert.throws(()=>operations(malformed,'synthetic-tenant'),code('TOURNAMENT_LOCAL_STATE_INVALID'),
+    'a refusal exception must never weaken successful admission evidence');
+ });
+}

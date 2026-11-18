@@ -63,6 +63,7 @@ async function main(): Promise<void> {
       findOne: async () => existingDocument,
       updateOne: async (_filter: unknown, update: { $set?: Record<string, unknown> }) => {
         updatePayload = update.$set ?? null;
+        return { acknowledged: true, matchedCount: 1, modifiedCount: 1 };
       }
     });
 

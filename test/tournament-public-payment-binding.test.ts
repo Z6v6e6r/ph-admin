@@ -1,3 +1,4 @@
+import { withCanonicalTournamentActor } from './tournament-admission-fixture';
 import * as assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { TournamentsService } from '../src/tournaments/tournaments.service';
@@ -44,7 +45,7 @@ function serviceFixture(tournament: CustomTournament) {
   let failProviderClaim = false;
   const persistence = {
     isEnabled: () => true,
-    readPublicAdmissionRule: async () => ({ gender: tournament.gender, updatedAt: tournament.updatedAt }),
+    readPublicAdmissionRule: async () => ({ gender: tournament.gender, updatedAt: tournament.updatedAt, accessLevels: tournament.accessLevels, levelTolerance: tournament.levelTolerance }),
     findCustomTournamentById: async (id: string) => id === tournament.id ? tournament : null,
     findCustomTournamentBySlug: async (slug: string) => slug === tournament.slug ? tournament : null,
     findCustomTournamentBySourceTournamentId: async () => null,
@@ -202,7 +203,7 @@ function serviceFixture(tournament: CustomTournament) {
     { simulateRating: () => { throw new Error('Not used'); } } as never
   );
   return {
-    service,
+    service: withCanonicalTournamentActor(service),
     setFailFinalize(value: boolean) {
       failFinalize = value;
     },

@@ -6,7 +6,7 @@ export type LocalCommand = { schemaVersion: 1; action: 'JOIN' | 'LEAVE'; tournam
 export type LocalOperation = {
   schemaVersion: 1; tenantKey: string; actorHash: string; phone: string; keyHash: string;
   requestHash: string; operationId: string; command: LocalCommand; outcome: 'REGISTERED' | 'LEFT' | 'REJECTED';
-  reason: 'REGISTERED' | 'LEFT' | 'FULL' | 'MEMBERSHIP_EXISTS' | 'GENERATION_NOT_CURRENT';
+  reason: 'REGISTERED' | 'LEFT' | 'FULL' | 'MEMBERSHIP_EXISTS' | 'GENERATION_NOT_CURRENT' | 'LEVEL_NOT_ALLOWED' | 'PLAYER_LEVEL_REQUIRED' | 'PLAYER_LEVEL_UNKNOWN' | 'ACTIVITY_LEVEL_INVALID' | 'PLAYER_GENDER_REQUIRED' | 'GENDER_NOT_ALLOWED';
   generation: string | null; committedAt: string; mappingHash: string; eligibility: { gender: string; playerGender: string | null; levelLabel: string | null; accessLevels: string[]; ruleUpdatedAt: string }; audit: 'TOURNAMENT_LOCAL_OPERATION_V1';
 };
 export const object = (v: unknown): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -71,12 +71,15 @@ export function operations(row: Record<string, any>, tenant: string): LocalOpera
       || !object(x.eligibility) || Object.keys(x.eligibility).sort().join(',') !== 'accessLevels,gender,levelLabel,playerGender,ruleUpdatedAt'
       || !Array.isArray(x.eligibility.accessLevels) || x.eligibility.accessLevels.some((v: unknown) => typeof v !== 'string')
       || !['MALE','FEMALE','MIXED'].includes(x.eligibility.gender)
-      || (x.eligibility.gender === 'MIXED' ? x.eligibility.playerGender !== null : x.eligibility.playerGender !== x.eligibility.gender)
+      || (x.eligibility.gender === 'MIXED' ? x.eligibility.playerGender !== null :
+        x.eligibility.playerGender !== x.eligibility.gender && !(x.outcome === 'REJECTED'
+          && ['LEVEL_NOT_ALLOWED','PLAYER_LEVEL_REQUIRED','PLAYER_LEVEL_UNKNOWN','ACTIVITY_LEVEL_INVALID','PLAYER_GENDER_REQUIRED','GENDER_NOT_ALLOWED'].includes(x.reason)
+          && x.eligibility.playerGender === null))
       || (x.eligibility.levelLabel !== null && typeof x.eligibility.levelLabel !== 'string')
       || typeof x.eligibility.ruleUpdatedAt !== 'string' || !Number.isFinite(Date.parse(x.eligibility.ruleUpdatedAt))
       || typeof x.phone !== 'string' || !/^\d{10,15}$/.test(x.phone)
       || !['REGISTERED','LEFT','REJECTED'].includes(x.outcome)
-      || !['REGISTERED','LEFT','FULL','MEMBERSHIP_EXISTS','GENERATION_NOT_CURRENT'].includes(x.reason)
+      || !['REGISTERED','LEFT','FULL','MEMBERSHIP_EXISTS','GENERATION_NOT_CURRENT','LEVEL_NOT_ALLOWED','PLAYER_LEVEL_REQUIRED','PLAYER_LEVEL_UNKNOWN','ACTIVITY_LEVEL_INVALID','PLAYER_GENDER_REQUIRED','GENDER_NOT_ALLOWED'].includes(x.reason)
       || (x.generation !== null && !uuid(x.generation)) || x.audit !== 'TOURNAMENT_LOCAL_OPERATION_V1'
       || typeof x.committedAt !== 'string' || !Number.isFinite(Date.parse(x.committedAt)) || Date.parse(x.committedAt) > Date.now()
       || ids.has(x.operationId) || keys.has(x.keyHash)) throw new ServiceUnavailableException({ code: 'TOURNAMENT_LOCAL_STATE_INVALID' });

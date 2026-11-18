@@ -1,3 +1,4 @@
+import { withCanonicalTournamentActor } from './tournament-admission-fixture';
 import * as assert from 'node:assert/strict';
 import { TournamentsService } from '../src/tournaments/tournaments.service';
 import { CustomTournament, Tournament, TournamentStatus } from '../src/tournaments/tournaments.types';
@@ -221,7 +222,8 @@ function createService(options: {
     { getTournamentResults: async () => { throw new Error('Not used in test'); } } as never,
     {
       isEnabled: () => true,
-      readPublicAdmissionRule: async () => ({ gender: (customBySlug ?? customById)?.gender, updatedAt: (customBySlug ?? customById)?.updatedAt }),
+      readPublicAdmissionRule: async () => ({ gender: (customBySlug ?? customById)?.gender, updatedAt: (customBySlug ?? customById)?.updatedAt,
+        accessLevels: (customBySlug ?? customById)?.accessLevels, levelTolerance: (customBySlug ?? customById)?.levelTolerance }),
       appendPublicWaitlistWithAdmission: async (_id: string, _phone: string, participant: never) => {
         if (!customBySlug) return null;
         customBySlug.waitlist.push(participant);
@@ -353,7 +355,7 @@ async function main(): Promise<void> {
   assert.equal(staleHydrated.participants[0]?.levelLabel, 'D+');
 
   const waitlistTournament = createWaitlistTournament();
-  const waitlistService = createService({ customBySlug: waitlistTournament });
+  const waitlistService = withCanonicalTournamentActor(createService({ customBySlug: waitlistTournament }));
 
   const fullWaitlistOutcome = await waitlistService.registerPublicParticipant(
     waitlistTournament.slug,
@@ -366,6 +368,9 @@ async function main(): Promise<void> {
   assert.equal(fullWaitlistOutcome.code, 'WAITLISTED');
   assert.equal(fullWaitlistOutcome.participant?.waitlistReason, 'FULL');
 
+  Object.assign(waitlistService, { playerRatingsService: {
+    resolveCanonicalLevelByIdentity: async () => ({ ratingNumeric: 4, levelLabel: '4' })
+  } });
   const levelMismatchOutcome = await waitlistService.addPublicParticipantToWaitlist(
     waitlistTournament.slug,
     {
@@ -374,8 +379,9 @@ async function main(): Promise<void> {
       levelLabel: 'B'
     }
   );
-  assert.equal(levelMismatchOutcome.code, 'WAITLISTED');
-  assert.equal(levelMismatchOutcome.participant?.waitlistReason, 'LEVEL_MISMATCH');
+  assert.equal(levelMismatchOutcome.code, 'LEVEL_NOT_ALLOWED');
+  assert.equal(levelMismatchOutcome.participant, undefined);
+  assert.equal(waitlistTournament.waitlist.length, 1, 'out-of-range admission cannot enter the waitlist');
 
   console.log('Custom tournament DB card test passed');
 }

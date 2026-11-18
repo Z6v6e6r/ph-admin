@@ -966,6 +966,11 @@ async function main(): Promise<void> {
           ? writer.appendPublicParticipantIfCapacity(id, participant.phone, { ...participant, status: 'REGISTERED' }, rule)
           : writer.appendPublicWaitlistWithAdmission(id, participant.phone, participant, rule);
       // Same timestamp deliberately: the raw rule must be compared, not timestamp alone.
+      await collection.updateOne({ id }, { $set: { accessLevels: ['A'] } });
+      assert.equal(await apply(observed), null, 'range change with same timestamp refuses');
+      await collection.updateOne({ id }, { $set: { accessLevels: observed.accessLevels, levelTolerance: 0.5 } });
+      assert.equal(await apply(observed), null, 'tolerance change with same timestamp refuses');
+      await collection.updateOne({ id }, { $unset: { levelTolerance: '' } });
       await collection.updateOne({ id }, { $set: { gender: 'FEMALE' } });
       assert.equal(await apply(observed), null);
       await collection.updateOne({ id }, { $set: { gender: 'MALE', updatedAt: '2026-10-31T10:00:01.000Z' } });

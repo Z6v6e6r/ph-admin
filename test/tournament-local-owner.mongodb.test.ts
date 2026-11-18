@@ -7,6 +7,16 @@ import { TournamentsPersistenceService } from '../src/tournaments/tournaments-pe
 import { commandIdentity, publicTournamentId, LocalOperation, operations } from '../src/tournaments/tournament-local-operation.contract';
 
 function fixtureUri():string {
+ const local = process.env.TEST_MONGODB_URI;
+ if (local) {
+  const target = new URL(local);
+  assert.equal(target.hostname, '127.0.0.1');
+  assert.equal(target.port, '27138');
+  assert.equal(target.searchParams.get('replicaSet'), 'tournamentTask');
+  assert.equal(target.searchParams.get('retryWrites'), 'true');
+  assert.equal(target.searchParams.get('w'), 'majority');
+  return local;
+ }
  if(process.env.GITHUB_ACTIONS!=='true'||process.env.GITHUB_REPOSITORY!=='Z6v6e6r/ph-admin')throw Error('TOURNAMENT_LOCAL_OWNER_CI_ONLY');
  if(process.env.TOURNAMENT_LOCAL_OWNER_MONGODB_TEST_URI!=='mongodb://127.0.0.1:27017/?replicaSet=rs0')throw Error('TOURNAMENT_LOCAL_OWNER_UNSAFE_URI');
  return 'mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true&retryWrites=true&w=majority';
@@ -23,7 +33,7 @@ function operation(id:string,key:string,action:'JOIN'|'LEAVE'='JOIN',original?:s
 }
 const participant=(op:LocalOperation)=>({id:op.generation,name:'Synthetic',phone,paymentStatus:'UNPAID',status:'REGISTERED'});
 
-test('CI-only actual Mongo local-owner atomicity, independent connections and legacy fences',async t=>{
+test('Disposable actual Mongo local-owner atomicity, independent connections and legacy fences',async t=>{
  const uri=fixtureUri(),name='phab_local_owner_'+randomUUID().replace(/-/g,'');assert.match(name,/^phab_local_owner_[a-f0-9]{32}$/);
  const clients=[new MongoClient(uri,{writeConcern:{w:'majority',j:true,wtimeoutMS:5000}}),new MongoClient(uri,{writeConcern:{w:'majority',j:true,wtimeoutMS:5000}})];
  await Promise.all(clients.map(c=>c.connect()));const db=clients[0].db(name),collection=db.collection('custom_tournaments');

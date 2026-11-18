@@ -1,14 +1,17 @@
+import { TournamentCheckoutService } from './tournament-checkout.service';
 import {
   Body,
   Controller,
   Delete,
   Get,
+  Optional,
   Param,
   Patch,
   Post,
   Query,
   Req,
-  Res
+  Res,
+  ServiceUnavailableException
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -33,6 +36,9 @@ import {
 import { TournamentResultsExportService } from './tournament-results-export.service';
 import { TournamentsVivaStatusSyncService } from './tournaments-viva-status-sync.service';
 import { TournamentsService } from './tournaments.service';
+import { TournamentServerBookingService } from './tournament-server-booking.service';
+import type { TournamentServerBookingView } from './tournament-server-booking';
+import type { TournamentLevelAdmissionReport, TournamentLevelDecision } from './tournament-level-admission';
 
 @Controller('tournaments')
 @Roles(
@@ -46,7 +52,9 @@ export class TournamentsController {
   constructor(
     private readonly tournamentsService: TournamentsService,
     private readonly vivaStatusSyncService: TournamentsVivaStatusSyncService,
-    private readonly tournamentResultsExportService: TournamentResultsExportService
+    private readonly tournamentResultsExportService: TournamentResultsExportService,
+    @Optional() private readonly serverBookingService?: TournamentServerBookingService,
+    @Optional() private readonly checkoutService?: TournamentCheckoutService
   ) {}
 
   @Get()
@@ -191,6 +199,16 @@ export class TournamentsController {
     return this.tournamentsService.findCustomById(id, user);
   }
 
+  /** Read-only: v2 level decision for everyone already on the roster (incl. Viva-synced bookings). */
+  @Get('custom/:id/level-admission-report')
+  @Permissions('tournaments:read')
+  getLevelAdmissionReport(
+    @Param('id') id: string,
+    @CurrentUser() user?: RequestUser
+  ): Promise<TournamentLevelAdmissionReport> {
+    return this.tournamentsService.getLevelAdmissionReport(id, user);
+  }
+
   @Patch('custom/:id')
   @Permissions('tournaments:write')
   updateCustom(
@@ -244,9 +262,59 @@ export class TournamentsController {
     canRegister: boolean;
     canCancel: boolean;
     message: string;
+    levelDecision?: TournamentLevelDecision;
   }> {
     const client = await this.resolveLkClient(request, user);
-    return this.tournamentsService.getPublicRegistrationByTournamentRef(id, client.phone);
+    const registration = await this.tournamentsService.getPublicRegistrationByTournamentRef(id, client.phone);
+    if (registration.status !== 'NONE' || !registration.canRegister) return registration;
+    // Existing registrations are never re-evaluated; only a new registration is gated.
+    const levelDecision = await this.tournamentsService.getLevelDecisionByTournamentRef(
+      id,
+      this.pickString(request.headers.authorization)
+    );
+    if (levelDecision.enforced && !levelDecision.allowed) {
+      return { ...registration, canRegister: false, message: levelDecision.message, levelDecision };
+    }
+    return { ...registration, levelDecision };
+  }
+
+  /**
+   * Server level decision for the authenticated LK player. Consumed by LK1 before checkout and by
+   * server gateways (Node-RED subscription bookings) before a booking is created. Level, range and
+   * tolerance are never accepted from the caller.
+   */
+  @Get(':id/level-decision')
+  @Roles()
+  getMyLevelDecision(
+    @Param('id') id: string,
+    @Req() request: Request
+  ): Promise<TournamentLevelDecision & { tournamentId: string }> {
+    return this.tournamentsService.getLevelDecisionByTournamentRef(
+      id,
+      this.pickString(request.headers.authorization)
+    );
+  }
+
+  /**
+   * Server-owned booking (TOURNAMENT_SERVER_BOOKING_MODE=enabled, level mode enforce): CUP
+   * decides, books in Viva and issues the payment. Requires `Idempotency-Key`. Disabled by default.
+   */
+  @Post(':id/server-booking')
+  @Roles()
+  joinWithServerBooking(@Param('id') id: string, @Req() request: Request): Promise<TournamentServerBookingView> {
+    if (!this.serverBookingService) throw new ServiceUnavailableException({ code: 'SERVER_BOOKING_DISABLED' });
+    return this.serverBookingService.join(
+      id,
+      this.pickString(request.headers.authorization),
+      this.pickString(request.headers['idempotency-key'])
+    );
+  }
+
+  @Get(':id/server-booking')
+  @Roles()
+  getServerBookingStatus(@Param('id') id: string, @Req() request: Request): Promise<TournamentServerBookingView> {
+    if (!this.serverBookingService) throw new ServiceUnavailableException({ code: 'SERVER_BOOKING_DISABLED' });
+    return this.serverBookingService.status(id, this.pickString(request.headers.authorization));
   }
 
   @Post(':id/register')
@@ -299,6 +367,44 @@ export class TournamentsController {
   }> {
     const client = await this.resolveLkClient(request, user);
     return this.tournamentsService.cancelPublicRegistrationByTournamentRef(id, client.phone);
+  }
+
+  @Post(':id/checkout')
+  @Roles()
+  checkout(@Param('id') id: string, @Req() request: Request, @Body() body: unknown) {
+    if (!this.checkoutService) throw new ServiceUnavailableException();
+    return this.checkoutService.checkout(id, this.pickString(request.headers.authorization), body,
+      this.pickString(request.headers['idempotency-key']));
+  }
+
+  @Post(':id/checkout/reconcile')
+  @Roles()
+  checkoutStatus(@Param('id') id: string, @Req() request: Request) {
+    if (!this.checkoutService) throw new ServiceUnavailableException();
+    return this.checkoutService.reconcile(id, this.pickString(request.headers.authorization));
+  }
+
+  @Post(':id/subscription-admission/abort')
+  @Roles()
+  abortSubscriptionAdmission(@Param('id') id: string, @Req() request: Request, @Body() body: unknown) {
+    if (!this.checkoutService) throw new ServiceUnavailableException();
+    return this.checkoutService.abortSubscription(id, this.pickString(request.headers.authorization),
+      this.pickString(request.headers['x-cup-integration-token']), body);
+  }
+
+  @Post(':id/subscription-admission/complete')
+  @Roles()
+  completeSubscriptionAdmission(@Param('id') id: string, @Req() request: Request, @Body() body: unknown) {
+    if (!this.checkoutService) throw new ServiceUnavailableException();
+    return this.checkoutService.completeSubscription(id, this.pickString(request.headers.authorization),
+      this.pickString(request.headers['x-cup-integration-token']), body);
+  }
+
+  @Post(':id/subscription-admission')
+  @Roles()
+  subscriptionAdmission(@Param('id') id: string, @Req() request: Request, @Body() body: unknown) {
+    if (!this.checkoutService) throw new ServiceUnavailableException();
+    return this.checkoutService.subscriptionAdmission(id, this.pickString(request.headers.authorization), body);
   }
 
   @Post(':exerciseId/custom-energy-checkout')
@@ -404,6 +510,7 @@ export class TournamentsController {
     participant?: { status?: string };
   }): {
     status: 'NONE' | 'REGISTERED' | 'WAITLIST';
+    code: string;
     canRegister: boolean;
     canCancel: boolean;
     message: string;
@@ -421,6 +528,7 @@ export class TournamentsController {
           : 'NONE';
     return {
       status,
+      code: outcome.code,
       canRegister: status === 'NONE' && outcome.ok !== false,
       canCancel: status !== 'NONE',
       message: outcome.message
