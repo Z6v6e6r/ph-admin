@@ -334,7 +334,24 @@ async function main() {
       await assert.rejects(checkout(instance(321).service, 'abort-unknown', 'still-full'));
       assert.equal((await collection.findOne({ id: 'abort-unknown' }))!.details.booking.pendingJoinPayments[0].state, 'PROVIDER_CREATE_PENDING');
     });
-    console.log('PASS 19 physical Mongo checkout-owner scenarios; synthetic provider only');
+    await check('corrected player level permits a new checkout; an unknown older payment keeps the last seat', async () => {
+      await seedLastSeat('level-retry'); const f = instance(), before = postCount;
+      f.repo.claimTournamentCheckout = async () => { throw Error('before dispatch'); };
+      await assert.rejects(checkout(f.service, 'level-retry', 'level-original'));
+      rating = 6;
+      await assert.rejects(checkout(instance().service, 'level-retry', 'level-original'));
+      rating = 3.25;
+      result = async () => { throw Error('provider outcome unknown'); };
+      const next = await checkout(instance().service, 'level-retry', 'level-corrected');
+      assert.equal(next.state, 'PENDING_CONFIRMATION'); assert.equal(postCount - before, 1);
+      const replay = await checkout(instance().service, 'level-retry', 'level-original');
+      assert.equal(replay.state, 'REJECTED'); assert.notEqual(replay.operationId, next.operationId);
+      const alternate = await checkout(instance().service, 'level-retry', 'another-new-key');
+      assert.equal(alternate.operationId, next.operationId);
+      await assert.rejects(checkout(instance(330).service, 'level-retry', 'other-player'));
+      assert.equal(postCount - before, 1);
+    });
+    console.log('PASS 20 physical Mongo checkout-owner scenarios; synthetic provider only');
   } finally {
     await Promise.all(repositories.map(repo => repo.onModuleDestroy()));
     assert.ok(databaseName.startsWith('tournament_checkout_task_'));
