@@ -6419,6 +6419,9 @@ export class TournamentsService {
       const pending = this.findPendingJoinPayment(current, input.pending.phone);
       if (!pending || pending.transactionId !== input.pending.transactionId
         || (pending.state === 'PROVIDER_CREATE_PENDING' && !pending.providerCreateAttemptedAt)) return null;
+      if (!pending.providerTransactionId || pending.state === 'PROVIDER_RESULT_UNKNOWN') {
+        return this.buildProviderTransactionRecoveryRequired(current, input.payment);
+      }
       return { ok: true, code: 'PURCHASE_STARTED', message: 'Продолжите исходную оплату.',
         tournamentId: current.id, tournamentSlug: current.slug,
         payment: { ...input.payment, checkoutUrl: pending.checkoutUrl,

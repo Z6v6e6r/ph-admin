@@ -23,7 +23,7 @@ async function main() {
   process.env.TOURNAMENTS_MONGODB_COLLECTION = 'custom_tournaments';
   const client = new MongoClient(uri, { serverSelectionTimeoutMS: 3000 });
   await client.connect();
-  assert.equal((await client.db('admin').command({ hello: 1 })).setName, 'tournamentTask');
+  assert.equal((await client.db('admin').command({ hello: 1 })).setName, target.searchParams.get('replicaSet'));
   const collection = client.db(databaseName).collection<Row>('custom_tournaments');
   const repositories: TournamentsPersistenceService[] = [];
   let postCount = 0, result: () => Promise<unknown> = async () => ({ transactionId: `provider-${postCount}`, paymentUrl: 'https://pay.example/synthetic' });
