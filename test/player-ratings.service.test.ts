@@ -64,7 +64,8 @@ async function main(): Promise<void> {
   assert.equal(events.length, 1);
   assert.equal(changed.event.actor.id, 'admin-1', 'actor comes from current user, never request body');
   assert.equal(changed.state.ratingNumeric, 3.45);
-  assert.equal(written.outbox.payload.vivaNumericFieldId, 'eabfe27b-3f72-4496-9185-1a2ec6e6465e');
+  assert.equal(written.outbox, undefined, 'CUP-only changes never enqueue a Viva write');
+  assert.equal(changed.projection.status, 'NOT_REQUIRED');
   assert.equal(written.nextState.padlHubProjectionRevision, 1);
   assert.deepEqual(written.padlHubOutbox.desired, {
     schemaVersion: 1,
