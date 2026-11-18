@@ -5866,17 +5866,20 @@ export class TournamentsService {
     return actor;
   }
 
-  async resolveCheckoutIdentity(ref: string, auth?: string) {
+  async resolveCheckoutIdentity(exerciseRef: string, auth?: string) {
     this.ensurePersistenceEnabled();
     if (!this.lkIdentityService) throw new ServiceUnavailableException({ code: 'TOURNAMENT_ELIGIBILITY_NOT_CONFIGURED' });
     const { actor } = await this.lkIdentityService.verifyTrustedBearer(auth);
     if (!actor.clientId || !actor.phoneNorm) throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
-    const tournament = await this.requireCustomByPublicRef(ref);
-    const booking = this.resolveBookingConfig(tournament);
+    const target = await this.tournamentsPersistence.findCheckoutTournamentByExerciseId(exerciseRef);
+    if (!target) throw new NotFoundException({ code: 'TOURNAMENT_TARGET_UNMAPPED' });
+    const { tournament, mappingChecks } = target;
+    const booking = this.resolveBookingConfig(tournament, true);
     const exerciseId = this.pickString(booking.vivaExerciseId), studioId = this.pickString(booking.vivaStudioId);
     const tenantKey = this.pickString(booking.vivaWidgetId) ?? this.vivaEndUserWidgetId;
-    if (!exerciseId || !studioId || !tenantKey) throw new ConflictException({ code: 'TOURNAMENT_TARGET_UNMAPPED' });
-    return { actor, tournament, exerciseId, studioId, tenantKey };
+    if (exerciseId !== exerciseRef || !studioId || !tenantKey) throw new ConflictException({ code: 'TOURNAMENT_TARGET_UNMAPPED' });
+    if (tenantKey !== actor.tenantKey) throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+    return { actor, tournament, exerciseId, studioId, tenantKey, mappingChecks };
   }
 
   async checkCheckoutAdmission(context: Awaited<ReturnType<TournamentsService['resolveCheckoutIdentity']>>, auth?: string) {
@@ -6105,12 +6108,19 @@ export class TournamentsService {
     };
   }
 
-  private resolveBookingConfig(tournament: CustomTournament): TournamentBookingConfig {
+  private resolveBookingConfig(tournament: CustomTournament, ownerCheckout = false): TournamentBookingConfig {
     const details =
       tournament.details && typeof tournament.details === 'object'
         ? (tournament.details as Record<string, unknown>)
         : {};
-    const rawBooking = this.toRecord(details.booking) ?? this.toRecord(details.joinFlow) ?? {};
+    const booking = this.toRecord(details.booking);
+    const nestedViva = this.toRecord(booking?.viva);
+    const hasBookingMapping = booking && [
+      booking.vivaExerciseId, booking.exerciseId, nestedViva?.exerciseId,
+      booking.vivaStudioId, booking.studioId, nestedViva?.studioId,
+      booking.vivaWidgetId, booking.widgetId, nestedViva?.widgetId
+    ].some(value => this.pickString(value) != null);
+    const rawBooking = (ownerCheckout && !hasBookingMapping ? null : booking) ?? this.toRecord(details.joinFlow) ?? {};
     const rawViva = this.toRecord(rawBooking.viva) ?? {};
     const acceptedSubscriptions = this.normalizeAcceptedSubscriptions(
       rawBooking.acceptedSubscriptions ?? rawBooking.subscriptions

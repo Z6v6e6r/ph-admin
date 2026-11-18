@@ -44,9 +44,6 @@ async function main() {
         assert.equal(header, 'Bearer synthetic-token'); return { actor: actor(n) };
       } },
       playerRatingsService: { resolveCanonicalLevelByIdentity: async () => ({ ratingNumeric: rating, levelLabel: String(rating) }) },
-      requireCustomByPublicRef: async (ref: string) => {
-        const row = await collection.findOne({ id: ref }); assert.ok(row); return row;
-      }
     });
     const service = new TournamentCheckoutService(tournaments, repo);
     (service as any).http = async (url: string, _auth: string, payload?: Row) => {
@@ -57,9 +54,60 @@ async function main() {
     };
     return { service, repo, tournaments };
   }
-  const checkout = (service: TournamentCheckoutService, name: string, key: string) => service.checkout(name, 'Bearer synthetic-token', { productId: 'one-time', source: 'one-time' }, key);
+  const checkout = (service: TournamentCheckoutService, name: string, key: string) => service.checkout("exercise-" + name, 'Bearer synthetic-token', { productId: 'one-time', source: 'one-time' }, key);
   const check = async (name: string, run: () => Promise<void>) => { await run(); console.log(`PASS ${name}`); };
   try {
+    await check('legacy nested exercise mapping works with distinct CUP and source IDs and no level rule', async () => {
+      await seed('legacy-lookup');
+      await collection.updateOne({ id: 'legacy-lookup' }, {
+        $set: { sourceTournamentId: 'different-source-id', accessLevels: [],
+          participants: [{ phone: actor(99).phoneNorm, name: 'Existing', status: 'REGISTERED' }] },
+        $unset: { levelTolerance: '' }
+      });
+      const f = instance();
+      f.tournaments.playerRatingsService = { resolveCanonicalLevelByIdentity: async () => {
+        throw Error('unrestricted bookings must not require level evidence');
+      } };
+      const before = postCount;
+      const receipt = await checkout(f.service, 'legacy-lookup', 'legacy-key');
+      assert.ok(receipt.transactionId);
+      assert.equal(postCount - before, 1);
+      assert.equal((await collection.findOne({ id: 'legacy-lookup' }))?.participants[0].phone, actor(99).phoneNorm);
+      await seed('ambiguous-lookup');
+      await collection.updateOne({ id: 'ambiguous-lookup' }, { $set: { exerciseId: 'exercise-legacy-lookup' } });
+      await assert.rejects(checkout(f.service, 'legacy-lookup', 'ambiguous-key'),
+        (error: any) => error.getResponse?.().code === 'TOURNAMENT_TARGET_AMBIGUOUS');
+      assert.equal(postCount - before, 1);
+      await seed('top-level-lookup');
+      await collection.updateOne({ id: 'top-level-lookup' }, {
+        $set: { exerciseId: 'exercise-top-level-lookup', studioId: 'synthetic-studio',
+          sourceTournamentSnapshot: { id: 'source-top-level-lookup', exerciseId: 'exercise-top-level-lookup' } },
+        $unset: { 'details.booking.vivaExerciseId': '', 'details.booking.vivaStudioId': '' }
+      });
+      assert.ok((await checkout(instance().service, 'top-level-lookup', 'top-level-key')).transactionId);
+      assert.equal(postCount - before, 2);
+      await seed('join-flow-lookup');
+      await collection.updateOne({ id: 'join-flow-lookup' }, {
+        $set: { 'details.joinFlow.viva': { exerciseId: 'exercise-join-flow-lookup',
+          studioId: 'synthetic-studio', widgetId: 'fixture-tenant' } },
+        $unset: { 'details.booking': '' }
+      });
+      assert.ok((await checkout(instance().service, 'join-flow-lookup', 'join-flow-key')).transactionId);
+      assert.equal(postCount - before, 3);
+    });
+    await check('same-timestamp changes to legacy target binding fence provider dispatch', async () => {
+      await seed('mapping-drift');
+      const f = instance(), before = postCount;
+      const claim = f.repo.claimTournamentCheckout.bind(f.repo);
+      f.repo.claimTournamentCheckout = async (...args) => {
+        await collection.updateOne({ id: 'mapping-drift' }, {
+          $set: { 'details.booking.vivaStudioId': 'new-studio' }
+        });
+        return claim(...args);
+      };
+      assert.equal((await checkout(f.service, 'mapping-drift', 'mapping-key')).state, 'PENDING_CONFIRMATION');
+      assert.equal(postCount, before);
+    });
     await check('physical Mongo: different service instances and keys dispatch exactly once', async () => {
       await seed('race'); const a = instance(), b = instance(); const before = postCount;
       const outcomes = await Promise.all(Array.from({ length: 8 }, (_, n) => checkout(n % 2 ? a.service : b.service, 'race', `race-key-${n}`)));
@@ -207,8 +255,8 @@ async function main() {
     });
     await check('physical Mongo: subscription admission occupies the same canonical capacity budget', async () => {
       await seed('subscription-budget', 2); const f = instance(100);
-      const first = await f.service.subscriptionAdmission('subscription-budget', 'Bearer synthetic-token', { operationId: 'subscription-first', clientSubscriptionId: 'fixture-subscription' });
-      const replay = await instance(100).service.subscriptionAdmission('subscription-budget', 'Bearer synthetic-token', { operationId: 'subscription-first', clientSubscriptionId: 'fixture-subscription' });
+      const first = await f.service.subscriptionAdmission('exercise-subscription-budget', 'Bearer synthetic-token', { operationId: 'subscription-first', clientSubscriptionId: 'fixture-subscription' });
+      const replay = await instance(100).service.subscriptionAdmission('exercise-subscription-budget', 'Bearer synthetic-token', { operationId: 'subscription-first', clientSubscriptionId: 'fixture-subscription' });
       assert.deepEqual(replay, first);
       result = async () => ({ transactionId: `budget-${postCount}` });
       await checkout(instance(101).service, 'subscription-budget', 'paid-other-player');
@@ -217,7 +265,7 @@ async function main() {
     });
     await check('physical Mongo: reservation becomes one participant atomically and identical completion is idempotent', async () => {
       await seed('transfer', 2); const a = instance(201), b = instance(201);
-      await a.service.subscriptionAdmission('transfer', 'Bearer synthetic-token', { operationId: 'transfer-first', clientSubscriptionId: 'fixture-subscription' });
+      await a.service.subscriptionAdmission('exercise-transfer', 'Bearer synthetic-token', { operationId: 'transfer-first', clientSubscriptionId: 'fixture-subscription' });
       const operation = await a.repo.readTournamentCheckoutOperation('transfer', actor(201).phoneNorm); assert.ok(operation);
       const outcomes = await Promise.all([
         a.repo.completeTournamentCheckout('transfer', operation, 'booking-original', false),
@@ -233,6 +281,22 @@ async function main() {
       row = await collection.findOne({ id: 'transfer' });
       assert.equal(row!.participants.length, 1);
       assert.equal(row!.details.booking.pendingJoinPayments.filter((x: Row) => x.state !== 'OWNER_COMPLETED').length, 1);
+    });
+    await check('late exact completion never restores a participant removed after completion', async () => {
+      await seed('removed-participant');
+      const f = instance(205);
+      await f.service.subscriptionAdmission('exercise-removed-participant', 'Bearer synthetic-token',
+        { operationId: 'original', clientSubscriptionId: 'fixture-subscription' });
+      const operation = await f.repo.readTournamentCheckoutOperation('removed-participant', actor(205).phoneNorm);
+      assert.ok(operation);
+      assert.ok(await f.repo.completeTournamentCheckout('removed-participant', operation, 'old-booking', false));
+      await collection.updateOne({ id: 'removed-participant' }, { $set: { participants: [
+        { phone: actor(99).phoneNorm, name: 'Remaining', status: 'REGISTERED' }
+      ] } });
+      assert.ok(await f.repo.completeTournamentCheckout('removed-participant', operation, 'old-booking', false));
+      const row = await collection.findOne({ id: 'removed-participant' });
+      assert.deepEqual(row?.participants.map((p: Row) => p.phone), [actor(99).phoneNorm]);
+      assert.equal(row?.details.booking.pendingJoinPayments[0].providerBookingId, 'old-booking');
     });
     await check('physical Mongo: completion cannot replace a previously acknowledged booking identity', async () => {
       const a = instance(201);
@@ -287,28 +351,28 @@ async function main() {
       };
       return f;
     };
-    const abort = (f: ReturnType<typeof owner>, name: string, grant: Row) => f.service.abortSubscription(name,
+    const abort = (f: ReturnType<typeof owner>, name: string, grant: Row) => f.service.abortSubscription("exercise-" + name,
       'Bearer synthetic-token', 'synthetic-owner-token', { ...subscription(grant.requestOperationId),
         ownerOperationId: grant.operationId, proof: 'PRE_DISPATCH_REJECTED_V1', code: 'SUBSCRIPTION_ELIGIBILITY_CHANGED_BEFORE_WRITE' });
     await check('subscription abort releases one seat, survives lost ACK/restart, and late abort preserves a new hold', async () => {
       await seedLastSeat('abort-seat'); const f = owner(300);
-      const grant = await f.service.subscriptionAdmission('abort-seat', 'Bearer synthetic-token', subscription('original'));
+      const grant = await f.service.subscriptionAdmission('exercise-abort-seat', 'Bearer synthetic-token', subscription('original'));
       const apply = f.repo.abortTournamentSubscription.bind(f.repo);
       f.repo.abortTournamentSubscription = async (...args) => { await apply(...args); throw Error('lost ACK after commit'); };
       await assert.rejects(abort(f, 'abort-seat', grant), /lost ACK/);
       assert.equal((await abort(owner(300), 'abort-seat', grant)).state, 'ABORTED');
-      const next = await owner(300).service.subscriptionAdmission('abort-seat', 'Bearer synthetic-token', subscription('new-operation'));
+      const next = await owner(300).service.subscriptionAdmission('exercise-abort-seat', 'Bearer synthetic-token', subscription('new-operation'));
       assert.notEqual(next.operationId, grant.operationId);
       assert.equal((await abort(owner(300), 'abort-seat', grant)).state, 'ABORTED');
       assert.equal((await instance(300).repo.readTournamentCheckoutOperation('abort-seat', actor(300).phoneNorm))?.transactionId, next.operationId);
       await assert.rejects(checkout(instance(301).service, 'abort-seat', 'full'));
-      const replay = await owner(300).service.subscriptionAdmission('abort-seat', 'Bearer synthetic-token', subscription('original'));
+      const replay = await owner(300).service.subscriptionAdmission('exercise-abort-seat', 'Bearer synthetic-token', subscription('original'));
       assert.equal(replay.state, 'REJECTED');
     });
     await check('abort/complete race never leaves a completed participant without capacity accounting', async () => {
       for (const order of ['abort', 'complete', 'concurrent']) {
         const name = 'abort-race-' + order; await seedLastSeat(name); const f = owner(310);
-        const grant = await f.service.subscriptionAdmission(name, 'Bearer synthetic-token', subscription('race'));
+        const grant = await f.service.subscriptionAdmission("exercise-" + name, 'Bearer synthetic-token', subscription('race'));
         const operation = await f.repo.readTournamentCheckoutOperation(name, actor(310).phoneNorm); assert.ok(operation);
         const complete = () => instance(310).repo.completeTournamentCheckout(name, operation, 'original-booking', false);
         let completed: boolean;
@@ -324,9 +388,9 @@ async function main() {
     });
     await check('abort rejects foreign owner, unknown proof and dispatch evidence; unknown hold retains capacity', async () => {
       await seedLastSeat('abort-unknown'); const f = owner(320);
-      const grant = await f.service.subscriptionAdmission('abort-unknown', 'Bearer synthetic-token', subscription('unknown'));
+      const grant = await f.service.subscriptionAdmission('exercise-abort-unknown', 'Bearer synthetic-token', subscription('unknown'));
       await assert.rejects(abort(owner(321), 'abort-unknown', grant));
-      await assert.rejects(f.service.abortSubscription('abort-unknown', 'Bearer synthetic-token', 'synthetic-owner-token', {
+      await assert.rejects(f.service.abortSubscription('exercise-abort-unknown', 'Bearer synthetic-token', 'synthetic-owner-token', {
         ...subscription('unknown'), ownerOperationId: grant.operationId, proof: 'TIMEOUT', code: 'SUBSCRIPTION_ELIGIBILITY_CHANGED_BEFORE_WRITE' }));
       await collection.updateOne({ id: 'abort-unknown' }, { $set: {
         'details.booking.pendingJoinPayments.0.providerCreateAttemptedAt': '2026-11-18T10:00:00Z' } });
@@ -351,7 +415,7 @@ async function main() {
       await assert.rejects(checkout(instance(330).service, 'level-retry', 'other-player'));
       assert.equal(postCount - before, 1);
     });
-    console.log('PASS 20 physical Mongo checkout-owner scenarios; synthetic provider only');
+    console.log('PASS physical Mongo checkout-owner scenarios; synthetic provider only');
   } finally {
     await Promise.all(repositories.map(repo => repo.onModuleDestroy()));
     assert.ok(databaseName.startsWith('tournament_checkout_task_'));

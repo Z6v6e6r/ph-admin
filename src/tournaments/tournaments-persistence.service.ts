@@ -65,6 +65,25 @@ const DEFAULT_TOURNAMENT_MECHANICS_WEIGHTS: AmericanoPenaltyWeights = {
 
 const MAX_TOURNAMENT_CHANGE_LOG_ENTRIES = 40;
 
+const CHECKOUT_EXERCISE_PATHS = [
+  'exerciseId', 'sourceTournamentId',
+  'details.booking.vivaExerciseId', 'details.booking.exerciseId', 'details.booking.viva.exerciseId',
+  'details.joinFlow.vivaExerciseId', 'details.joinFlow.exerciseId', 'details.joinFlow.viva.exerciseId',
+  'details.sourceTournamentSnapshot.exerciseId', 'details.sourceTournamentSnapshot.id',
+  'sourceTournamentSnapshot.exerciseId', 'sourceTournamentSnapshot.id'
+];
+const CHECKOUT_MAPPING_PATHS = [
+  ...CHECKOUT_EXERCISE_PATHS, 'studioId', 'details.sourceTournamentSnapshot.studioId',
+  'sourceTournamentSnapshot.studioId',
+  ...['booking', 'joinFlow'].flatMap(group =>
+    ['vivaStudioId', 'studioId', 'viva.studioId', 'vivaWidgetId', 'widgetId', 'viva.widgetId']
+      .map(field => `details.${group}.${field}`))
+];
+const CHECKOUT_MAPPING_CONTAINERS = [
+  'details', 'details.booking', 'details.booking.viva', 'details.joinFlow', 'details.joinFlow.viva',
+  'details.sourceTournamentSnapshot', 'sourceTournamentSnapshot'
+];
+
 export interface CreateCustomTournamentMutation {
   sourceTournamentId?: string;
   sourceTournamentSnapshot?: Record<string, unknown>;
@@ -253,6 +272,31 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       exerciseId: String(exerciseId || '').trim()
     } as Filter<MongoCustomTournamentDocument>)) as MongoCustomTournamentDocument | null;
     return document ? this.toCustomTournament(document) : null;
+  }
+
+  async findCheckoutTournamentByExerciseId(exerciseId: string) {
+    const collection = await this.collection(false);
+    const documents = await collection.find({
+      archived: { $ne: true },
+      $or: CHECKOUT_EXERCISE_PATHS.map(path => ({ [path]: exerciseId }))
+    }, { readPreference: 'primary', readConcern: { level: 'majority' }, maxTimeMS: 5000 })
+      .limit(2).toArray();
+    if (documents.length > 1) throw new ConflictException({ code: 'TOURNAMENT_TARGET_AMBIGUOUS' });
+    const document = documents[0];
+    if (!document) return null;
+    const readPath = (path: string) =>
+      path.split('.').reduce<unknown>((parent, segment) => this.toRecord(parent)?.[segment], document);
+    const mappingChecks = CHECKOUT_MAPPING_PATHS.map<Document>(path => {
+      const value = readPath(path);
+      return value === undefined ? { $eq: [{ $type: `$${path}` }, 'missing'] }
+        : { $eq: [`$${path}`, { $literal: value }] };
+    });
+    for (const path of CHECKOUT_MAPPING_CONTAINERS) {
+      // The presence of a booking object controls priority over legacy joinFlow.
+      mappingChecks.push({ $eq: [{ $eq: [{ $type: `$${path}` }, 'object'] }, Boolean(this.toRecord(readPath(path)))] });
+    }
+    const tournament = this.toCustomTournament(document);
+    return tournament ? { tournament, mappingChecks } : null;
   }
 
   async createCustomTournament(
@@ -619,10 +663,9 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       vivaBookingId: bookingId };
     const result = await collection.updateOne({ ...this.buildIdFilter(id), 'details.booking.pendingJoinPayments': { $elemMatch: {
       transactionId: operation.transactionId, phone: operation.phone, clientId: operation.clientId,
-      ownerCommand: operation.ownerCommand, $or: [
-        { state: { $in: ['PROVIDER_CREATE_PENDING', 'PROVIDER_RESULT_UNKNOWN'] }, providerBookingId: { $exists: false } },
-        { state: 'OWNER_COMPLETED', providerBookingId: bookingId }
-      ]
+      ownerCommand: operation.ownerCommand,
+      state: { $in: ['PROVIDER_CREATE_PENDING', 'PROVIDER_RESULT_UNKNOWN'] },
+      providerBookingId: { $exists: false }
     } } }, [{ $set: {
       participants: { $cond: [{ $in: [operation.phone, { $ifNull: ['$participants.phone', []] }] }, '$participants',
         { $concatArrays: [{ $ifNull: ['$participants', []] }, { $literal: [participant] }] }] },
@@ -631,15 +674,23 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
           { $mergeObjects: ['$$op', { state: 'OWNER_COMPLETED', providerBookingId: bookingId }] }, '$$op'] } } },
       updatedAt: new Date().toISOString()
     } }], { writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } });
-    return result.acknowledged && result.matchedCount === 1;
+    if (result.acknowledged && result.matchedCount === 1) return true;
+    // A completed receipt is immutable on replay. Its participant may since
+    // have been cancelled or removed by a different writer.
+    const current = await this.readTournamentCheckoutOperation(id, operation.phone, {
+      transactionId: operation.transactionId, requestKey: operation.ownerCommand?.requestKey
+    });
+    return current?.state === 'OWNER_COMPLETED' && current.clientId === operation.clientId
+      && current.providerBookingId === bookingId;
   }
 
-  async claimTournamentCheckout(id: string, operation: Record<string, any>, rule: TournamentAdmissionRule): Promise<boolean> {
+  async claimTournamentCheckout(id: string, operation: Record<string, any>, rule: TournamentAdmissionRule,
+    mappingChecks: Document[]): Promise<boolean> {
     const collection = await this.collection(false);
     const match = { transactionId: operation.transactionId, phone: operation.phone, clientId: operation.clientId,
       state: 'PROVIDER_CREATE_PENDING', ownerCommand: operation.ownerCommand, providerCreateAttemptedAt: { $exists: false } };
     const result = await collection.updateOne({ ...this.buildIdFilter(id),
-      'details.booking.vivaExerciseId': operation.exerciseId, 'details.booking.vivaStudioId': operation.studioId,
+      archived: { $ne: true }, $expr: { $and: mappingChecks },
       status: { $nin: ['FINISHED', 'CANCELED', 'CANCELLED'] },
       gender: rule.gender, updatedAt: rule.updatedAt, accessLevels: rule.accessLevels,
       levelTolerance: rule.levelTolerance ?? { $in: [null, 0] },

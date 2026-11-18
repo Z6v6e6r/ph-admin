@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { TournamentsService } from './tournaments.service';
 import { TournamentsPersistenceService } from './tournaments-persistence.service';
@@ -108,7 +108,18 @@ export class TournamentCheckoutService {
       promoCode: body.promoCode ?? null,
       ...(successUrl ? { successUrl, baseRedirectUrl: successUrl, redirectUrl: successUrl, returnUrl: successUrl, successRedirectUrl: successUrl } : {}),
       ...(failUrl ? { failUrl, failRedirectUrl: failUrl, failureRedirectUrl: failUrl } : {}) };
-    const rule = await this.tournaments.checkCheckoutAdmission(context, auth);
+    let rule;
+    try {
+      rule = await this.tournaments.checkCheckoutAdmission(context, auth);
+    } catch (error) {
+      if (!(error instanceof ForbiddenException) || (error.getResponse() as Row)?.code !== 'TOURNAMENT_RULE_CHANGED') throw error;
+      // The first writer can advance updatedAt by reserving the same actor's
+      // seat. Resolve that original operation before surfacing a rule conflict.
+      const winner = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm, { requestKey })
+        ?? await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm);
+      if (!winner || safelyRefused(winner)) throw error;
+      return this.resume(context, auth, winner);
+    }
     const operation = this.operation(context, requestKey, { kind: 'CHECKOUT', payload });
     const reserved = await this.persistence.reservePublicJoinPayment(context.tournament.id, operation, rule);
     if (!reserved) {
@@ -232,8 +243,9 @@ export class TournamentCheckoutService {
     }
     if (operation.ownerReceipt || operation.state !== 'PROVIDER_CREATE_PENDING') return this.view(operation);
     // A persisted preparation is resumable, but never grants a new dispatch on stale facts.
-    const currentContext = await this.tournaments.resolveCheckoutIdentity(context.tournament.id, auth);
-    if (currentContext.exerciseId !== operation.exerciseId || currentContext.studioId !== operation.studioId
+    const currentContext = await this.tournaments.resolveCheckoutIdentity(context.exerciseId, auth);
+    if (currentContext.tournament.id !== context.tournament.id
+      || currentContext.exerciseId !== operation.exerciseId || currentContext.studioId !== operation.studioId
       || currentContext.tenantKey !== operation.widgetId) throw new ConflictException({ code: 'TOURNAMENT_TARGET_CHANGED' });
     let rule;
     try { rule = await this.tournaments.checkCheckoutAdmission(currentContext, auth); }
@@ -247,9 +259,12 @@ export class TournamentCheckoutService {
       }
       throw error;
     }
-    const claimed = await this.persistence.claimTournamentCheckout(context.tournament.id, operation, rule);
+    const claimed = await this.persistence.claimTournamentCheckout(context.tournament.id, operation, rule, currentContext.mappingChecks);
     if (!claimed) {
-      return this.view(await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm) ?? operation);
+      const original = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm, {
+        transactionId: operation.transactionId, requestKey: operation.ownerCommand.requestKey
+      });
+      return this.view(original ?? operation);
     }
     let result: unknown;
     try {
