@@ -7,6 +7,7 @@ import { ConflictException } from '@nestjs/common';
 import { MAX_OUTBOX_TIMEOUT_MS, MaxOutboxStore, MaxReceipt, isMaxConnector, MAX_RECEIPT_PROTOCOL, maxOutboxEligible, missingMaxStore } from './max-outbox-store';
 import { supportDiagnostics } from './support-diagnostics';
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
+import { DeferredWrites, waitForAllWrites } from '../common/deferred-writes';
 import { Collection, Db, Document, MongoClient, MongoOperationTimeoutError } from 'mongodb';
 import { DEFAULT_DIALOGS_MONGODB_DB } from '../common/constants/dialogs-mongo.constants';
 import { ensureMongoIndex, isMongoIndexReadinessError, isProductionRuntime } from '../common/mongo-index.guard';
@@ -234,8 +235,10 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
   private readonly backendConfigs = this.buildBackendConfigs();
   private readonly backendStates = new Map<SupportPersistenceBackendKey, SupportPersistenceBackendState>();
   private readonly legacyMaxWrites = new Set<Promise<unknown>>();
+  private readonly deferredWrites = new DeferredWrites();
   private legacyMaxWriteFailures = 0;
   private legacyMaxClosing = false;
+  private shutdown?: Promise<void>;
 
   async onModuleInit(): Promise<void> {
     for (const config of this.backendConfigs) {
@@ -307,12 +310,18 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     }
   }
 
-  async onModuleDestroy(): Promise<void> {
-    this.legacyMaxClosing = true;
-    await Promise.allSettled([...this.legacyMaxWrites]);
-    await Promise.all(
-      Array.from(this.backendStates.values()).map((state) => this.safeCloseBackend(state))
-    );
+  onModuleDestroy(): Promise<void> {
+    if (!this.shutdown) {
+      this.legacyMaxClosing = true;
+      this.shutdown = Promise.all([Promise.allSettled(this.legacyMaxWrites), this.deferredWrites.drain()])
+        .then(() => Promise.all(Array.from(this.backendStates.values(), state => this.safeCloseBackend(state))))
+        .then(() => undefined);
+    }
+    return this.shutdown;
+  }
+
+  get hasUnconfirmedWrites(): boolean {
+    return this.deferredWrites.hasUnconfirmedWrites;
   }
 
   isEnabled(): boolean {
@@ -1000,8 +1009,8 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
   persistClient(client: SupportClientProfile): void {
     this.fireAndForget(async () => {
       const activeBackends = this.getActiveBackends();
-      await Promise.all(
-        activeBackends.map((backend) =>
+      await waitForAllWrites(
+        activeBackends.map(async (backend) =>
           this.collection<SupportClientProfile>(backend, 'clients').updateOne(
             { id: client.id },
             { $set: client },
@@ -1015,8 +1024,8 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
   deleteClient(id: string): void {
     this.fireAndForget(async () => {
       const activeBackends = this.getActiveBackends();
-      await Promise.all(
-        activeBackends.map((backend) =>
+      await waitForAllWrites(
+        activeBackends.map(async (backend) =>
           this.collection<SupportClientProfile>(backend, 'clients').deleteOne({ id })
         )
       );
@@ -1043,8 +1052,8 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
   deleteDialog(id: string): void {
     this.fireAndForget(async () => {
       const activeBackends = this.getActiveBackends();
-      await Promise.all(
-        activeBackends.map((backend) =>
+      await waitForAllWrites(
+        activeBackends.map(async (backend) =>
           this.collection<SupportDialog>(backend, 'dialogs').deleteOne({ id })
         )
       );
@@ -1849,8 +1858,8 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
       (backend) => backend.config.key !== keepKey
     );
 
-    await Promise.all(
-      targets.map((backend) => this.collection(backend, collectionKey).deleteOne({ id }))
+    await waitForAllWrites(
+      targets.map(async (backend) => this.collection(backend, collectionKey).deleteOne({ id }))
     );
   }
 
@@ -1860,11 +1869,7 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
   }
 
   private fireAndForget(task: () => Promise<void>, context: string): void {
-    if (!this.isEnabled()) {
-      return;
-    }
-
-    task().catch((error) => {
+    this.deferredWrites.start(this.isEnabled(), task, error => {
       this.logger.error(`${context} failed: ${String(error)}`);
     });
   }

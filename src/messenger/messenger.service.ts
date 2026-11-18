@@ -117,6 +117,10 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
   }
 
   onModuleDestroy(): void {
+    this.stopScheduledWork();
+  }
+
+  stopScheduledWork(): void {
     if (!this.noReplyQuickReplyTimer) {
       return;
     }

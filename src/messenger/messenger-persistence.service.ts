@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { Collection, Db, MongoClient } from 'mongodb';
 import { ensureMongoIndex, isMongoIndexReadinessError } from '../common/mongo-index.guard';
 import { DEFAULT_DIALOGS_MONGODB_DB } from '../common/constants/dialogs-mongo.constants';
+import { DeferredWrites } from '../common/deferred-writes';
 import {
   AiReplySuggestion,
   ChatMessage,
@@ -46,6 +47,8 @@ export class MessengerPersistenceService implements OnModuleInit, OnModuleDestro
   private readonly logger = new Logger(MessengerPersistenceService.name);
   private client?: MongoClient;
   private db?: Db;
+  private readonly deferredWrites = new DeferredWrites();
+  private shutdown?: Promise<void>;
 
   async onModuleInit(): Promise<void> {
     const uri = String(process.env.MONGODB_URI ?? '').trim();
@@ -75,8 +78,13 @@ export class MessengerPersistenceService implements OnModuleInit, OnModuleDestro
     }
   }
 
-  async onModuleDestroy(): Promise<void> {
-    await this.safeCloseClient();
+  onModuleDestroy(): Promise<void> {
+    this.shutdown ??= this.deferredWrites.drain().then(() => this.safeCloseClient());
+    return this.shutdown;
+  }
+
+  get hasUnconfirmedWrites(): boolean {
+    return this.deferredWrites.hasUnconfirmedWrites;
   }
 
   isEnabled(): boolean {
@@ -303,11 +311,7 @@ export class MessengerPersistenceService implements OnModuleInit, OnModuleDestro
   }
 
   private fireAndForget(task: () => Promise<void>, context: string): void {
-    if (!this.db) {
-      return;
-    }
-
-    task().catch((error) => {
+    this.deferredWrites.start(this.isEnabled(), task, error => {
       this.logger.error(`${context} failed: ${String(error)}`);
     });
   }

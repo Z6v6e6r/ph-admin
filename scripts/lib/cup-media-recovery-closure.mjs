@@ -6,11 +6,14 @@ import ts from 'typescript';
 import { createHash } from 'node:crypto';
 
 export const MEDIA_RECOVERY_TS = Object.freeze([
+  'src/bootstrap.ts', 'src/main.ts',
+  'src/common/graceful-shutdown.ts', 'src/common/deferred-writes.ts',
   ...CUSTODY_FILES.map(n => `src/support/${n}.ts`),
   ...['support-media-auth', 'support-media.controller', 'support-media-download', 'support-media.interceptor',
     'support-media.service', 'support-media-store'].map(n => `src/support/${n}.ts`),
   'src/support/support.controller.ts', 'src/support/support.module.ts',
   'src/messenger/messenger.controller.ts', 'src/messenger/messenger.service.ts',
+  'src/messenger/messenger-persistence.service.ts',
   'src/common/messages/message-attachment.types.ts',
   'src/integrations/viva/viva-request-governor.service.ts',
   'src/integrations/viva/viva-tournaments.service.ts'

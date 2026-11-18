@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { MEDIA_RECOVERY_SOURCES, verifyMediaRecoverySources, verifyMediaRecoveryCompilation, restoreEquivalentRecoveryDeclarations, verifyMediaRecoveryCandidateHash, MEDIA_RECOVERY_SDK_SHA256, MEDIA_FPR_CANDIDATE_SDK_SHA256 } from '../scripts/lib/cup-media-recovery-closure.mjs';
-test('actual recovery patch derives exactly21 reviewed sources with the pinned historical photo SDK', t => {
-  assert.equal(MEDIA_RECOVERY_SOURCES.length, 21);
+test('actual recovery patch derives the reviewed media and shutdown sources with the pinned historical photo SDK', t => {
+  assert.equal(MEDIA_RECOVERY_SOURCES.length, 26);
   const root = path.resolve(import.meta.dirname, '..'), derived = fs.mkdtempSync(path.join(os.tmpdir(), 'media-recovery-source-'));
   t.after(() => fs.rmSync(derived, { recursive: true, force: true }));
   const git = (...args) => execFileSync('git', args, { cwd: derived, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -46,7 +46,11 @@ test('media-aware recovery requires the explicit reader, custody and SDK closure
     .concat('phab-admin-panel.js', 'client-sdk/phab-admin-panel.js');
   const before = [row('unrelated/payment.js', 'unchanged')];
   const after = before.concat(executables.map(p => row(p, 'new')));
-  assert.equal(verifyMediaRecoveryCompilation(before, after).length, 19);
+  assert.equal(verifyMediaRecoveryCompilation(before, after).length, 24);
+  for (const name of ['bootstrap.js', 'main.js', 'common/graceful-shutdown.js',
+    'common/deferred-writes.js', 'messenger/messenger-persistence.service.js']) {
+    assert.throws(() => verifyMediaRecoveryCompilation(before, after.filter(p => p.path !== name)), /incomplete/);
+  }
   for (const name of ['viva-request-governor.service', 'viva-tournaments.service']) {
     assert.throws(() => verifyMediaRecoveryCompilation(before, after.filter(p => p.path !== `integrations/viva/${name}.js`)), /incomplete/);
   }
