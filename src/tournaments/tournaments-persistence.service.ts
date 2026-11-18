@@ -574,12 +574,15 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
   }
 
   /** Raw admission rule: no presentation fallback and no index creation. */
-  async readTournamentCheckoutOperation(id: string, phone: string): Promise<Record<string, any> | null> {
+  async readTournamentCheckoutOperation(id: string, phone: string, selector?: { requestKey?: string; transactionId?: string }): Promise<Record<string, any> | null> {
     const collection = await this.collection(false);
     const row = await collection.findOne(this.buildIdFilter(id), {
       projection: { 'details.booking.pendingJoinPayments': 1 }, readPreference: 'primary',
       readConcern: { level: 'majority' }, maxTimeMS: 5000 });
     const rows = (row?.details?.booking?.pendingJoinPayments ?? []).filter((p: Record<string, unknown>) => p.phone === phone);
+    if (selector) return rows.find((p: Record<string, any>) =>
+      (selector.requestKey === undefined || p.ownerCommand?.requestKey === selector.requestKey)
+      && (selector.transactionId === undefined || p.transactionId === selector.transactionId)) ?? null;
     return rows.find((p: Record<string, unknown>) => !['EXPIRED', 'FAILED', 'OWNER_COMPLETED'].includes(String(p.state)))
       ?? rows.at(-1) ?? null;
   }
@@ -591,6 +594,20 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       state: 'PROVIDER_CREATE_PENDING', ownerCommand: operation.ownerCommand,
       providerCreateAttemptedAt: { $exists: false }, providerTransactionId: { $exists: false }, ownerReceipt: { $exists: false }
     } } }, { $set: { 'details.booking.pendingJoinPayments.$.state': 'FAILED',
+      'details.booking.pendingJoinPayments.$.ownerRefusal': code,
+      'details.booking.pendingJoinPayments.$.ownerNoDispatch': true } },
+      { writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } });
+  }
+
+  async abortTournamentSubscription(id: string, operation: Record<string, any>, code: string): Promise<void> {
+    const collection = await this.collection(false);
+    await collection.updateOne({ ...this.buildIdFilter(id), 'details.booking.pendingJoinPayments': { $elemMatch: {
+      transactionId: operation.transactionId, phone: operation.phone, clientId: operation.clientId,
+      ownerCommand: operation.ownerCommand, state: 'PROVIDER_CREATE_PENDING',
+      providerCreateAttemptedAt: { $exists: false }, providerTransactionId: { $exists: false },
+      providerBookingId: { $exists: false }, ownerReceipt: { $exists: false }
+    } } }, { $set: { 'details.booking.pendingJoinPayments.$.state': 'FAILED',
+      'details.booking.pendingJoinPayments.$.ownerNoDispatch': true,
       'details.booking.pendingJoinPayments.$.ownerRefusal': code } },
       { writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } });
   }
@@ -706,6 +723,9 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
             $elemMatch: {
               $or: [
                 { transactionId },
+                ...(pending.ownerCommand && typeof pending.ownerCommand === 'object'
+                  ? [{ phone, 'ownerCommand.requestKey': (pending.ownerCommand as Record<string, unknown>).requestKey }]
+                  : []),
                 {
                   phone,
                   $or: [

@@ -7,6 +7,8 @@ type Row = Record<string, any>;
 const record = (x: unknown): x is Row => !!x && typeof x === 'object' && !Array.isArray(x);
 const str = (x: Row, keys: string[]) => keys.map(k => x?.[k]).find(v => typeof v === 'string' && v.trim())?.trim();
 const id = (x: unknown): x is string => typeof x === 'string' && /^[A-Za-z0-9._:-]{1,200}$/.test(x);
+const safelyRefused = (operation: Row) => operation.state === 'FAILED' && operation.ownerNoDispatch === true
+  && !operation.providerCreateAttemptedAt && !operation.providerTransactionId && !operation.providerBookingId && !operation.ownerReceipt;
 const pending = (operation: Row) => ({ operationId: operation.transactionId, state: 'PENDING_CONFIRMATION',
   code: 'TOURNAMENT_CHECKOUT_OUTCOME_UNRESOLVED', message: 'Результат записи уточняется. Повторная оплата заблокирована.' });
 
@@ -77,8 +79,10 @@ export class TournamentCheckoutService {
     if (!record(body)) throw new BadRequestException('Invalid checkout');
     // Identity and operation lookup precede every fresh rule/catalog read, including alternate keys.
     const context = await this.tournaments.resolveCheckoutIdentity(ref, auth);
+    const replay = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm, { requestKey });
+    if (replay) return this.resume(context, auth, replay);
     const previous = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm);
-    if (previous) return this.resume(context, auth, previous);
+    if (previous && !safelyRefused(previous)) return this.resume(context, auth, previous);
     if (!id(body.productId) || !['one-time', 'client-one-time', 'subscription'].includes(body.source)
       || (body.promoCode != null && (typeof body.promoCode !== 'string' || body.promoCode.length > 100))) {
       throw new BadRequestException({ code: 'TOURNAMENT_CHECKOUT_INVALID' });
@@ -108,7 +112,8 @@ export class TournamentCheckoutService {
     const operation = this.operation(context, requestKey, { kind: 'CHECKOUT', payload });
     const reserved = await this.persistence.reservePublicJoinPayment(context.tournament.id, operation, rule);
     if (!reserved) {
-      const winner = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm);
+      const winner = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm, { requestKey })
+        ?? await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm);
       if (winner) return this.resume(context, auth, winner);
       throw new ConflictException({ code: 'TOURNAMENT_RULE_OR_CAPACITY_CHANGED' });
     }
@@ -118,8 +123,9 @@ export class TournamentCheckoutService {
   async subscriptionAdmission(ref: string, auth: string | undefined, body: unknown): Promise<Row> {
     if (!record(body) || !id(body.operationId) || !id(body.clientSubscriptionId)) throw new BadRequestException('Invalid subscription admission');
     const context = await this.tournaments.resolveCheckoutIdentity(ref, auth);
-    const previous = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm);
-    if (previous) {
+    const replay = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm, { requestKey: body.operationId });
+    const previous = replay ?? await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm);
+    if (previous && (replay || !safelyRefused(previous))) {
       if (previous.ownerCommand?.kind !== 'SUBSCRIPTION'
         || previous.ownerCommand.requestOperationId !== body.operationId
         || previous.ownerCommand.clientSubscriptionId !== body.clientSubscriptionId) {
@@ -167,9 +173,14 @@ export class TournamentCheckoutService {
     const context = await this.tournaments.resolveCheckoutIdentity(ref, auth);
     if (actor.clientId !== context.actor.clientId || actor.phoneNorm !== context.actor.phoneNorm || actor.tenantKey !== context.tenantKey) throw new ConflictException();
     if (!record(body) || !id(body.operationId) || !id(body.clientSubscriptionId) || !id(body.bookingId)) throw new BadRequestException();
-    const operation = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, actor.phoneNorm);
-    if (!operation) return { state: 'LEGACY_UNTRACKED', requestOperationId: body.operationId };
-    if (operation.ownerCommand?.kind !== 'SUBSCRIPTION' || operation.ownerCommand.requestOperationId !== body.operationId
+    const operation = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, actor.phoneNorm, { requestKey: body.operationId });
+    if (!operation) {
+      const other = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, actor.phoneNorm);
+      if (other) throw new ConflictException({ code: 'TOURNAMENT_OPERATION_BINDING_MISMATCH' });
+      return { state: 'LEGACY_UNTRACKED', requestOperationId: body.operationId };
+    }
+    if ((body.ownerOperationId !== undefined && operation.transactionId !== body.ownerOperationId)
+      || operation.ownerCommand?.kind !== 'SUBSCRIPTION' || operation.ownerCommand.requestOperationId !== body.operationId
       || operation.ownerCommand.clientSubscriptionId !== body.clientSubscriptionId || operation.clientId !== actor.clientId) {
       throw new ConflictException({ code: 'TOURNAMENT_OPERATION_BINDING_MISMATCH' });
     }
@@ -177,6 +188,33 @@ export class TournamentCheckoutService {
       throw new ServiceUnavailableException({ code: 'TOURNAMENT_COMPLETION_UNRESOLVED' });
     }
     return { state: 'COMPLETED', requestOperationId: body.operationId, bookingId: body.bookingId };
+  }
+
+  async abortSubscription(ref: string, auth: string | undefined, token: string | undefined, body: unknown): Promise<Row> {
+    const actor = await this.tournaments.verifyCheckoutOwner(auth, token);
+    const context = await this.tournaments.resolveCheckoutIdentity(ref, auth);
+    if (actor.clientId !== context.actor.clientId || actor.phoneNorm !== context.actor.phoneNorm
+      || actor.tenantKey !== context.tenantKey) throw new ConflictException();
+    if (!record(body) || !id(body.operationId) || !id(body.ownerOperationId) || !id(body.clientSubscriptionId)
+      || body.proof !== 'PRE_DISPATCH_REJECTED_V1'
+      || body.code !== 'SUBSCRIPTION_ELIGIBILITY_CHANGED_BEFORE_WRITE') throw new BadRequestException();
+    const selector = { transactionId: body.ownerOperationId, requestKey: body.operationId };
+    const operation = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, actor.phoneNorm, selector);
+    if (!operation || operation.ownerCommand?.kind !== 'SUBSCRIPTION'
+      || operation.ownerCommand.requestOperationId !== body.operationId
+      || operation.ownerCommand.clientSubscriptionId !== body.clientSubscriptionId
+      || operation.clientId !== actor.clientId || operation.widgetId !== context.tenantKey
+      || operation.exerciseId !== context.exerciseId || operation.studioId !== context.studioId) {
+      throw new ConflictException({ code: 'TOURNAMENT_OPERATION_BINDING_MISMATCH' });
+    }
+    await this.persistence.abortTournamentSubscription(context.tournament.id, operation, body.code);
+    // Read the exact original row after every attempt, including retries after a lost HTTP ACK.
+    const current = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, actor.phoneNorm, selector);
+    const binding = { ownerOperationId: operation.transactionId, requestOperationId: body.operationId,
+      actorClientId: actor.clientId, exerciseId: operation.exerciseId, clientSubscriptionId: body.clientSubscriptionId };
+    if (current?.state === 'OWNER_COMPLETED') return { ...binding, state: 'COMPLETED', bookingId: current.providerBookingId };
+    if (current && safelyRefused(current) && current.ownerRefusal === body.code) return { ...binding, state: 'ABORTED' };
+    throw new ServiceUnavailableException({ code: 'TOURNAMENT_ABORT_UNRESOLVED' });
   }
 
   private operation(context: Awaited<ReturnType<TournamentsService['resolveCheckoutIdentity']>>, key: string, command: Row): Row {
@@ -204,7 +242,7 @@ export class TournamentCheckoutService {
       if (['LEVEL_NOT_ALLOWED', 'PLAYER_LEVEL_REQUIRED', 'PLAYER_LEVEL_UNKNOWN', 'ACTIVITY_LEVEL_INVALID',
         'GENDER_NOT_ALLOWED', 'PLAYER_GENDER_REQUIRED'].includes(code)) {
         await this.persistence.rejectTournamentCheckoutPreparation(context.tournament.id, operation, code);
-        const winner = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm);
+        const winner = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm, { transactionId: operation.transactionId });
         if (winner && winner.transactionId === operation.transactionId && winner.state !== 'FAILED') return this.view(winner);
       }
       throw error;

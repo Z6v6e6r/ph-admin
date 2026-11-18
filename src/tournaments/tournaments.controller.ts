@@ -384,6 +384,14 @@ export class TournamentsController {
     return this.checkoutService.reconcile(id, this.pickString(request.headers.authorization));
   }
 
+  @Post(':id/subscription-admission/abort')
+  @Roles()
+  abortSubscriptionAdmission(@Param('id') id: string, @Req() request: Request, @Body() body: unknown) {
+    if (!this.checkoutService) throw new ServiceUnavailableException();
+    return this.checkoutService.abortSubscription(id, this.pickString(request.headers.authorization),
+      this.pickString(request.headers['x-cup-integration-token']), body);
+  }
+
   @Post(':id/subscription-admission/complete')
   @Roles()
   completeSubscriptionAdmission(@Param('id') id: string, @Req() request: Request, @Body() body: unknown) {

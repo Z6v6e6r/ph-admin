@@ -242,7 +242,99 @@ async function main() {
       assert.equal(row!.participants[0].vivaBookingId, 'booking-original');
       assert.equal(row!.details.booking.pendingJoinPayments[0].providerBookingId, 'booking-original');
     });
-    console.log('PASS 14 physical Mongo checkout-owner scenarios; synthetic provider only');
+    await check('new key after proven refusal rechecks level and rule; old key replays even after a new payment', async () => {
+      await seed('fresh-after-refusal'); const f = instance(), before = postCount;
+      f.repo.claimTournamentCheckout = async () => { throw Error('before dispatch'); };
+      await assert.rejects(checkout(f.service, 'fresh-after-refusal', 'old-key'));
+      rating = 6;
+      await assert.rejects(checkout(instance().service, 'fresh-after-refusal', 'old-key'));
+      const refused = await instance().repo.readTournamentCheckoutOperation('fresh-after-refusal', actor().phoneNorm);
+      assert.equal(refused?.ownerNoDispatch, true);
+      await assert.rejects(checkout(instance().service, 'fresh-after-refusal', 'still-disallowed'));
+      assert.equal(postCount, before);
+      // Rule, not player, changes after the refusal.
+      await collection.updateOne({ id: 'fresh-after-refusal' }, { $set: { accessLevels: ['A'] } });
+      result = async () => ({ transactionId: 'new-allowed-payment' });
+      const outcomes = await Promise.all(Array.from({ length: 8 }, (_, n) => checkout(instance().service, 'fresh-after-refusal', 'new-' + n)));
+      assert.equal(postCount - before, 1);
+      assert.equal(new Set(outcomes.map(x => x.operationId)).size, 1);
+      const replay = await checkout(instance().service, 'fresh-after-refusal', 'old-key');
+      assert.equal(replay.state, 'REJECTED'); assert.equal(replay.code, 'LEVEL_NOT_ALLOWED');
+      assert.equal(replay.operationId, refused?.transactionId);
+      assert.equal((await collection.findOne({ id: 'fresh-after-refusal' }))!.details.booking.pendingJoinPayments.length, 2);
+      rating = 3.25;
+    });
+    await check('same new key races create one journal row; bare FAILED never permits a second payment', async () => {
+      await seed('same-new-key'); result = async () => ({ transactionId: 'synthetic-payment-' + postCount });
+      const before = postCount;
+      await Promise.all(Array.from({ length: 6 }, () => checkout(instance().service, 'same-new-key', 'same-key')));
+      assert.equal(postCount - before, 1);
+      const row = await collection.findOne({ id: 'same-new-key' });
+      assert.equal(row!.details.booking.pendingJoinPayments.length, 1);
+      await collection.updateOne({ id: 'same-new-key' }, { $set: { 'details.booking.pendingJoinPayments.0.state': 'FAILED' } });
+      await checkout(instance().service, 'same-new-key', 'unsafe-new-key');
+      assert.equal(postCount - before, 1);
+    });
+    const seedLastSeat = async (name: string) => {
+      await seed(name, 2);
+      await collection.updateOne({ id: name }, { $set: { participants: [{ phone: '12025550999', name: 'Existing', status: 'REGISTERED' }] } });
+    };
+    const subscription = (operationId: string) => ({ operationId, clientSubscriptionId: 'synthetic-subscription' });
+    const owner = (n: number) => {
+      const f = instance(n);
+      f.tournaments.verifyCheckoutOwner = async (_auth: string, token: string) => {
+        assert.equal(token, 'synthetic-owner-token'); return actor(n);
+      };
+      return f;
+    };
+    const abort = (f: ReturnType<typeof owner>, name: string, grant: Row) => f.service.abortSubscription(name,
+      'Bearer synthetic-token', 'synthetic-owner-token', { ...subscription(grant.requestOperationId),
+        ownerOperationId: grant.operationId, proof: 'PRE_DISPATCH_REJECTED_V1', code: 'SUBSCRIPTION_ELIGIBILITY_CHANGED_BEFORE_WRITE' });
+    await check('subscription abort releases one seat, survives lost ACK/restart, and late abort preserves a new hold', async () => {
+      await seedLastSeat('abort-seat'); const f = owner(300);
+      const grant = await f.service.subscriptionAdmission('abort-seat', 'Bearer synthetic-token', subscription('original'));
+      const apply = f.repo.abortTournamentSubscription.bind(f.repo);
+      f.repo.abortTournamentSubscription = async (...args) => { await apply(...args); throw Error('lost ACK after commit'); };
+      await assert.rejects(abort(f, 'abort-seat', grant), /lost ACK/);
+      assert.equal((await abort(owner(300), 'abort-seat', grant)).state, 'ABORTED');
+      const next = await owner(300).service.subscriptionAdmission('abort-seat', 'Bearer synthetic-token', subscription('new-operation'));
+      assert.notEqual(next.operationId, grant.operationId);
+      assert.equal((await abort(owner(300), 'abort-seat', grant)).state, 'ABORTED');
+      assert.equal((await instance(300).repo.readTournamentCheckoutOperation('abort-seat', actor(300).phoneNorm))?.transactionId, next.operationId);
+      await assert.rejects(checkout(instance(301).service, 'abort-seat', 'full'));
+      const replay = await owner(300).service.subscriptionAdmission('abort-seat', 'Bearer synthetic-token', subscription('original'));
+      assert.equal(replay.state, 'REJECTED');
+    });
+    await check('abort/complete race never leaves a completed participant without capacity accounting', async () => {
+      for (const order of ['abort', 'complete', 'concurrent']) {
+        const name = 'abort-race-' + order; await seedLastSeat(name); const f = owner(310);
+        const grant = await f.service.subscriptionAdmission(name, 'Bearer synthetic-token', subscription('race'));
+        const operation = await f.repo.readTournamentCheckoutOperation(name, actor(310).phoneNorm); assert.ok(operation);
+        const complete = () => instance(310).repo.completeTournamentCheckout(name, operation, 'original-booking', false);
+        let completed: boolean;
+        if (order === 'abort') { await abort(f, name, grant); completed = await complete(); }
+        else if (order === 'complete') { completed = await complete(); assert.equal((await abort(f, name, grant)).state, 'COMPLETED'); }
+        else { const results = await Promise.all([abort(f, name, grant), complete()]); completed = results[1]; }
+        const row = await collection.findOne({ id: name });
+        assert.equal(row!.participants.length, completed ? 2 : 1);
+        assert.equal(row!.details.booking.pendingJoinPayments[0].state, completed ? 'OWNER_COMPLETED' : 'FAILED');
+        if (completed) await assert.rejects(checkout(instance(311).service, name, 'cannot-overbook'));
+        else await checkout(instance(311).service, name, 'replacement');
+      }
+    });
+    await check('abort rejects foreign owner, unknown proof and dispatch evidence; unknown hold retains capacity', async () => {
+      await seedLastSeat('abort-unknown'); const f = owner(320);
+      const grant = await f.service.subscriptionAdmission('abort-unknown', 'Bearer synthetic-token', subscription('unknown'));
+      await assert.rejects(abort(owner(321), 'abort-unknown', grant));
+      await assert.rejects(f.service.abortSubscription('abort-unknown', 'Bearer synthetic-token', 'synthetic-owner-token', {
+        ...subscription('unknown'), ownerOperationId: grant.operationId, proof: 'TIMEOUT', code: 'SUBSCRIPTION_ELIGIBILITY_CHANGED_BEFORE_WRITE' }));
+      await collection.updateOne({ id: 'abort-unknown' }, { $set: {
+        'details.booking.pendingJoinPayments.0.providerCreateAttemptedAt': '2026-11-18T10:00:00Z' } });
+      await assert.rejects(abort(f, 'abort-unknown', grant));
+      await assert.rejects(checkout(instance(321).service, 'abort-unknown', 'still-full'));
+      assert.equal((await collection.findOne({ id: 'abort-unknown' }))!.details.booking.pendingJoinPayments[0].state, 'PROVIDER_CREATE_PENDING');
+    });
+    console.log('PASS 19 physical Mongo checkout-owner scenarios; synthetic provider only');
   } finally {
     await Promise.all(repositories.map(repo => repo.onModuleDestroy()));
     assert.ok(databaseName.startsWith('tournament_checkout_task_'));

@@ -25,7 +25,9 @@ function fixture() {
     isEnabled: () => true,
     readPublicAdmissionRule: async () => ({ gender: row.gender, accessLevels: clone(row.accessLevels),
       levelTolerance: row.levelTolerance, updatedAt: row.updatedAt }),
-    readTournamentCheckoutOperation: async () => clone(operation),
+    readTournamentCheckoutOperation: async (_id: string, _phone: string, selector?: Row) => clone(operation &&
+      (!selector?.requestKey || operation.ownerCommand?.requestKey === selector.requestKey) &&
+      (!selector?.transactionId || operation.transactionId === selector.transactionId) ? operation : null),
     reservePublicJoinPayment: async (_id: string, next: Row) => {
       if (operation) return null;
       operation = clone(next); return clone(row);
@@ -36,7 +38,7 @@ function fixture() {
     },
     rejectTournamentCheckoutPreparation: async (_id: string, current: Row, code: string) => {
       if (operation && operation.transactionId === current.transactionId && operation.state === 'PROVIDER_CREATE_PENDING') {
-        operation.state = 'FAILED'; operation.ownerRefusal = code;
+        operation.state = 'FAILED'; operation.ownerRefusal = code; operation.ownerNoDispatch = true;
       }
     },
     completeTournamentCheckout: async () => { throw Error('completion must not be called for an untrusted caller'); },
@@ -187,4 +189,16 @@ test('subscription completion cannot be attested by the ordinary browser bearer'
     if (old === undefined) delete process.env.TOURNAMENT_LOCAL_OPERATIONS_ENABLED;
     else process.env.TOURNAMENT_LOCAL_OPERATIONS_ENABLED = old;
   }
+});
+
+
+test('subscription abort cannot be attested by browser bearer or a malformed proof', async () => {
+  const f = fixture();
+  const input = { operationId: 'subscription-operation', clientSubscriptionId: 'synthetic-subscription' };
+  const grant = await f.service.subscriptionAdmission('synthetic-tournament', auth, input);
+  const before = clone(f.operation);
+  await assert.rejects(f.service.abortSubscription('synthetic-tournament', auth, undefined, {
+    ...input, ownerOperationId: grant.operationId, proof: 'PRE_DISPATCH_REJECTED_V1',
+    code: 'SUBSCRIPTION_ELIGIBILITY_CHANGED_BEFORE_WRITE' }), errorCode('INTEGRATION_TOKEN_REQUIRED'));
+  assert.deepEqual(f.operation, before);
 });

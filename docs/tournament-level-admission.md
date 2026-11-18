@@ -207,3 +207,31 @@ read as zero. Preserve this collection and existing payment eligibility snapshot
 Rollback must never mean enabling OFF or reverting to an unguarded booking writer. Keep affected
 new registrations closed until the owner guard is repaired; do not cancel or refund existing
 operations automatically. Merge, deploy and any provider/shared-state action need separate approval.
+
+### Post-admission abort and new checkout keys (2026-11-18)
+
+`POST /tournaments/:id/subscription-admission/abort` uses the same verified bearer plus
+integration-token boundary as completion. It accepts the exact original ownerOperationId,
+request operationId and clientSubscriptionId, with proof `PRE_DISPATCH_REJECTED_V1` and
+code `SUBSCRIPTION_ELIGIBILITY_CHANGED_BEFORE_WRITE`. LK1 issues this attestation only
+from its durable predispatch failure CAS, never from an HTTP timeout. CUP compares the
+full stored command/actor and only releases PROVIDER_CREATE_PENDING without provider
+booking/transaction/dispatch/receipt evidence. A majority read of the exact historical row
+returns ABORTED after a lost ACK, including after another operation has taken the seat.
+Completion and abort atomically compete on the same tournament document: completion
+retains a participant; abort prevents a later successful completion receipt.
+
+Checkout now resolves the original requestKey before looking for another active operation.
+A new key may bypass only FAILED with explicit `ownerNoDispatch: true` and no provider
+markers, and must pass current catalog/admission/rule/capacity checks. The original key
+always replays its stored outcome, even when a newer payment exists. Reservation CAS
+also deduplicates requestKey against terminal history. Active/PROVIDER_RESULT_UNKNOWN
+operations retain original payment custody under any alternate key. Existing legacy FAILED
+semantics are unchanged; a bare legacy FAILED is not proof authorizing a new checkout.
+
+No collection/index migration is needed; fields and endpoint are additive. Install CUP's
+endpoint before the new LK1 abort producer; install the LK2 additive refusal consumer before
+emitting new owner reason codes. Source rollback must preserve unfinished abort custody.
+These local proofs use synthetic provider transports and disposable Mongo namespaces.
+STAGING composition/restart checks and PROVIDER direct-write enforcement remain outstanding;
+P0 direct Viva/widget bypass is still OPEN. No merge, deploy or live mutation is authorized.
