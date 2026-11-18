@@ -143,6 +143,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   private readonly dialogsNeedingUnreadRebuild = new Set<string>();
   private readonly messageObservers: SupportMessageObserver[] = [];
   private readonly noReplyQuickReplySignatures = new Set<string>();
+  private readonly scheduledWork = new Set<Promise<unknown>>();
   private readonly stationMappings = parseSupportStationMappings(
     process.env.TELEGRAM_STATION_MAPPINGS
   );
@@ -177,7 +178,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     this.ensureNoReplyQuickReplyTimer();
   }
 
-  onModuleDestroy(): void {
+  onModuleDestroy(): Promise<void> {
+    return this.stopScheduledWork();
+  }
+
+  async stopScheduledWork(): Promise<void> {
     if (this.persistenceSyncTimer) {
       clearInterval(this.persistenceSyncTimer);
       this.persistenceSyncTimer = undefined;
@@ -186,6 +191,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       clearInterval(this.noReplyQuickReplyTimer);
       this.noReplyQuickReplyTimer = undefined;
     }
+    await Promise.allSettled(this.scheduledWork);
   }
 
   registerMessageObserver(observer: SupportMessageObserver): void {
@@ -421,7 +427,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       `Support persistence periodic sync enabled (intervalMs=${this.persistenceSyncIntervalMs}).`
     );
     this.persistenceSyncTimer = setInterval(() => {
-      void this.syncFromPersistence();
+      this.trackScheduledWork(this.syncFromPersistence());
     }, this.persistenceSyncIntervalMs);
   }
 
@@ -430,8 +436,15 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       return;
     }
     this.noReplyQuickReplyTimer = setInterval(() => {
-      void this.sweepNoReplyQuickReplies().catch(() => this.logger.error('SUPPORT_QUICK_REPLY_WRITE_UNKNOWN'));
+      this.trackScheduledWork(
+        this.sweepNoReplyQuickReplies().catch(() => { this.logger.error('SUPPORT_QUICK_REPLY_WRITE_UNKNOWN'); })
+      );
     }, 30000);
+  }
+
+  private trackScheduledWork(work: Promise<unknown>): void {
+    const pending = work.finally(() => this.scheduledWork.delete(pending));
+    this.scheduledWork.add(pending);
   }
 
   private async sweepNoReplyQuickReplies(): Promise<void> {

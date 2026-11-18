@@ -3,16 +3,21 @@ import { NestFactory } from '@nestjs/core';
 import { json, urlencoded } from 'express';
 import { AuthPersistenceService } from './auth/auth-persistence.service';
 import { AuthService } from './auth/auth.service';
+import { HttpShutdownDrain } from './common/graceful-shutdown';
 import { releaseMaintenanceEnabled, releaseMaintenanceFence } from './common/release-maintenance';
 import { validateReleaseCapabilities } from './common/release-capabilities';
 
-export async function createApplication(): Promise<INestApplication> {
+export async function createApplication(shutdownDrain?: HttpShutdownDrain): Promise<INestApplication> {
   validateReleaseCapabilities();
   const maintenance = releaseMaintenanceEnabled();
   const root = maintenance
     ? (await import('./release-maintenance.module')).ReleaseMaintenanceModule
     : (await import('./app.module')).AppModule;
   const app = await NestFactory.create(root, { bodyParser: false, abortOnError: false });
+  if (shutdownDrain) {
+    app.use(shutdownDrain.middleware);
+    app.useGlobalInterceptors(shutdownDrain);
+  }
   if (maintenance) app.use(releaseMaintenanceFence());
   const requestBodyLimit = String(process.env.REQUEST_BODY_LIMIT ?? '20mb').trim() || '20mb';
   app.use(json({ limit: requestBodyLimit }));

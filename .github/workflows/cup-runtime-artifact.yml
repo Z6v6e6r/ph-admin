@@ -2,10 +2,10 @@ name: CUP immutable runtime and recovery
 on:
   pull_request:
     branches: [main]
-    paths: ['src/**', 'client-sdk/**', 'deploy/recovery/**', 'scripts/prepare-cup-runtime-release.mjs', 'scripts/lib/cup-max-recovery-closure.mjs', 'scripts/lib/cup-media-recovery-closure.mjs', 'test/support-media*', 'test/support-photo*', 'scripts/prepare-cup83-recovery-tree.py', 'test/cup-recovery*', 'test/cup-runtime-artifact-workflow.test.mjs', 'test/cup-notification-scenarios.test.mjs', 'test/viva-request-governor*.ts', 'package*.json', '.github/workflows/cup-runtime-artifact.yml']
+    paths: ['src/**', 'client-sdk/**', 'deploy/recovery/**', 'scripts/prepare-cup-runtime-release.mjs', 'scripts/lib/cup-max-recovery-closure.mjs', 'scripts/lib/cup-media-recovery-closure.mjs', 'test/support-media*', 'test/support-photo*', 'test/support-graceful-shutdown.test.ts', 'scripts/prepare-cup83-recovery-tree.py', 'test/cup-recovery*', 'test/cup-runtime-artifact-workflow.test.mjs', 'test/cup-notification-scenarios.test.mjs', 'test/viva-request-governor*.ts', 'package*.json', '.github/workflows/cup-runtime-artifact.yml']
   push:
     branches: [main]
-    paths: ['src/**', 'client-sdk/**', 'deploy/recovery/**', 'scripts/prepare-cup-runtime-release.mjs', 'scripts/lib/cup-max-recovery-closure.mjs', 'scripts/lib/cup-media-recovery-closure.mjs', 'test/support-media*', 'test/support-photo*', 'scripts/prepare-cup83-recovery-tree.py', 'test/cup-recovery*', 'test/cup-runtime-artifact-workflow.test.mjs', 'test/cup-notification-scenarios.test.mjs', 'test/viva-request-governor*.ts', 'package*.json', '.github/workflows/cup-runtime-artifact.yml']
+    paths: ['src/**', 'client-sdk/**', 'deploy/recovery/**', 'scripts/prepare-cup-runtime-release.mjs', 'scripts/lib/cup-max-recovery-closure.mjs', 'scripts/lib/cup-media-recovery-closure.mjs', 'test/support-media*', 'test/support-photo*', 'test/support-graceful-shutdown.test.ts', 'scripts/prepare-cup83-recovery-tree.py', 'test/cup-recovery*', 'test/cup-runtime-artifact-workflow.test.mjs', 'test/cup-notification-scenarios.test.mjs', 'test/viva-request-governor*.ts', 'package*.json', '.github/workflows/cup-runtime-artifact.yml']
 permissions:
   contents: read
 jobs:
@@ -39,6 +39,8 @@ jobs:
         run: |
           npx ts-node test/viva-request-governor.test.ts
           npx ts-node test/viva-request-governor-timeout.test.ts
+      - name: Verify support history drains on shutdown
+        run: npx ts-node test/support-graceful-shutdown.test.ts
       - name: Verify runtime workflow identity regressions
         run: node --test test/cup-runtime-artifact-workflow.test.mjs
       - name: Verify offline recovery tree failures

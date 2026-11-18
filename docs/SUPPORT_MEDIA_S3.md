@@ -102,7 +102,7 @@ POST остаётся accepted при отказе display grant; raw refs в re
 `prepare-cup-runtime-release.mjs` собирает Linux Node22 candidate и отдельный полный
 `media-recovery-runtime.tgz` из baseline83 с закрытым reviewed source patch.
 Архив включает AWS/sharp native dependencies, SDK и media reader. Source closure:
-21 явно перечисленный файл; executable closure: 19 файлов. В closure включены
+26 явно перечисленных файлов; executable closure: 24 файла. В closure включены
 Viva request governor и Viva tournaments service: восстановление чтения фото
 сохраняет ограничение параллельных запросов, общий deadline ожидания и владение
 повторами, выпущенные в PR #123. Расхождение этих исходников или отсутствие
@@ -130,6 +130,23 @@ backend/config поверх новых media references. Не менять ар�
 Порядок: подготовить infrastructure/config и receiver budget → candidate/recovery →
 ЦУП → Node-RED media bridge/controlled sender+worker binding → LK1/SDK → разрешённый
 provider/UI E2E и restart. До этого source/local/CI не объявляются production delivery.
+
+### Остановка ЦУП с ожиданием истории
+
+Основной runtime и media-aware recovery закрывают приём новых HTTP-обработчиков
+при `SIGTERM` и `SIGINT`, ждут начатые обработчики и останавливают задания чатов.
+Затем Support и Messenger ждут запущенные записи перед закрытием Mongo. Ошибка
+записи истории означает завершение с ненулевым кодом. Повтор сигнала не закрывает
+Mongo раньше времени. Механизм не меняет строки очереди, не повторяет
+неоднозначные отправки и не загружает отложенные legacy-команды в память.
+
+Перед остановкой на 147 отдельно подтвердить закрытие приёма и завершение
+производителей, включая прямой порт ЦУП, внешних получателей и фоновые задачи
+Viva. В режиме legacy/sync0 проверять отсутствие незавершённых доступных к
+отправке команд в памяти и в Mongo. Супервизор должен дать процессу достаточно
+времени на завершение. Принудительная остановка или ошибка записи оставляет
+результат непроверенным. Первая остановка уже работающей старой версии требует
+проверки её собственных запросов и состояния записей до подачи сигнала.
 
 ### Первый выход из CUP3cc с legacy очередью
 
