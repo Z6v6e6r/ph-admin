@@ -915,6 +915,53 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Admin booking of a client on an exercise, as the Viva cabinet does it
+   * (`POST /api/v1/exercises/{id}/bookings`, `paymentType: ON_PLACE`; payment follows through
+   * `createBookingPaymentCheckout` with the returned booking id). Viva has no idempotency key:
+   * only a definite 4xx is a rejection; transport errors, timeouts and 5xx are UNKNOWN and must
+   * be resolved by reading the exercise bookings, never by a repost.
+   */
+  async createExerciseBooking(input: {
+    exerciseId: string;
+    clientId: string;
+    phone: string;
+  }): Promise<
+    | { outcome: 'CREATED'; bookingId: string }
+    | { outcome: 'REJECTED'; reasonCode: string }
+    | { outcome: 'UNKNOWN'; reasonCode: string }
+  > {
+    const exerciseId = this.normalizeOptional(input.exerciseId);
+    const clientId = this.normalizeOptional(input.clientId);
+    const phone = this.normalizePhone(input.phone);
+    if (!exerciseId || !clientId || !phone) return { outcome: 'REJECTED', reasonCode: 'BOOKING_INPUT_INVALID' };
+    const token = await this.resolveAccessToken();
+    if (!token) return { outcome: 'REJECTED', reasonCode: 'VIVA_ADMIN_TOKEN_NOT_CONFIGURED' };
+    const resolved = await this.getResolvedSettings();
+    let payload: unknown;
+    try {
+      payload = await this.fetchAdminJsonWithBody(
+        `/api/v1/exercises/${encodeURIComponent(exerciseId)}/bookings`,
+        token,
+        resolved.config.baseUrl,
+        { phone: phone.replace(/\D/g, ''), clientId, paymentType: 'ON_PLACE' }
+      );
+    } catch (error) {
+      if (error instanceof VivaAdminRequestRejectedError) {
+        const status = error.providerStatus;
+        if (status >= 400 && status < 500 && status !== 408) {
+          return { outcome: 'REJECTED', reasonCode: `PROVIDER_${status}` };
+        }
+        return { outcome: 'UNKNOWN', reasonCode: `PROVIDER_${status}` };
+      }
+      return { outcome: 'UNKNOWN', reasonCode: 'PROVIDER_TRANSPORT' };
+    }
+    const bookingId = this.pickString(this.unwrapRecord(payload)?.id);
+    return bookingId
+      ? { outcome: 'CREATED', bookingId }
+      : { outcome: 'UNKNOWN', reasonCode: 'PROVIDER_RESPONSE_WITHOUT_ID' };
+  }
+
   async createBookingPaymentCheckout(
     input: VivaAdminBookingPaymentCheckoutInput
   ): Promise<VivaAdminBookingPaymentCheckoutResult> {

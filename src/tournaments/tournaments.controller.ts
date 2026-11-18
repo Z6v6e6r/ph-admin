@@ -3,12 +3,14 @@ import {
   Controller,
   Delete,
   Get,
+  Optional,
   Param,
   Patch,
   Post,
   Query,
   Req,
-  Res
+  Res,
+  ServiceUnavailableException
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -33,6 +35,8 @@ import {
 import { TournamentResultsExportService } from './tournament-results-export.service';
 import { TournamentsVivaStatusSyncService } from './tournaments-viva-status-sync.service';
 import { TournamentsService } from './tournaments.service';
+import { TournamentServerBookingService } from './tournament-server-booking.service';
+import type { TournamentServerBookingView } from './tournament-server-booking';
 import type { TournamentLevelAdmissionReport, TournamentLevelDecision } from './tournament-level-admission';
 
 @Controller('tournaments')
@@ -47,7 +51,8 @@ export class TournamentsController {
   constructor(
     private readonly tournamentsService: TournamentsService,
     private readonly vivaStatusSyncService: TournamentsVivaStatusSyncService,
-    private readonly tournamentResultsExportService: TournamentResultsExportService
+    private readonly tournamentResultsExportService: TournamentResultsExportService,
+    @Optional() private readonly serverBookingService?: TournamentServerBookingService
   ) {}
 
   @Get()
@@ -286,6 +291,28 @@ export class TournamentsController {
       id,
       this.pickString(request.headers.authorization)
     );
+  }
+
+  /**
+   * Server-owned booking (TOURNAMENT_SERVER_BOOKING_MODE=enabled, level mode enforce): CUP
+   * decides, books in Viva and issues the payment. Requires `Idempotency-Key`. Disabled by default.
+   */
+  @Post(':id/server-booking')
+  @Roles()
+  joinWithServerBooking(@Param('id') id: string, @Req() request: Request): Promise<TournamentServerBookingView> {
+    if (!this.serverBookingService) throw new ServiceUnavailableException({ code: 'SERVER_BOOKING_DISABLED' });
+    return this.serverBookingService.join(
+      id,
+      this.pickString(request.headers.authorization),
+      this.pickString(request.headers['idempotency-key'])
+    );
+  }
+
+  @Get(':id/server-booking')
+  @Roles()
+  getServerBookingStatus(@Param('id') id: string, @Req() request: Request): Promise<TournamentServerBookingView> {
+    if (!this.serverBookingService) throw new ServiceUnavailableException({ code: 'SERVER_BOOKING_DISABLED' });
+    return this.serverBookingService.status(id, this.pickString(request.headers.authorization));
   }
 
   @Post(':id/register')

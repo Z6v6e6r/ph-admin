@@ -82,3 +82,55 @@ client groups, tags or custom fields derived from a level are out of the questio
    Rollback: reopen self-booking for that exercise in Viva.
 
 Until step 2 is active, full server-side admission control is **not** provided.
+
+## Server-owned booking (implemented, disabled)
+
+Code: `src/tournaments/tournament-server-booking.ts` (state machine),
+`tournament-server-booking.service.ts` (Nest + Mongo `tournament_server_booking_attempts_v1`),
+`src/integrations/viva/viva-admin-tournament-booking.adapter.ts` (Viva ports).
+
+- Routes:
+  - `POST /api/tournaments/:id/server-booking` with the LK bearer and an `Idempotency-Key`
+    header (8–128 characters `[A-Za-z0-9_-]`);
+  - `GET /api/tournaments/:id/server-booking` reports status and runs read-only recovery.
+- Switch: it runs only with `TOURNAMENT_SERVER_BOOKING_MODE=enabled` **and**
+  `TOURNAMENT_LEVEL_ADMISSION_MODE=enforce`. Unset means `SERVER_BOOKING_DISABLED` (503).
+- Admission: the verified actor goes through the CUP level decision and the existing gender check.
+  A refusal returns `403`/`503` with `levelDecision` and stores nothing.
+- Price: server-side only, from `details.booking.serverBooking`:
+  ```json
+  { "baseAmountMinor": 250000, "discountMinor": 0, "discountReason": "Турнир", "productId": null }
+  ```
+  - `discountMinor = baseAmountMinor` is the 100% discount: the booking is confirmed without a
+    payment link.
+  - Missing or invalid gives `SERVER_BOOKING_PRICE_NOT_CONFIGURED`.
+  - The client never sends a price.
+- States:
+  - path: `ADMITTED → BOOKING → BOOKED → PAYMENT_CREATING → PAYMENT_PENDING | CONFIRMED`;
+  - failures: `BOOKING_UNKNOWN`, `PAYMENT_UNKNOWN`, `REJECTED`, `FAILED`.
+- Q1 (owner, 2026-11-18): self-booking is closed in Viva for all exercises.
+- Fencing: one document per tournament and player. Every transition is a CAS on `revision`, and
+  only the CAS winner calls Viva. A second key while `BOOKING` gets `SERVER_BOOKING_IN_PROGRESS`.
+- Decision: a started attempt keeps its start decision. The decision is re-evaluated once just
+  before the provider call. A refusal there gives `REJECTED` without a Viva write.
+- Ambiguity:
+  - an unknown booking result is never reposted. After the 60 s lease it is resolved by reading
+    the exercise bookings, otherwise it stays `BOOKING_UNKNOWN` for an operator;
+  - an unknown checkout becomes `PAYMENT_UNKNOWN` and is reconciled manually.
+- Viva booking create is `POST /api/v1/exercises/{exerciseId}/bookings` with the body
+  `{ "phone": "<digits>", "clientId": "<viva id>", "paymentType": "ON_PLACE" }`. The response
+  `id` is the booking id.
+  - Source: the Viva cabinet bundle (`cabinet.vivacrm.ru`). For "create transaction" the cabinet
+    books `ON_PLACE` and then posts `/transactions` with that `bookingId`, which is what
+    `createBookingPaymentCheckout` does.
+  - Viva has no idempotency key (the cabinet books one client into several spots). A definite
+    4xx is `REJECTED`; 408, 5xx, transport errors and a response without `id` are `UNKNOWN`.
+    `UNKNOWN` is never reposted.
+  - Not yet verified against live Viva: needs one synthetic booking on a test exercise, plus a
+    specialist review.
+- The attempt stores no phone. The payment phone comes from the verified actor on each request.
+- Tests:
+  ```sh
+  npx ts-node test/tournament-server-booking.test.ts
+  npx ts-node test/tournament-server-booking-service.test.ts
+  ```

@@ -30,6 +30,7 @@ import { TournamentsController } from './tournaments.controller';
 import { TournamentsPublicController } from './tournaments-public.controller';
 import { TournamentResultsExportService } from './tournament-results-export.service';
 import { TournamentResultsStoreService } from './tournament-results-store.service';
+import { TournamentServerBookingService } from './tournament-server-booking.service';
 import { TournamentsService } from './tournaments.service';
 import { TournamentsVivaStatusSyncService } from './tournaments-viva-status-sync.service';
 
@@ -43,6 +44,7 @@ import { TournamentsVivaStatusSyncService } from './tournaments-viva-status-sync
     AmericanoScheduleService,
     AmericanoRatingSimulationService,
     TournamentsService,
+    TournamentServerBookingService,
     TournamentResultsExportService,
     TournamentResultsStoreService,
     TournamentsVivaStatusSyncService,

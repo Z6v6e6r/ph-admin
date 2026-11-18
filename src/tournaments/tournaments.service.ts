@@ -11,6 +11,10 @@ import {
   isTournamentLevelRestricted,
   readTournamentLevelAdmissionMode
 } from './tournament-level-admission';
+import {
+  parseTournamentServerBookingPrice,
+  type TournamentServerBookingAdmission
+} from './tournament-server-booking';
 import { TournamentOwnerPreparation, TournamentOwnerPreparationReason } from './tournaments.types';
 import {
   BadRequestException,
@@ -5726,6 +5730,47 @@ export class TournamentsService {
       return { ...decision, allowed: true, reasonCode: 'LEVEL_GATE_LEGACY', tournamentId: tournament.id };
     }
     return { ...decision, tournamentId: tournament.id };
+  }
+
+  /**
+   * Admission input for the server-owned booking (disabled by default). Verifies the LK bearer,
+   * evaluates the CUP level decision and the existing gender check for that actor and reads the
+   * organizer-configured price. No provider write happens here.
+   */
+  async resolveServerBookingAdmission(
+    tournamentRef: string,
+    authorizationHeader?: string
+  ): Promise<TournamentServerBookingAdmission> {
+    this.ensurePersistenceEnabled();
+    if (!this.lkIdentityService) {
+      throw new ServiceUnavailableException({ code: 'TOURNAMENT_ELIGIBILITY_NOT_CONFIGURED' });
+    }
+    const tournament = await this.requireCustomByPublicRef(tournamentRef);
+    const { actor } = await this.lkIdentityService.verifyTrustedBearer(authorizationHeader);
+    const phone = this.normalizePhone(actor.phoneNorm);
+    if (!actor.clientId || !phone) {
+      throw new ForbiddenException({ code: 'TOURNAMENT_SERVER_BOOKING_ACTOR_INVALID' });
+    }
+    const player: PlayerLevelEvidence = isTournamentLevelRestricted(tournament)
+      ? await this.resolveTournamentAdmissionLevel({ clientId: actor.clientId, phone })
+      : { status: 'UNAVAILABLE' };
+    const decision = this.decideTournamentLevel(tournament, player);
+    const gender = await this.checkGenderAdmission(tournament, {
+      phone, clientId: actor.clientId, vivaAuthorizationHeader: authorizationHeader
+    });
+    const booking = this.resolveBookingConfig(tournament);
+    const details = this.toRecord(tournament.details) ?? {};
+    const rawBooking = this.toRecord(details.booking) ?? {};
+    return {
+      tournamentId: tournament.id,
+      exerciseId: booking.vivaExerciseId ?? null,
+      studioId: booking.vivaStudioId ?? null,
+      levelMode: decision.mode,
+      decision,
+      actor: { clientId: actor.clientId, phone },
+      price: parseTournamentServerBookingPrice(rawBooking.serverBooking),
+      otherRefusal: gender.ok ? null : { code: gender.code, message: gender.message }
+    };
   }
 
   /**
