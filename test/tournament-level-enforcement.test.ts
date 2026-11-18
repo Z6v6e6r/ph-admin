@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { TournamentsService } from '../src/tournaments/tournaments.service';
+import { TournamentsPublicController } from '../src/tournaments/tournaments-public.controller';
 import { TournamentsController } from '../src/tournaments/tournaments.controller';
 import { TournamentsPersistenceService } from '../src/tournaments/tournaments-persistence.service';
 import { readTournamentLevelAdmissionMode, parseTournamentLevelRule } from '../src/tournaments/tournament-level-admission';
@@ -161,5 +162,53 @@ test('admin additions cannot turn malformed raw accessLevels into unrestricted D
   f.persistence.readPublicAdmissionRule = async () => null;
   await assert.rejects(f.service.updateCustom('synthetic', { participants: [{ phone, name: 'Synthetic' }] }),
     (e: any) => e.getResponse().code === 'TOURNAMENT_RULE_CHANGED');
+  assert.equal(f.writes, 0);
+});
+
+
+test('unrestricted admission preserves canonical level for subscription compatibility', async () => {
+  const f = fixture(); f.row.accessLevels = []; f.setRating(5);
+  const seen: any[] = [];
+  f.service.resolveJoinPayment = (_t: any, _client: any, level: string) => {
+    seen.push(level);
+    const compatible = f.service.isSubscriptionCompatible(
+      { id: 'c-only', label: 'C only', remainingUses: 1, compatibleAccessLevels: ['C'] },
+      { acceptedSubscriptions: [] },
+      { ...f.row, tournamentType: 'Американо' }, level);
+    assert.equal(compatible, false);
+    return { required: true, code: 'PURCHASE_REQUIRED', purchaseOptions: [{ id: 'single' }] };
+  };
+  const result = await f.service.registerPublicParticipant('synthetic', { ...f.input, levelLabel: '3.25' });
+  assert.equal(result.code, 'PURCHASE_REQUIRED');
+  assert.deepEqual(seen, ['5']);
+  assert.equal(f.writes, 0);
+});
+
+
+test('real public controller reaches original payment recovery after rating and catalog change', async () => {
+  const f = fixture(); f.setRating(6);
+  const operation = { transactionId: 'original-attempt', providerTransactionId: 'original-tx',
+    phone, clientId: f.input.clientId, state: 'PENDING_PAYMENT', operationType: 'TRANSACTION',
+    checkoutUrl: 'https://pay.example/original', paymentExpiresAt: '2099-01-01T00:00:00Z' };
+  f.service.findPendingJoinPayment = () => operation;
+  f.service.isPendingJoinPaymentBoundToTournament = () => true;
+  f.service.enrichTournamentVivaProfiles = async (x: any) => x;
+  f.service.fetchVivaBookingSubscriptions = async () => [];
+  f.service.toPublicView = (x: any) => x;
+  f.service.resolveTrustedLkRegistrationClient = async () => ({ ...f.input, levelLabel: '6' });
+  f.service.fetchVivaJoinPurchaseOptions = async () => [];
+  f.service.resolveJoinPayment = () => ({ required: false, code: 'NOT_REQUIRED', availableSubscriptions: [], purchaseOptions: [] });
+  const sessions = { ensureAuthorizedClient: () => ({ authorized: true, phoneVerified: true, phone }),
+    resolveLkAuthorizationHeader: () => 'Bearer synthetic', resolveExternalAuthorizationHeader: () => 'Bearer synthetic' };
+  const controller: any = new TournamentsPublicController(f.service, sessions as never);
+  // Keep real controller routing + real getPublicJoinFlow/createPublicJoinPurchaseTransaction.
+  controller.enrichJoinFlow = (x: any) => x;
+  controller.buildCanonicalPublicJoinUrl = () => 'https://padlhub.ru/tournament';
+  let response: any;
+  await controller.submitJoinPage('synthetic', { headers: { authorization: 'Bearer synthetic' }, query: { format: 'json' } },
+    { json: (x: any) => { response = x; } }, undefined, { format: 'json', purchaseConfirmed: true });
+  assert.equal(response.code, 'PURCHASE_STARTED');
+  assert.equal(response.payment.transactionId, 'original-tx');
+  assert.equal(response.payment.checkoutUrl, 'https://pay.example/original');
   assert.equal(f.writes, 0);
 });

@@ -1,3 +1,4 @@
+import { TournamentCheckoutService } from './tournament-checkout.service';
 import { TournamentChatNotificationProof } from './tournament-chat-notification.proof';
 import { TournamentChatNotificationService } from './tournament-chat-notification.service';
 import { TournamentChatNotificationController } from './tournament-chat-notification.controller';
@@ -45,6 +46,7 @@ import { TournamentsVivaStatusSyncService } from './tournaments-viva-status-sync
     AmericanoRatingSimulationService,
     TournamentsService,
     TournamentServerBookingService,
+    TournamentCheckoutService,
     TournamentResultsExportService,
     TournamentResultsStoreService,
     TournamentsVivaStatusSyncService,

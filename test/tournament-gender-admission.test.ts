@@ -79,7 +79,8 @@ async function main() {
   }
   for (const forged of [{ clientId: 'other' }, { phone: '79000000002' }, { vivaAuthorizationHeader: undefined, trustedIdentity: { clientId: 'client-1', phone: PHONE } }]) {
     const f = fixture();
-    assert.equal((await f.service.registerPublicParticipant('cup', { ...f.input, ...forged, gender: 'MALE' })).code, 'PLAYER_GENDER_REQUIRED');
+    await assert.rejects(f.service.registerPublicParticipant('cup', { ...f.input, ...forged, gender: 'MALE' }),
+      (error: any) => error.getResponse?.().code === 'TOURNAMENT_IDENTITY_MISMATCH');
     assert.equal(f.counters.profile + f.counters.provider, 0);
   }
   {

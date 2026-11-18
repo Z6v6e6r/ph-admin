@@ -307,7 +307,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
 
     if (admissionPreimage) {
       const observed = this.toCustomTournament(existing);
-      const keys = ['updatedAt', 'accessLevels', 'levelTolerance', 'participants', 'waitlist'] as const;
+      const keys = ['updatedAt', 'accessLevels', 'levelTolerance', 'participants', 'waitlist', 'maxPlayers', 'details'] as const;
       if (!observed || keys.some(key => JSON.stringify(observed[key]) !== JSON.stringify(admissionPreimage[key]))) {
         throw new ConflictException({ code: 'TOURNAMENT_RULE_CHANGED' });
       }
@@ -574,6 +574,83 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
   }
 
   /** Raw admission rule: no presentation fallback and no index creation. */
+  async readTournamentCheckoutOperation(id: string, phone: string): Promise<Record<string, any> | null> {
+    const collection = await this.collection(false);
+    const row = await collection.findOne(this.buildIdFilter(id), {
+      projection: { 'details.booking.pendingJoinPayments': 1 }, readPreference: 'primary',
+      readConcern: { level: 'majority' }, maxTimeMS: 5000 });
+    const rows = (row?.details?.booking?.pendingJoinPayments ?? []).filter((p: Record<string, unknown>) => p.phone === phone);
+    return rows.find((p: Record<string, unknown>) => !['EXPIRED', 'FAILED', 'OWNER_COMPLETED'].includes(String(p.state)))
+      ?? rows.at(-1) ?? null;
+  }
+
+  async rejectTournamentCheckoutPreparation(id: string, operation: Record<string, any>, code: string): Promise<void> {
+    const collection = await this.collection(false);
+    await collection.updateOne({ ...this.buildIdFilter(id), 'details.booking.pendingJoinPayments': { $elemMatch: {
+      transactionId: operation.transactionId, clientId: operation.clientId, phone: operation.phone,
+      state: 'PROVIDER_CREATE_PENDING', ownerCommand: operation.ownerCommand,
+      providerCreateAttemptedAt: { $exists: false }, providerTransactionId: { $exists: false }, ownerReceipt: { $exists: false }
+    } } }, { $set: { 'details.booking.pendingJoinPayments.$.state': 'FAILED',
+      'details.booking.pendingJoinPayments.$.ownerRefusal': code } },
+      { writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } });
+  }
+
+  async completeTournamentCheckout(id: string, operation: Record<string, any>, bookingId: string, paid: boolean): Promise<boolean> {
+    const collection = await this.collection(false);
+    const participant = { id: `owner:${operation.transactionId}`, phone: operation.phone, name: 'Player',
+      status: 'REGISTERED', paymentStatus: paid ? 'PAID' : 'UNPAID', registeredAt: new Date().toISOString(),
+      vivaBookingId: bookingId };
+    const result = await collection.updateOne({ ...this.buildIdFilter(id), 'details.booking.pendingJoinPayments': { $elemMatch: {
+      transactionId: operation.transactionId, phone: operation.phone, clientId: operation.clientId,
+      ownerCommand: operation.ownerCommand, $or: [
+        { state: { $in: ['PROVIDER_CREATE_PENDING', 'PROVIDER_RESULT_UNKNOWN'] }, providerBookingId: { $exists: false } },
+        { state: 'OWNER_COMPLETED', providerBookingId: bookingId }
+      ]
+    } } }, [{ $set: {
+      participants: { $cond: [{ $in: [operation.phone, { $ifNull: ['$participants.phone', []] }] }, '$participants',
+        { $concatArrays: [{ $ifNull: ['$participants', []] }, { $literal: [participant] }] }] },
+      'details.booking.pendingJoinPayments': { $map: { input: '$details.booking.pendingJoinPayments', as: 'op',
+        in: { $cond: [{ $eq: ['$$op.transactionId', operation.transactionId] },
+          { $mergeObjects: ['$$op', { state: 'OWNER_COMPLETED', providerBookingId: bookingId }] }, '$$op'] } } },
+      updatedAt: new Date().toISOString()
+    } }], { writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } });
+    return result.acknowledged && result.matchedCount === 1;
+  }
+
+  async claimTournamentCheckout(id: string, operation: Record<string, any>, rule: TournamentAdmissionRule): Promise<boolean> {
+    const collection = await this.collection(false);
+    const match = { transactionId: operation.transactionId, phone: operation.phone, clientId: operation.clientId,
+      state: 'PROVIDER_CREATE_PENDING', ownerCommand: operation.ownerCommand, providerCreateAttemptedAt: { $exists: false } };
+    const result = await collection.updateOne({ ...this.buildIdFilter(id),
+      'details.booking.vivaExerciseId': operation.exerciseId, 'details.booking.vivaStudioId': operation.studioId,
+      status: { $nin: ['FINISHED', 'CANCELED', 'CANCELLED'] },
+      gender: rule.gender, updatedAt: rule.updatedAt, accessLevels: rule.accessLevels,
+      levelTolerance: rule.levelTolerance ?? { $in: [null, 0] },
+      'details.booking.pendingJoinPayments': { $elemMatch: match } }, { $set: {
+        'details.booking.pendingJoinPayments.$.state': 'PROVIDER_RESULT_UNKNOWN',
+        'details.booking.pendingJoinPayments.$.providerCreateAttemptedAt': new Date().toISOString() } },
+      { writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } });
+    return result.acknowledged && result.modifiedCount === 1;
+  }
+
+  async recordTournamentCheckoutReceipt(id: string, operation: Record<string, any>, receipt: Record<string, unknown>): Promise<void> {
+    const collection = await this.collection(false);
+    const result = await collection.updateOne({ ...this.buildIdFilter(id),
+      'details.booking.pendingJoinPayments': { $elemMatch: { transactionId: operation.transactionId,
+        phone: operation.phone, clientId: operation.clientId, ownerCommand: operation.ownerCommand,
+        state: 'PROVIDER_RESULT_UNKNOWN', ownerReceipt: { $exists: false } } } },
+      { $set: { 'details.booking.pendingJoinPayments.$.ownerReceipt': receipt,
+        'details.booking.pendingJoinPayments.$.providerTransactionId': receipt.transactionId } },
+      { writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } });
+    if (!result.acknowledged || result.matchedCount !== 1) {
+      const current = await this.readTournamentCheckoutOperation(id, operation.phone);
+      if (current?.transactionId !== operation.transactionId
+        || current?.ownerReceipt?.transactionId !== receipt.transactionId) {
+        throw new ServiceUnavailableException({ code: 'TOURNAMENT_CHECKOUT_RECEIPT_UNRESOLVED' });
+      }
+    }
+  }
+
   async readPublicAdmissionRule(id: string): Promise<TournamentAdmissionRule | null> {
     const collection = await this.collection(false);
     const row = await collection.findOne(this.buildIdFilter(id), {
@@ -690,7 +767,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
         $push: { 'details.booking.pendingJoinPayments': pending },
         $set: { updatedAt }
       } as Document,
-      { returnDocument: 'after' }
+      { returnDocument: 'after', writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } }
     );
     return document ? this.toCustomTournament(document) : null;
   }
@@ -699,12 +776,16 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     id: string,
     attemptId: string,
     phone: string,
-    attemptedAt: string
+    attemptedAt: string,
+    admissionRule?: TournamentAdmissionRule
   ): Promise<CustomTournament | null> {
     const collection = await this.collection();
     const document = await collection.findOneAndUpdate(
       {
         ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false }, tournamentChatReadV1: { $exists: false },
+        ...(admissionRule ? { gender: admissionRule.gender, updatedAt: admissionRule.updatedAt,
+          accessLevels: admissionRule.accessLevels, levelTolerance: admissionRule.levelTolerance ?? { $in: [null, 0] } } : {}),
+        status: { $nin: [TournamentStatus.FINISHED, TournamentStatus.CANCELED, 'CANCELLED'] },
         'details.booking.pendingJoinPayments': {
           $elemMatch: {
             transactionId: attemptId,
@@ -731,6 +812,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
           'payment.state': 'PROVIDER_CREATE_PENDING',
           'payment.providerCreateAttemptedAt': { $exists: false }
         }],
+        writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 },
         returnDocument: 'after'
       }
     );

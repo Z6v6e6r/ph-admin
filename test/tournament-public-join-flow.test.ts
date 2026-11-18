@@ -412,6 +412,58 @@ async function verifyWriteConcernFailures(baseFetch: typeof fetch): Promise<void
   }
 }
 
+async function verifyPreparedAdmissionRestart(baseFetch: typeof fetch): Promise<void> {
+  const previousFetch = globalThis.fetch;
+  try {
+    for (const drift of ['level', 'rule', 'already-dispatched'] as const) {
+      const tournament = createTournament();
+      const first = createService(tournament);
+      const persistence = (first as any).tournamentsPersistence;
+      let providerPosts = 0;
+      globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+        if (String(url).endsWith('/transactions')) {
+          assert.equal(init?.method, 'POST'); providerPosts++;
+          return { ok: true, status: 200, headers: new Headers(), json: async () => ({
+            transactionId: 'prepared-original-provider', paymentUrl: 'https://pay.example/prepared-original',
+            toPay: 250000, paymentDueDate: new Date(Date.now() + 1_200_000).toISOString()
+          }) } as Response;
+        }
+        return baseFetch(url, init);
+      }) as typeof fetch;
+      const input = { name: 'Synthetic prepared restart', phone: '12025550101', levelLabel: '3.25',
+        selectedPurchaseOptionId: 'catalog-one-time', subscriptions: [],
+        successUrl: 'https://padlhub.ru/paid', failUrl: 'https://padlhub.ru/failed' };
+      if (drift === 'already-dispatched') {
+        assert.equal((await first.createPublicJoinPurchaseTransaction(tournament.slug, input)).code, 'PURCHASE_STARTED');
+        assert.equal(providerPosts, 1);
+      } else {
+        persistence.claimPublicJoinTransactionCreate = async () => { throw Error('synthetic predispatch process death'); };
+        await assert.rejects(first.createPublicJoinPurchaseTransaction(tournament.slug, input), /synthetic predispatch/);
+        const pending = (tournament.details!.booking as any).pendingJoinPayments[0];
+        assert.equal(pending.state, 'PROVIDER_CREATE_PENDING');
+        assert.equal(pending.providerCreateAttemptedAt, undefined);
+        assert.equal(providerPosts, 0);
+      }
+      const restarted = createService(tournament);
+      if (drift === 'rule' || drift === 'already-dispatched') tournament.accessLevels = ['A'];
+      if (drift === 'level' || drift === 'already-dispatched') {
+        (restarted as any).playerRatingsService.resolveCanonicalLevelByIdentity = async () => ({ ratingNumeric: 1, levelLabel: '1' });
+      }
+      const outcome = await restarted.createPublicJoinPurchaseTransaction(tournament.slug, input);
+      if (drift === 'already-dispatched') {
+        assert.equal(outcome.code, 'PURCHASE_STARTED');
+        assert.equal(outcome.payment?.transactionId, 'prepared-original-provider');
+        assert.equal(outcome.payment?.checkoutUrl, 'https://pay.example/prepared-original');
+        assert.equal(providerPosts, 1, 'recovery never sends another provider request after rule/level change');
+      } else {
+        assert.equal(outcome.code, 'LEVEL_NOT_ALLOWED', `${drift} must deny a preparation that has never dispatched`);
+        assert.equal(providerPosts, 0);
+        assert.equal((tournament.details!.booking as any).pendingJoinPayments[0].providerCreateAttemptedAt, undefined);
+      }
+    }
+  } finally { globalThis.fetch = previousFetch; }
+}
+
 async function main(): Promise<void> {
   const tournament = createTournament();
   let adminBookings: Record<string, unknown>[] = [];
@@ -477,6 +529,7 @@ async function main(): Promise<void> {
   }) as typeof fetch;
   globalThis.fetch = defaultVivaFetch;
   await verifyWriteConcernFailures(defaultVivaFetch);
+  await verifyPreparedAdmissionRestart(defaultVivaFetch);
 
   const unauthorizedFlow = await service.getPublicJoinFlow(
     tournament.slug,

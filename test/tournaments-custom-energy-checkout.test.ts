@@ -231,6 +231,24 @@ async function main(): Promise<void> {
   assert.equal(vivaInput?.discountReason, 'Участие в турнире «Название турнира» 09.05.2026');
   assert.equal(vivaInput?.successUrl, 'https://padlhub.ru/tournaments?paymentsuccess=true');
 
+  for (const field of ['accessLevels', 'levelTolerance'] as const) {
+    const original = createTournament();
+    let writes = 0, reads = 0;
+    const changedService: any = createService(original, {
+      createTournamentEnergyCheckout: async () => { writes++; throw Error('must not dispatch'); }
+    });
+    changedService.tournamentsPersistence.readPublicAdmissionRule = async () => {
+      reads++;
+      return { gender: original.gender, updatedAt: original.updatedAt, accessLevels: reads > 1 && field === 'accessLevels' ? ['A'] : ['C'],
+        levelTolerance: reads > 1 && field === 'levelTolerance' ? 0.5 : 0 };
+    };
+    await assert.rejects(changedService.createCustomEnergyCheckout('exercise-energy-1', {
+      body: createPayload(), authorizationHeader: `Bearer ${token}`, authSourceHeader: 'lk-keycloak', tenantKeyHeader: 'iSkq6G'
+    }), (error: any) => error.getResponse().code === 'TOURNAMENT_SECURE_JOIN_REQUIRED');
+    assert.equal(writes, 0, `${field} changed without timestamp: no new money operation`);
+    assert.equal(reads, 2);
+  }
+
   for (const gender of ['MALE', 'FEMALE', undefined, 'INVALID']) {
     const restricted = createTournament();
     restricted.gender = gender as never;

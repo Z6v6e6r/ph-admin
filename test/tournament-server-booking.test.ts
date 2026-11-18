@@ -114,6 +114,30 @@ async function rejects(promise: Promise<unknown>, code: string, status: number) 
 }
 
 async function main() {
+  // A status reader expires the lease while the checkout response is still in flight.
+  for (const read of ['status', 'join'] as const) {
+    let finish!: (value: ProviderCheckoutResult) => void;
+    let entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const h = harness({ checkout: () => { entered(); return new Promise(resolve => { finish = resolve; }); } });
+    const first = h.coordinator.join('t-1', 'Bearer x', KEY);
+    await started;
+    h.tick(TOURNAMENT_SERVER_BOOKING_LEASE_MS + 1);
+    h.state.rating = 6;
+    const observed = read === 'status' ? await h.coordinator.status('t-1', 'Bearer x')
+      : await h.coordinator.join('t-1', 'Bearer x', 'different-key');
+    assert.ok(!('refused' in observed) && observed.state === 'PAYMENT_UNKNOWN');
+    await h.coordinator.join('t-1', 'Bearer x', 'another-key');
+    assert.equal(h.calls.checkout, 1, 'lease expiration never authorizes another payment');
+    finish({ outcome: 'CREATED', transactionId: 'late-tx', paymentUrl: 'https://pay.example/late',
+      toPayMinor: PRICE.baseAmountMinor, paid: false, expiresAt: null });
+    const completed = await first;
+    assert.ok(!('refused' in completed) && completed.state === 'PAYMENT_PENDING');
+    assert.equal((await h.coordinator.status('t-1', 'Bearer x')).paymentUrl, 'https://pay.example/late');
+    assert.equal((await h.store.find('t-1:client-1'))?.payment?.transactionId, 'late-tx');
+    assert.equal(h.calls.checkout, 1);
+  }
+
   // The initial decision cannot survive a level/target change before the provider write.
   for (const change of ['rating', 'exercise', 'price'] as const) {
     const h = harness();

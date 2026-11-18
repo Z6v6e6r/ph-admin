@@ -200,6 +200,7 @@ interface PendingJoinPayment {
   levelLabel?: string;
   notes?: string;
   selectedPurchaseOptionId?: string;
+  purchaseOptionSnapshot?: TournamentPurchaseOption;
   productType?: 'SERVICE' | 'SUBSCRIPTION';
   exerciseId?: string;
   studioId?: string;
@@ -446,12 +447,15 @@ export class TournamentsService {
         if (!this.playerRatingsService) throw new ServiceUnavailableException({ code: 'TOURNAMENT_LOCAL_ELIGIBILITY_UNAVAILABLE' });
         const level = await this.playerRatingsService.resolveCanonicalLevelByIdentity({ clientId: actor.clientId, phone: actor.phoneNorm });
         const access = this.evaluateAccess(row as CustomTournament, level?.levelLabel);
-        if (!access.ok) throw new ForbiddenException({ code: access.code });
+        const admissionRefusals = ['LEVEL_NOT_ALLOWED', 'PLAYER_LEVEL_REQUIRED', 'PLAYER_LEVEL_UNKNOWN', 'ACTIVITY_LEVEL_INVALID'];
+        if (!access.ok && !admissionRefusals.includes(access.code)) throw new ServiceUnavailableException({ code: access.code });
         const trusted = this.rememberRegistrationIdentity({ clientId: actor.clientId, phone: actor.phoneNorm });
         const gender = await this.checkGenderAdmission(row as CustomTournament, { ...trusted, trustedIdentity: trusted });
-        if (!gender.ok) throw new ForbiddenException({ code: gender.code });
-        eligibility = { gender: gender.decision.gender, playerGender: gender.decision.playerGender, levelLabel: level?.levelLabel ?? null, accessLevels: [...row.accessLevels], ruleUpdatedAt: gender.decision.updatedAt };
-        if (activeActorJoins.length > 0 || [...row.participants, ...row.waitlist].some((p: any) => p.phone === actor.phoneNorm)) {
+        if (!gender.ok && gender.code === 'TOURNAMENT_RULE_CHANGED') throw new ConflictException({ code: gender.code });
+        eligibility = { gender: row.gender, playerGender: gender.ok ? gender.decision.playerGender : null, levelLabel: level?.levelLabel ?? null, accessLevels: [...row.accessLevels], ruleUpdatedAt: row.updatedAt };
+        if (!access.ok || !gender.ok) {
+          outcome = 'REJECTED'; reason = (!access.ok ? access.code : !gender.ok ? gender.code : 'LEVEL_NOT_ALLOWED') as LocalOperation['reason'];
+        } else if (activeActorJoins.length > 0 || [...row.participants, ...row.waitlist].some((p: any) => p.phone === actor.phoneNorm)) {
           outcome = 'REJECTED'; reason = 'MEMBERSHIP_EXISTS';
         } else if (row.participants.length >= row.maxPlayers) {
           // WAITLIST creation and promotion are deliberately outside this owner subset.
@@ -1228,7 +1232,7 @@ export class TournamentsService {
     this.ensureTournamentVisibleForUser(current, user, 'tournaments:write');
     await this.checkRosterAdditions(current, mutation, current.id);
     const updated = await this.tournamentsPersistence.updateCustomTournament(id, mutation,
-      mutation.participants !== undefined || mutation.waitlist !== undefined ? current : undefined);
+      mutation.participants !== undefined || mutation.waitlist !== undefined || mutation.maxPlayers !== undefined ? current : undefined);
     if (!updated) {
       throw new NotFoundException(`Custom tournament with id ${id} not found`);
     }
@@ -1589,6 +1593,14 @@ export class TournamentsService {
 
     if (!normalizedPhone) {
       missingFields.push('phone');
+    }
+    const recovering = normalizedPhone && this.findPendingJoinPayment(tournament, normalizedPhone);
+    if (recovering) {
+      return { ok: false, code: 'PURCHASE_REQUIRED', message: 'Продолжите начатую операцию записи.',
+        tournament: publicTournament, client: normalizedClient, access, missingFields: [],
+        waitlistAllowed: false, payment: { ...payment, required: true, code: 'PURCHASE_REQUIRED',
+          transactionId: recovering.providerTransactionId ?? recovering.transactionId,
+          checkoutUrl: recovering.checkoutUrl } };
     }
     const levelRestricted = this.tournamentLevelMode() === 'LEGACY'
       ? tournament.accessLevels.length > 0
@@ -2175,7 +2187,7 @@ export class TournamentsService {
       tournamentPayload
     );
     const rule = await this.tournamentsPersistence.readPublicAdmissionRule(tournament.id);
-    if (!rule || rule.gender !== 'MIXED' || rule.updatedAt !== tournament.updatedAt) {
+    if (!rule || rule.gender !== 'MIXED' || !this.sameAdmissionRule(rule, tournament)) {
       throw new ForbiddenException({ code: 'TOURNAMENT_SECURE_JOIN_REQUIRED',
         message: 'Используйте защищённую запись на странице турнира. Этот способ оплаты недоступен для ограниченного турнира.' });
     }
@@ -2235,7 +2247,7 @@ export class TournamentsService {
 
     const returnUrls = this.toRecord(body.returnUrls) ?? {};
     const latestRule = await this.tournamentsPersistence.readPublicAdmissionRule(tournament.id);
-    if (!latestRule || latestRule.gender !== rule.gender || latestRule.updatedAt !== rule.updatedAt) {
+    if (!latestRule || !this.sameAdmissionRule(latestRule, rule)) {
       throw new ForbiddenException({ code: 'TOURNAMENT_SECURE_JOIN_REQUIRED', message: 'Правила изменились. Используйте защищённую запись на странице турнира.' });
     }
     const vivaCheckout = await this.vivaAdminService.createTournamentEnergyCheckout({
@@ -2275,98 +2287,18 @@ export class TournamentsService {
       };
     }
 
-    // A payment that already started passed the level gate at its start. Recovery/finalization
-    // keeps that decision instead of refusing paid participation after a later range, tolerance
-    // or rating change (ENFORCE only; LEGACY keeps the historical order).
-    const startedPayment = this.tournamentLevelMode() === 'ENFORCE'
-      && Boolean(this.findPendingJoinPayment(tournament, normalizedPhone));
-    const access = startedPayment ? this.evaluateAccess(tournament, normalizedLevel)
-      : await this.checkFreshTournamentLevel(tournament, input);
-    if (!startedPayment) normalizedLevel = access.levelLabel;
-    if (!access.ok && !startedPayment) {
-      return {
-        ok: false,
-        code: access.code,
-        message: access.message,
-        tournamentSlug: tournament.slug,
-        ...(access.levelDecision ? { levelDecision: access.levelDecision } : {})
-      };
-    }
-
-    const payment = this.resolveJoinPayment(
-      tournament,
-      {
-        id: normalizedPhone,
-        authorized: true,
-        authSource: 'headers',
-        name: input.name,
-        phone: normalizedPhone,
-        levelLabel: normalizedLevel,
-        onboardingCompleted: Boolean(normalizedLevel),
-        subscriptions: this.readClientSubscriptionsFromInput(input)
-      },
-      normalizedLevel,
-      await this.fetchVivaJoinPurchaseOptions(tournament)
-    );
-
-    if (
-      !payment.required
-      || (payment.code !== 'PURCHASE_REQUIRED' && payment.code !== 'SUBSCRIPTION_AVAILABLE')
-    ) {
-      return this.registerPublicParticipant(slug, input);
-    }
-
-    const booking = this.resolveBookingConfig(tournament);
-    const requestedSubscriptionId = this.pickString(input.selectedSubscriptionId);
-    const explicitlySelectedSubscription = payment.code === 'SUBSCRIPTION_AVAILABLE'
-      && requestedSubscriptionId
-      ? this.resolveSelectedClientSubscription(
-          payment.availableSubscriptions,
-          requestedSubscriptionId
-        )
-      : null;
-    if (
-      payment.code === 'SUBSCRIPTION_AVAILABLE'
-      && requestedSubscriptionId
-      && !explicitlySelectedSubscription
-    ) {
-      return {
-        ok: false,
-        code: 'PURCHASE_REQUIRED',
-        message: 'Выбранный абонемент больше недоступен. Обновите список и выберите его заново.',
-        tournamentId: tournament.id,
-        tournamentSlug: tournament.slug,
-        payment
-      };
-    }
-    const selectedClientSubscription = payment.code === 'SUBSCRIPTION_AVAILABLE'
-      ? (explicitlySelectedSubscription ?? payment.selectedSubscription)
-      : null;
-    const purchaseOption = selectedClientSubscription
-      ? {
-          id: selectedClientSubscription.id,
-          label: selectedClientSubscription.label,
-          priceLabel: '0',
-          productType: 'SUBSCRIPTION' as const
-        }
-      : this.resolveSelectedPurchaseOption(
-          payment.purchaseOptions,
-          input.selectedPurchaseOptionId
-        );
-    if (!purchaseOption) {
-      return {
-        ok: false,
-        code: 'PURCHASE_REQUIRED',
-        message: 'Для покупки участия нужен тариф.',
-        tournamentSlug: tournament.slug,
-        payment
-      };
-    }
-
     const existingPending = this.findPendingJoinPayment(tournament, normalizedPhone);
     if (existingPending) {
+      const payment: TournamentJoinPaymentState = { required: true, code: 'PURCHASE_REQUIRED',
+        message: 'Продолжите начатую операцию.', availableSubscriptions: [], purchaseOptions: [] };
+      // Current catalog/level changes cannot strand an already dispatched purchase.
+      const purchaseOption = existingPending.state === 'PROVIDER_CREATE_PENDING'
+        ? (existingPending.purchaseOptionSnapshot ?? this.resolveSelectedPurchaseOption(
+            [...this.resolveBookingConfig(tournament).purchaseOptions, ...await this.fetchVivaJoinPurchaseOptions(tournament)],
+            existingPending.selectedPurchaseOptionId)) : null;
+    if (existingPending) {
       if (
-        existingPending.state === 'PROVIDER_CREATE_PENDING'
+        purchaseOption && existingPending.state === 'PROVIDER_CREATE_PENDING'
         && this.isPreparedPendingJoinTransactionBoundToTournament(
           existingPending,
           tournament,
@@ -2459,6 +2391,96 @@ export class TournamentsService {
         payment
       };
     }
+    }
+
+    // A payment that already started passed the level gate at its start. Recovery/finalization
+    // keeps that decision instead of refusing paid participation after a later range, tolerance
+    // or rating change (ENFORCE only; LEGACY keeps the historical order).
+    const startedPayment = this.tournamentLevelMode() === 'ENFORCE'
+      && Boolean(this.findPendingJoinPayment(tournament, normalizedPhone));
+    const access = startedPayment ? this.evaluateAccess(tournament, normalizedLevel)
+      : await this.checkFreshTournamentLevel(tournament, input);
+    if (!startedPayment) normalizedLevel = access.levelLabel;
+    if (!access.ok && !startedPayment) {
+      return {
+        ok: false,
+        code: access.code,
+        message: access.message,
+        tournamentSlug: tournament.slug,
+        ...(access.levelDecision ? { levelDecision: access.levelDecision } : {})
+      };
+    }
+
+    const payment = this.resolveJoinPayment(
+      tournament,
+      {
+        id: normalizedPhone,
+        authorized: true,
+        authSource: 'headers',
+        name: input.name,
+        phone: normalizedPhone,
+        levelLabel: normalizedLevel,
+        onboardingCompleted: Boolean(normalizedLevel),
+        subscriptions: this.readClientSubscriptionsFromInput(input)
+      },
+      normalizedLevel,
+      await this.fetchVivaJoinPurchaseOptions(tournament)
+    );
+
+    if (
+      !payment.required
+      || (payment.code !== 'PURCHASE_REQUIRED' && payment.code !== 'SUBSCRIPTION_AVAILABLE')
+    ) {
+      return this.registerPublicParticipant(slug, input);
+    }
+
+    const booking = this.resolveBookingConfig(tournament);
+    const requestedSubscriptionId = this.pickString(input.selectedSubscriptionId);
+    const explicitlySelectedSubscription = payment.code === 'SUBSCRIPTION_AVAILABLE'
+      && requestedSubscriptionId
+      ? this.resolveSelectedClientSubscription(
+          payment.availableSubscriptions,
+          requestedSubscriptionId
+        )
+      : null;
+    if (
+      payment.code === 'SUBSCRIPTION_AVAILABLE'
+      && requestedSubscriptionId
+      && !explicitlySelectedSubscription
+    ) {
+      return {
+        ok: false,
+        code: 'PURCHASE_REQUIRED',
+        message: 'Выбранный абонемент больше недоступен. Обновите список и выберите его заново.',
+        tournamentId: tournament.id,
+        tournamentSlug: tournament.slug,
+        payment
+      };
+    }
+    const selectedClientSubscription = payment.code === 'SUBSCRIPTION_AVAILABLE'
+      ? (explicitlySelectedSubscription ?? payment.selectedSubscription)
+      : null;
+    const purchaseOption = selectedClientSubscription
+      ? {
+          id: selectedClientSubscription.id,
+          label: selectedClientSubscription.label,
+          priceLabel: '0',
+          productType: 'SUBSCRIPTION' as const
+        }
+      : this.resolveSelectedPurchaseOption(
+          payment.purchaseOptions,
+          input.selectedPurchaseOptionId
+        );
+    if (!purchaseOption) {
+      return {
+        ok: false,
+        code: 'PURCHASE_REQUIRED',
+        message: 'Для покупки участия нужен тариф.',
+        tournamentSlug: tournament.slug,
+        payment
+      };
+    }
+
     if (!access.ok) {
       // Defensive: a new payment is never created without a passing level decision.
       return { ok: false, code: access.code, message: access.message, tournamentSlug: tournament.slug,
@@ -2500,6 +2522,7 @@ export class TournamentsService {
       levelLabel: normalizedLevel,
       notes: this.pickString(input.notes) ?? undefined,
       selectedPurchaseOptionId: purchaseOption.id,
+      purchaseOptionSnapshot: structuredClone(purchaseOption),
       productType: this.resolveVivaTransactionProductType(purchaseOption.productType),
       exerciseId,
       studioId,
@@ -4148,6 +4171,7 @@ export class TournamentsService {
   private toTournamentListItem(tournament: CustomTournament): Tournament {
     return {
       ...this.ensureTournamentDefaults(tournament),
+      details: this.publicTournamentDetails(tournament.details),
       linkedCustomTournamentId: tournament.id,
       sourceTournamentId: tournament.sourceTournamentId
     };
@@ -4186,9 +4210,19 @@ export class TournamentsService {
     };
   }
 
+  private publicTournamentDetails(details: Tournament['details']): Tournament['details'] {
+    const source = this.toRecord(details?.booking);
+    if (!details || !source) return details;
+    const booking = { ...source };
+    // Durable owner commands and receipts contain private payment/identity data.
+    delete booking.pendingJoinPayments;
+    return { ...details, booking };
+  }
+
   private toLkCompatibleTournament(tournament: Tournament): Tournament {
     return {
       ...tournament,
+      details: this.publicTournamentDetails(tournament.details),
       format: this.pickString(tournament.format) ?? this.pickString(tournament.tournamentType) ?? undefined,
       participants: Array.isArray(tournament.participants)
         ? tournament.participants.map((participant) => this.toLkCompatibleParticipant(participant))
@@ -5705,6 +5739,13 @@ export class TournamentsService {
     };
   }
 
+  private sameAdmissionRule(left: TournamentAdmissionRule, right: { updatedAt?: string; gender?: unknown; accessLevels?: unknown; levelTolerance?: unknown }): boolean {
+    return left.updatedAt === right.updatedAt && left.gender === right.gender
+      && Array.isArray(left.accessLevels) && Array.isArray(right.accessLevels)
+      && JSON.stringify(left.accessLevels) === JSON.stringify(right.accessLevels)
+      && (left.levelTolerance ?? 0) === (right.levelTolerance ?? 0);
+  }
+
   private async checkFreshTournamentLevel(tournament: CustomTournament, input: {
     phone?: string; clientId?: string; trustedIdentity?: object; vivaAuthorizationHeader?: string;
   }): Promise<TournamentAccessCheckResponse> {
@@ -5718,7 +5759,8 @@ export class TournamentsService {
         tournamentSlug: tournament.slug, accessLevels: tournament.accessLevels };
     }
     let evidence: PlayerLevelEvidence = { status: 'UNAVAILABLE' };
-    if (isTournamentLevelRestricted(tournament)) {
+    {
+      // Subscription compatibility needs canonical evidence even for unrestricted tournaments.
       try {
         let identity = input.trustedIdentity && this.trustedRegistrationIdentities.get(input.trustedIdentity);
         if (!identity && input.vivaAuthorizationHeader && this.lkIdentityService) {
@@ -5746,13 +5788,18 @@ export class TournamentsService {
   /** Admin additions and manual waitlist promotion are admissions, even on a full-roster PATCH. */
   private async checkRosterAdditions(current: TournamentLevelRuleInput & Pick<CustomTournament, 'participants' | 'waitlist'>, mutation: UpdateCustomTournamentMutation, persistedId?: string): Promise<void> {
     const next = { ...current, ...Object.fromEntries(Object.entries(mutation).filter(([, value]) => value !== undefined)) };
-    if (mutation.participants) {
-      const phones = mutation.participants.map(p => this.normalizePhone(p.phone));
+    if (mutation.participants || mutation.maxPlayers !== undefined) {
+      const phones = (mutation.participants ?? current.participants).map(p => this.normalizePhone(p.phone));
       if (phones.some(p => !p) || new Set(phones).size !== phones.length) {
         throw new ConflictException({ code: 'TOURNAMENT_ROSTER_IDENTITY_INVALID' });
       }
       const maxPlayers = Number((next as Partial<CustomTournament>).maxPlayers);
-      if (Number.isFinite(maxPlayers) && phones.length > maxPlayers) throw new ConflictException({ code: 'TOURNAMENT_FULL' });
+      const held = this.getPendingJoinPayments(current as CustomTournament)
+        .filter(payment => this.isCapacityHoldingPendingJoinPayment(payment))
+        .map(payment => this.normalizePhone(payment.phone));
+      if (Number.isFinite(maxPlayers) && new Set([...phones, ...held]).size > maxPlayers) {
+        throw new ConflictException({ code: 'TOURNAMENT_FULL' });
+      }
     }
     const active = new Set(current.participants.map(p => this.normalizePhone(p.phone)).filter(Boolean));
     const waiting = new Set(current.waitlist.map(p => this.normalizePhone(p.phone)).filter(Boolean));
@@ -5810,6 +5857,37 @@ export class TournamentsService {
     } catch (error) {
       return error instanceof ConflictException ? { status: 'UNKNOWN' } : { status: 'UNAVAILABLE' };
     }
+  }
+
+  async verifyCheckoutOwner(auth?: string, token?: string) {
+    if (!this.lkIdentityService) throw new ServiceUnavailableException({ code: 'TOURNAMENT_OWNER_AUTH_UNAVAILABLE' });
+    const { actor } = await this.lkIdentityService.verify(auth, token);
+    if (!actor.verified || !actor.clientId || !actor.phoneNorm || !actor.tenantKey) throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+    return actor;
+  }
+
+  async resolveCheckoutIdentity(ref: string, auth?: string) {
+    this.ensurePersistenceEnabled();
+    if (!this.lkIdentityService) throw new ServiceUnavailableException({ code: 'TOURNAMENT_ELIGIBILITY_NOT_CONFIGURED' });
+    const { actor } = await this.lkIdentityService.verifyTrustedBearer(auth);
+    if (!actor.clientId || !actor.phoneNorm) throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+    const tournament = await this.requireCustomByPublicRef(ref);
+    const booking = this.resolveBookingConfig(tournament);
+    const exerciseId = this.pickString(booking.vivaExerciseId), studioId = this.pickString(booking.vivaStudioId);
+    const tenantKey = this.pickString(booking.vivaWidgetId) ?? this.vivaEndUserWidgetId;
+    if (!exerciseId || !studioId || !tenantKey) throw new ConflictException({ code: 'TOURNAMENT_TARGET_UNMAPPED' });
+    return { actor, tournament, exerciseId, studioId, tenantKey };
+  }
+
+  async checkCheckoutAdmission(context: Awaited<ReturnType<TournamentsService['resolveCheckoutIdentity']>>, auth?: string) {
+    const { tournament, actor } = context;
+    const input = { phone: actor.phoneNorm, clientId: actor.clientId, vivaAuthorizationHeader: auth,
+      trustedIdentity: this.rememberRegistrationIdentity({ phone: actor.phoneNorm, clientId: actor.clientId }) };
+    const access = await this.checkFreshTournamentLevel(tournament, input);
+    if (!access.ok) throw new ForbiddenException({ code: access.code, message: access.message });
+    const gender = await this.checkGenderAdmission(tournament, input);
+    if (!gender.ok) throw new ForbiddenException({ code: gender.code, message: gender.message });
+    return gender.decision;
   }
 
   /** Level decision for the authenticated LK player; the decision clients and gateways consume. */
@@ -6337,12 +6415,32 @@ export class TournamentsService {
     payment: TournamentJoinPaymentState;
     input: JoinPurchaseTransactionInput;
   }): Promise<TournamentRegistrationResponse> {
+    const recoverDispatched = (current: CustomTournament): TournamentRegistrationResponse | null => {
+      const pending = this.findPendingJoinPayment(current, input.pending.phone);
+      if (!pending || pending.transactionId !== input.pending.transactionId
+        || (pending.state === 'PROVIDER_CREATE_PENDING' && !pending.providerCreateAttemptedAt)) return null;
+      return { ok: true, code: 'PURCHASE_STARTED', message: 'Продолжите исходную оплату.',
+        tournamentId: current.id, tournamentSlug: current.slug,
+        payment: { ...input.payment, checkoutUrl: pending.checkoutUrl,
+          transactionId: pending.providerTransactionId ?? pending.transactionId } };
+    };
+    const current = await this.requireCustomBySlug(input.tournament.slug);
+    const recovered = recoverDispatched(current);
+    if (recovered) return recovered;
+    const access = await this.checkFreshTournamentLevel(current, input.input);
+    if (!access.ok) return recoverDispatched(await this.requireCustomBySlug(input.tournament.slug))
+      ?? { ok: false, code: access.code, message: access.message,
+        tournamentId: current.id, tournamentSlug: current.slug, levelDecision: access.levelDecision };
+    const gender = await this.checkGenderAdmission(current, input.input);
+    if (!gender.ok) return recoverDispatched(await this.requireCustomBySlug(input.tournament.slug))
+      ?? this.genderRefusal(current, gender);
     const attemptedAt = new Date().toISOString();
     const claimed = await this.tournamentsPersistence.claimPublicJoinTransactionCreate(
       input.tournament.id,
       input.pending.transactionId,
       input.pending.phone,
-      attemptedAt
+      attemptedAt,
+      gender.decision
     );
     if (!claimed) {
       const current = await this.requireCustomBySlug(input.tournament.slug);
@@ -6781,7 +6879,7 @@ export class TournamentsService {
   private parsePendingJoinPayment(
     record: Record<string, unknown> | null
   ): PendingJoinPayment | null {
-    if (!record) {
+    if (!record || (record.ownerCommand && record.state === 'OWNER_COMPLETED')) {
       return null;
     }
     const transactionId = this.pickString(record.transactionId);
@@ -6880,6 +6978,7 @@ export class TournamentsService {
         }
       : undefined;
     return {
+      ...(this.toRecord(record.purchaseOptionSnapshot) ? { purchaseOptionSnapshot: record.purchaseOptionSnapshot as TournamentPurchaseOption } : {}),
       transactionId,
       ...(state === 'PROVIDER_CREATE_PENDING'
         || state === 'PROVIDER_RESULT_UNKNOWN'
@@ -7727,10 +7826,9 @@ export class TournamentsService {
     const ruleOrSubscriptionLevels =
       matchingRule?.compatibleAccessLevels ?? subscription.compatibleAccessLevels;
     if (
-      normalizedLevel
-      && Array.isArray(ruleOrSubscriptionLevels)
+      Array.isArray(ruleOrSubscriptionLevels)
       && ruleOrSubscriptionLevels.length > 0
-      && !this.isLevelAllowedByList(normalizedLevel, ruleOrSubscriptionLevels)
+      && (!normalizedLevel || !this.isLevelAllowedByList(normalizedLevel, ruleOrSubscriptionLevels))
     ) {
       return false;
     }
@@ -8132,7 +8230,7 @@ export class TournamentsService {
   ): TournamentParticipant {
     return {
       id: payment.transactionId,
-      name: payment.name ?? payment.phone ?? `Заявка ${index + 1}`,
+      name: payment.name ?? `Заявка ${index + 1}`,
       phone: payment.phone,
       avatarUrl: payment.avatarUrl,
       levelLabel: payment.levelLabel,

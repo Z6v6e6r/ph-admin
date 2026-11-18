@@ -1,0 +1,253 @@
+import 'reflect-metadata';
+import * as assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { MongoClient } from 'mongodb';
+import { TournamentCheckoutService } from '../src/tournaments/tournament-checkout.service';
+import { TournamentsService } from '../src/tournaments/tournaments.service';
+import { TournamentsPersistenceService } from '../src/tournaments/tournaments-persistence.service';
+
+type Row = Record<string, any>;
+const levels = ['3', '3.125', '3.25', '3.375', '3.5'];
+const clone = <T>(value: T): T => structuredClone(value);
+async function main() {
+  const uri = process.env.TEST_MONGODB_URI;
+  assert.ok(uri, 'TEST_MONGODB_URI must identify a task-owned local replica set; no skip is a pass');
+  const target = new URL(uri);
+  assert.ok(['localhost', '127.0.0.1'].includes(target.hostname), 'local synthetic Mongo only');
+  assert.ok(['tournamentTask', 'rs0'].includes(target.searchParams.get('replicaSet') ?? ''));
+  assert.equal(target.searchParams.get('retryWrites'), 'true');
+  assert.equal(target.searchParams.get('w'), 'majority');
+  const databaseName = `tournament_checkout_task_${randomUUID().replace(/-/g, '')}`;
+  process.env.TOURNAMENTS_MONGODB_URI = uri;
+  process.env.TOURNAMENTS_MONGODB_DB = databaseName;
+  process.env.TOURNAMENTS_MONGODB_COLLECTION = 'custom_tournaments';
+  const client = new MongoClient(uri, { serverSelectionTimeoutMS: 3000 });
+  await client.connect();
+  assert.equal((await client.db('admin').command({ hello: 1 })).setName, 'tournamentTask');
+  const collection = client.db(databaseName).collection<Row>('custom_tournaments');
+  const repositories: TournamentsPersistenceService[] = [];
+  let postCount = 0, result: () => Promise<unknown> = async () => ({ transactionId: `provider-${postCount}`, paymentUrl: 'https://pay.example/synthetic' });
+  let rating = 3.25;
+  const actor = (n = 1) => ({ clientId: `synthetic-client-${n}`, phoneNorm: `1202555${String(n).padStart(4, '0')}`, tenantKey: 'fixture-tenant' });
+  async function seed(name: string, capacity = 4) {
+    await collection.insertOne({ id: name, slug: name, source: 'CUSTOM', gender: 'MIXED',
+      accessLevels: levels, levelTolerance: 0, updatedAt: '2026-11-18T00:00:00.000Z', createdAt: '2026-11-18T00:00:00.000Z',
+      name, status: 'REGISTRATION', maxPlayers: capacity, participants: [], waitlist: [], allowedManagerPhones: [],
+      skin: {}, mechanics: { enabled: false, config: {} }, details: { booking: { vivaExerciseId: `exercise-${name}`,
+        vivaStudioId: 'synthetic-studio', vivaWidgetId: 'fixture-tenant', pendingJoinPayments: [] } } });
+  }
+  function instance(n = 1) {
+    const repo = new TournamentsPersistenceService(); repositories.push(repo);
+    const tournaments: any = Object.create(TournamentsService.prototype);
+    Object.assign(tournaments, { tournamentsPersistence: repo, trustedRegistrationIdentities: new WeakMap(),
+      lkIdentityService: { verifyTrustedBearer: async (header: string) => {
+        assert.equal(header, 'Bearer synthetic-token'); return { actor: actor(n) };
+      } },
+      playerRatingsService: { resolveCanonicalLevelByIdentity: async () => ({ ratingNumeric: rating, levelLabel: String(rating) }) },
+      requireCustomByPublicRef: async (ref: string) => {
+        const row = await collection.findOne({ id: ref }); assert.ok(row); return row;
+      }
+    });
+    const service = new TournamentCheckoutService(tournaments, repo);
+    (service as any).http = async (url: string, _auth: string, payload?: Row) => {
+      if (payload) { postCount++; return result(); }
+      if (url.includes('/exercises/')) return { id: decodeURIComponent(url.split('/exercises/')[1]), studio: { id: 'synthetic-studio' }, timeFrom: '2099-11-18T10:00:00+03:00' };
+      if (url.includes('/products/')) return [{ id: 'one-time', name: 'Разовое участие', type: 'SERVICE' }];
+      throw Error('Unexpected synthetic transport');
+    };
+    return { service, repo, tournaments };
+  }
+  const checkout = (service: TournamentCheckoutService, name: string, key: string) => service.checkout(name, 'Bearer synthetic-token', { productId: 'one-time', source: 'one-time' }, key);
+  const check = async (name: string, run: () => Promise<void>) => { await run(); console.log(`PASS ${name}`); };
+  try {
+    await check('physical Mongo: different service instances and keys dispatch exactly once', async () => {
+      await seed('race'); const a = instance(), b = instance(); const before = postCount;
+      const outcomes = await Promise.all(Array.from({ length: 8 }, (_, n) => checkout(n % 2 ? a.service : b.service, 'race', `race-key-${n}`)));
+      assert.equal(postCount - before, 1);
+      assert.equal(new Set(outcomes.map(x => x.operationId)).size, 1);
+      const row = await collection.findOne({ id: 'race' }); assert.equal(row?.details.booking.pendingJoinPayments.length, 1);
+      const receipt = await checkout(instance().service, 'race', 'after-process-restart');
+      assert.ok(receipt.transactionId); assert.equal(receipt.operationId, outcomes[0].operationId);
+      assert.equal(postCount - before, 1);
+    });
+    await check('physical Mongo: canonical tournament maxPlayers includes cross-path pending reservations', async () => {
+      await seed('capacity', 2);
+      await collection.updateOne({ id: 'capacity' }, { $set: { participants: [{ phone: '12025550999', name: 'Existing', status: 'REGISTERED' }] } });
+      const before = postCount;
+      const outcomes = await Promise.allSettled(Array.from({ length: 6 }, (_, n) => checkout(instance(n + 10).service, 'capacity', `capacity-key-${n}`)));
+      assert.equal(outcomes.filter(x => x.status === 'fulfilled').length, 1);
+      assert.equal(postCount - before, 1);
+      const row = await collection.findOne({ id: 'capacity' });
+      assert.equal(row!.participants.length + row!.details.booking.pendingJoinPayments.length, 2);
+      for (const outcome of outcomes) if (outcome.status === 'rejected') {
+        assert.ok(['TOURNAMENT_RULE_OR_CAPACITY_CHANGED', 'TOURNAMENT_RULE_CHANGED'].includes(outcome.reason.getResponse?.().code));
+      }
+    });
+    await check('physical Mongo: administrative roster additions cannot consume a checkout reservation', async () => {
+      await seed('admin-capacity', 2); const f=instance(200);
+      result = async () => ({ transactionId: `admin-capacity-provider-${postCount}` });
+      await checkout(f.service, 'admin-capacity', 'reserved-before-admin');
+      const current = await f.repo.findCustomTournamentById('admin-capacity'); assert.ok(current);
+      const participants = [201,202].map(n=>({ phone:actor(n).phoneNorm, name:'Synthetic admin participant', status:'REGISTERED' as const }));
+      await assert.rejects(f.tournaments.checkRosterAdditions(current, { participants }, current.id),
+        (error:any)=>error.getResponse?.().code === 'TOURNAMENT_FULL');
+      const stored = await collection.findOne({id:'admin-capacity'});
+      assert.equal(stored!.participants.length,0);
+      assert.equal(stored!.details.booking.pendingJoinPayments.length,1);
+    });
+    await check('physical Mongo: reducing maxPlayers cannot strand existing checkout reservations', async () => {
+      await seed('admin-lower-capacity', 3); const f=instance(210);
+      await checkout(f.service,'admin-lower-capacity','held-one');
+      await checkout(instance(211).service,'admin-lower-capacity','held-two');
+      await checkout(instance(212).service,'admin-lower-capacity','held-three');
+      const current=await f.repo.findCustomTournamentById('admin-lower-capacity'); assert.ok(current);
+      await assert.rejects(f.tournaments.checkRosterAdditions(current,{maxPlayers:2},current.id),
+        (error:any)=>error.getResponse?.().code === 'TOURNAMENT_FULL');
+      assert.equal((await collection.findOne({id:'admin-lower-capacity'}))!.maxPlayers,3);
+    });
+    await check('physical Mongo: administrator CAS fences a new reservation even with unchanged timestamp', async () => {
+      await seed('admin-cas-pending',2); const f=instance(230);
+      const before=await f.repo.findCustomTournamentById('admin-cas-pending'); assert.ok(before);
+      await checkout(f.service,'admin-cas-pending','concurrent-reservation');
+      // Same millisecond writes cannot use updatedAt as the whole admission version.
+      await collection.updateOne({id:'admin-cas-pending'},{$set:{updatedAt:before.updatedAt}});
+      const participants=[231,232].map(n=>({phone:actor(n).phoneNorm,name:'Synthetic admin',status:'REGISTERED' as const}));
+      await assert.rejects(f.repo.updateCustomTournament('admin-cas-pending',{participants},before),
+        (error:any)=>['TOURNAMENT_RULE_CHANGED','TOURNAMENT_FULL'].includes(error.getResponse?.().code));
+      assert.equal((await collection.findOne({id:'admin-cas-pending'}))!.participants.length,0);
+    });
+    await check('physical Mongo: anonymous tournament detail does not expose durable checkout commands or receipts', async () => {
+      await seed('public-checkout-privacy'); const f=instance(220);
+      result=async()=>({transactionId:'private-provider-id',paymentUrl:'https://pay.example/private-owner-link'});
+      await checkout(f.service,'public-checkout-privacy','private-operation-key');
+      await collection.updateOne({id:'public-checkout-privacy'},{$set:{isPublic:true}});
+      const current=await f.repo.findCustomTournamentById('public-checkout-privacy'); assert.ok(current);
+      f.tournaments.findCustomTournamentByIdReadModelSafe=async()=>current;
+      const view=await f.tournaments.findById('public-checkout-privacy');
+      const serialized=JSON.stringify(view);
+      assert.equal(view.details?.booking?.pendingJoinPayments,undefined);
+      for(const secret of ['private-provider-id','https://pay.example/private-owner-link','private-operation-key',actor(220).phoneNorm]) {
+        assert.equal(serialized.includes(secret),false,'anonymous detail must not disclose checkout identity or payment custody');
+      }
+      const publicView=f.tournaments.toPublicView(current);
+      assert.equal(JSON.stringify(publicView).includes(actor(220).phoneNorm),false,
+        'a pending anonymous participant name must not fall back to the private phone');
+      assert.ok((await f.repo.readTournamentCheckoutOperation('public-checkout-privacy',actor(220).phoneNorm))?.ownerReceipt,
+        'sanitizing a read model must preserve internal recovery evidence');
+    });
+    await check('physical Mongo: unchanged timestamp rule change fences new financial operation', async () => {
+      await seed('same-timestamp'); const f = instance(), before = postCount;
+      const admission = f.tournaments.checkCheckoutAdmission.bind(f.tournaments);
+      f.tournaments.checkCheckoutAdmission = async (...args: unknown[]) => {
+        const decision = await admission(...args);
+        await collection.updateOne({ id: 'same-timestamp' }, { $set: { accessLevels: ['D'], levelTolerance: 0.125 } });
+        return decision;
+      };
+      await assert.rejects(checkout(f.service, 'same-timestamp', 'changed-key'));
+      assert.equal(postCount, before);
+      assert.equal((await collection.findOne({ id: 'same-timestamp' }))!.details.booking.pendingJoinPayments.length, 0);
+    });
+    await check('physical Mongo: lost provider response survives process restart and alternate key without redispatch', async () => {
+      await seed('lost-response'); const before = postCount;
+      result = async () => { throw Error('synthetic provider response lost'); };
+      const first = await checkout(instance().service, 'lost-response', 'original-key');
+      const retry = await checkout(instance().service, 'lost-response', 'alternate-key');
+      assert.equal(first.state, 'PENDING_CONFIRMATION'); assert.equal(retry.operationId, first.operationId);
+      assert.equal(postCount - before, 1);
+      const stored = await instance().repo.readTournamentCheckoutOperation('lost-response', actor().phoneNorm);
+      assert.equal(stored?.state, 'PROVIDER_RESULT_UNKNOWN'); assert.ok(stored?.providerCreateAttemptedAt);
+    });
+    await check('physical Mongo: restart before dispatch refuses a changed canonical level', async () => {
+      await seed('prepared'); const f = instance(), before = postCount;
+      f.repo.claimTournamentCheckout = async () => { throw Error('synthetic crash before claim'); };
+      await assert.rejects(checkout(f.service, 'prepared', 'prepared-key'), /synthetic crash/);
+      assert.equal(postCount, before);
+      rating = 6;
+      await assert.rejects(checkout(instance().service, 'prepared', 'new-key'));
+      assert.equal(postCount, before);
+      const refused = await collection.findOne({ id: 'prepared' });
+      assert.equal(refused!.details.booking.pendingJoinPayments[0].state, 'FAILED',
+        'a definitive pre-dispatch refusal must stop holding canonical capacity');
+      rating = 3.25;
+    });
+    await check('physical Mongo: concurrent dispatch wins over a stale predispatch refusal', async () => {
+      await seed('refusal-race'); const prepared = instance(), before = postCount;
+      prepared.repo.claimTournamentCheckout = async () => { throw Error('synthetic crash before claim'); };
+      await assert.rejects(checkout(prepared.service, 'refusal-race', 'prepare'), /synthetic crash/);
+      const stale = instance(), winner = instance();
+      const reject = stale.repo.rejectTournamentCheckoutPreparation.bind(stale.repo);
+      let winningOutcome: Row | undefined;
+      stale.repo.rejectTournamentCheckoutPreparation = async (...args) => {
+        // The stale request resolved an inadmissible level before another request claimed
+        // the same operation using a fresh admissible rating. Only the persisted winner counts.
+        rating = 3.25;
+        result = async () => { throw Error('synthetic provider timeout'); };
+        winningOutcome = await checkout(winner.service, 'refusal-race', 'winner');
+        return reject(...args);
+      };
+      rating = 6;
+      const recovered = await checkout(stale.service, 'refusal-race', 'stale');
+      assert.equal(recovered.state, 'PENDING_CONFIRMATION');
+      assert.equal(recovered.operationId, winningOutcome?.operationId);
+      assert.equal(postCount - before, 1);
+      assert.equal((await winner.repo.readTournamentCheckoutOperation('refusal-race', actor().phoneNorm))?.state, 'PROVIDER_RESULT_UNKNOWN');
+      rating = 3.25;
+    });
+    await check('physical Mongo: late provider receipt survives concurrent status/retry', async () => {
+      await seed('late'); const before = postCount;
+      let release!: () => void; const wait = new Promise<void>(resolve => { release = resolve; });
+      result = async () => { await wait; return { transactionId: 'late-original', paymentUrl: 'https://pay.example/late' }; };
+      const original = checkout(instance().service, 'late', 'late-first');
+      while (postCount === before) await new Promise(resolve => setTimeout(resolve, 5));
+      const pending = await checkout(instance().service, 'late', 'late-second');
+      assert.equal(pending.state, 'PENDING_CONFIRMATION'); release();
+      const completed = await original; const recovered = await checkout(instance().service, 'late', 'late-third');
+      assert.deepEqual(recovered, completed); assert.equal(recovered.transactionId, 'late-original');
+      assert.equal(postCount - before, 1);
+    });
+    await check('physical Mongo: subscription admission occupies the same canonical capacity budget', async () => {
+      await seed('subscription-budget', 2); const f = instance(100);
+      const first = await f.service.subscriptionAdmission('subscription-budget', 'Bearer synthetic-token', { operationId: 'subscription-first', clientSubscriptionId: 'fixture-subscription' });
+      const replay = await instance(100).service.subscriptionAdmission('subscription-budget', 'Bearer synthetic-token', { operationId: 'subscription-first', clientSubscriptionId: 'fixture-subscription' });
+      assert.deepEqual(replay, first);
+      result = async () => ({ transactionId: `budget-${postCount}` });
+      await checkout(instance(101).service, 'subscription-budget', 'paid-other-player');
+      await assert.rejects(checkout(instance(102).service, 'subscription-budget', 'over-capacity'));
+      const row = await collection.findOne({ id: 'subscription-budget' }); assert.equal(row!.details.booking.pendingJoinPayments.length, 2);
+    });
+    await check('physical Mongo: reservation becomes one participant atomically and identical completion is idempotent', async () => {
+      await seed('transfer', 2); const a = instance(201), b = instance(201);
+      await a.service.subscriptionAdmission('transfer', 'Bearer synthetic-token', { operationId: 'transfer-first', clientSubscriptionId: 'fixture-subscription' });
+      const operation = await a.repo.readTournamentCheckoutOperation('transfer', actor(201).phoneNorm); assert.ok(operation);
+      const outcomes = await Promise.all([
+        a.repo.completeTournamentCheckout('transfer', operation, 'booking-original', false),
+        b.repo.completeTournamentCheckout('transfer', operation, 'booking-original', false)
+      ]);
+      assert.deepEqual(outcomes, [true, true]);
+      let row = await collection.findOne({ id: 'transfer' });
+      assert.equal(row!.participants.length, 1);
+      assert.equal(row!.participants[0].vivaBookingId, 'booking-original');
+      assert.equal(row!.details.booking.pendingJoinPayments[0].state, 'OWNER_COMPLETED');
+      await checkout(instance(202).service, 'transfer', 'second-seat');
+      await assert.rejects(checkout(instance(203).service, 'transfer', 'third-seat'));
+      row = await collection.findOne({ id: 'transfer' });
+      assert.equal(row!.participants.length, 1);
+      assert.equal(row!.details.booking.pendingJoinPayments.filter((x: Row) => x.state !== 'OWNER_COMPLETED').length, 1);
+    });
+    await check('physical Mongo: completion cannot replace a previously acknowledged booking identity', async () => {
+      const a = instance(201);
+      const operation = await a.repo.readTournamentCheckoutOperation('transfer', actor(201).phoneNorm); assert.ok(operation);
+      assert.equal(await a.repo.completeTournamentCheckout('transfer', operation, 'booking-conflicting', false), false);
+      const row = await collection.findOne({ id: 'transfer' });
+      assert.equal(row!.participants[0].vivaBookingId, 'booking-original');
+      assert.equal(row!.details.booking.pendingJoinPayments[0].providerBookingId, 'booking-original');
+    });
+    console.log('PASS 14 physical Mongo checkout-owner scenarios; synthetic provider only');
+  } finally {
+    await Promise.all(repositories.map(repo => repo.onModuleDestroy()));
+    assert.ok(databaseName.startsWith('tournament_checkout_task_'));
+    await client.db(databaseName).dropDatabase();
+    await client.close();
+  }
+}
+main().catch(error => { console.error(error); process.exitCode = 1; });

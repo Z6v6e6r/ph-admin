@@ -303,6 +303,10 @@ export class TournamentServerBookingCoordinator {
       const recovered = await this.recoverBooking(existing);
       return this.view(recovered ?? (await this.ports.store.find(existing._id)) ?? existing);
     }
+    if (existing.state === 'PAYMENT_CREATING' && this.leaseExpired(existing)) {
+      await this.transition(existing, { state: 'PAYMENT_UNKNOWN', errorCode: 'CHECKOUT_RESULT_UNKNOWN' });
+      return this.view((await this.ports.store.find(existing._id)) ?? existing);
+    }
     return this.view(existing);
   }
 
@@ -318,6 +322,23 @@ export class TournamentServerBookingCoordinator {
   ): Promise<TournamentServerBookingAttempt | null> {
     const next = { ...doc, ...patch, revision: doc.revision + 1, updatedAt: this.now() };
     return (await this.ports.store.replace(next, doc.revision)) ? next : null;
+  }
+
+  /** Only a response to this generation's actual dispatch can reconcile its receipt. */
+  private async recordDispatchResult(
+    dispatched: TournamentServerBookingAttempt, states: TournamentServerBookingState[],
+    patch: Partial<TournamentServerBookingAttempt>
+  ): Promise<TournamentServerBookingAttempt | null> {
+    let current: TournamentServerBookingAttempt | null = dispatched;
+    for (let retry = 0; current && retry < 8; retry += 1) {
+      if (current.generation !== dispatched.generation || current.idempotencyKey !== dispatched.idempotencyKey
+        || current.exerciseId !== dispatched.exerciseId || current.clientId !== dispatched.clientId
+        || !states.includes(current.state)) return current;
+      const saved = await this.transition(current, patch);
+      if (saved) return saved;
+      current = await this.ports.store.find(dispatched._id);
+    }
+    throw new TournamentServerBookingError('SERVER_BOOKING_STORE_CONFLICT', 503, 'Результат требует сверки.');
   }
 
   private async resume(
@@ -378,7 +399,7 @@ export class TournamentServerBookingCoordinator {
         }
         this.log('tournament_server_booking_provider_result', { tournamentId: claimed.tournamentId, generation: claimed.generation, outcome: result.outcome });
         if (result.outcome === 'CREATED' && PROVIDER_ID.test(result.bookingId)) {
-          return this.transition(claimed, { state: 'BOOKED', bookingId: result.bookingId });
+          return this.recordDispatchResult(claimed, ['BOOKING', 'BOOKING_UNKNOWN'], { state: 'BOOKED', bookingId: result.bookingId, errorCode: null });
         }
         if (result.outcome === 'REJECTED') {
           return this.transition(claimed, { state: 'FAILED', errorCode: result.reasonCode });
@@ -414,16 +435,17 @@ export class TournamentServerBookingCoordinator {
           return this.transition(claimed, { state: 'PAYMENT_UNKNOWN', errorCode: result.reasonCode });
         }
         const expectedToPay = claimed.price.baseAmountMinor - claimed.price.discountMinor;
-        if (!result.paid && result.toPayMinor !== expectedToPay) {
-          return this.transition(claimed, { state: 'PAYMENT_UNKNOWN', errorCode: 'CHECKOUT_AMOUNT_MISMATCH' });
-        }
         const payment = {
           transactionId: result.transactionId,
           paymentUrl: result.paymentUrl,
           toPayMinor: result.paid ? 0 : result.toPayMinor,
           expiresAt: result.expiresAt
         };
-        return this.transition(claimed, { state: result.paid || payment.toPayMinor === 0 ? 'CONFIRMED' : 'PAYMENT_PENDING', payment });
+        if (!result.paid && result.toPayMinor !== expectedToPay) {
+          return this.recordDispatchResult(claimed, ['PAYMENT_CREATING', 'PAYMENT_UNKNOWN'],
+            { state: 'PAYMENT_UNKNOWN', errorCode: 'CHECKOUT_AMOUNT_MISMATCH', payment });
+        }
+        return this.recordDispatchResult(claimed, ['PAYMENT_CREATING', 'PAYMENT_UNKNOWN'], { state: result.paid || payment.toPayMinor === 0 ? 'CONFIRMED' : 'PAYMENT_PENDING', payment, errorCode: null });
       }
       default:
         // PAYMENT_CREATING, PAYMENT_UNKNOWN, PAYMENT_PENDING, CONFIRMED and terminal states are

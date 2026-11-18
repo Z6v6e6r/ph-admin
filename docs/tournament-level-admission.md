@@ -1,17 +1,18 @@
 # Tournament level eligibility: owner implementation and release gaps
 
-Status: **Draft, not integration-ready**. This change implements mandatory admission in the
-CUP/ph-admin owner used by LK1. It does not close direct Viva ingress or move all LK browser
-checkout flows to that owner. Do not enable the experimental server-booking route for release.
-No deployment, provider booking, payment, migration or live data mutation was performed.
+Status: **Draft; source integration prepared, P0 provider bypass OPEN**. CUP owns durable
+checkout and subscription admission; linked LK/LK2 changes consume that owner. Local synthetic
+Mongo/PostgreSQL evidence is separate from CI and deployed/provider acceptance. Direct Viva
+ingress remains unclosed. Do not enable the experimental server-booking route for release.
+No deployment, provider booking, payment or live data mutation was performed. Disposable synthetic local databases were initialized.
 
 ## Ownership and existing changes
 
 The LK1 widget repository is `Z6v6e6r/lk`. Its tournament registration calls
 `PHAB_API_BASE/tournaments/:id/register` in `Z6v6e6r/ph-admin`; subscription booking calls
-Node-RED `/lk/subscription-bookings`. One-time/composite checkout still calls Viva v2 directly.
-Thus ph-admin owns the tournament rule and CUP player level, while LK has additional writers
-that must be integrated before the release gate can pass.
+Node-RED `/lk/subscription-bookings`. The linked LK change routes one-time/composite checkout through CUP and installs durable
+admission in the composed Node-RED booking owner. CUP owns the tournament rule and player level.
+These source changes are not evidence of a deployed cutover or provider-side access restriction.
 
 This branch incorporates the work already prepared in ph-admin Drafts #126 and #129, then
 hardens its write paths. Those drafts are not independent prerequisites to merge separately.
@@ -58,8 +59,8 @@ not recompute a second authoritative decision from its local projection.
 | `POST /tournaments/:exerciseId/custom-energy-checkout` | Canonical level and raw rule revision before new checkout; no pricing/residency formula change. |
 | Legacy free external Viva registration | Restricted target refuses with `TOURNAMENT_SECURE_JOIN_REQUIRED`; no unsafe provider write before local CAS. |
 | Experimental `/tournaments/:id/server-booking` | Disabled by default; fresh pre-dispatch decision and target/price binding. Not a replacement for all LK payment modes. |
-| LK Node-RED `/lk/subscription-bookings` | **Not integrated** with owner admission; includes subscription use and money-discount paths. |
-| LK browser Viva v2 `transactions` | **Not migrated**: one-time and subscription+booking purchase still bypass owner. |
+| LK Node-RED `/lk/subscription-bookings` | Composed source calls durable POST owner admission before preaccept, managed entitlement reserve and daily guard; exact-operation refusal and own-guard recovery tested on real Mongo. Deployment not performed. |
+| LK browser one-time/composite checkout | Linked LK source POSTs `/tournaments/:id/checkout`; CUP rebuilds the original Viva v2 cart from authenticated catalog and actor, reserves capacity and claims one provider dispatch. No browser write fallback. |
 | Direct Viva API/widget/admin writes | **Not closed or verified** by this patch. Requires provider-side restriction or an owner-enforced provider contract. |
 | Invitations | No independent enrollment route with an authorized exemption found; ordinary/forged personal flags do not bypass checked routes. |
 
@@ -111,35 +112,85 @@ The owner API uses the deployment's existing `/api` prefix.
 6. Supersede/adapt PR #613's independent local gate for these owner paths. Do not enable its local
    policy as a substitute for owner enforcement. The LK2 ADR ownership wording needs alignment.
 
-## Remaining release blockers and authorized next implementation
+## Durable checkout and Node-RED integration
 
-The user authorized moving LK booking behind its server while preserving payment calculations.
-The existing trial-training checkout provides a useful pattern, not a completed tournament port:
+- `POST /api/tournaments/:id/checkout`, authenticated LK Bearer and `Idempotency-Key`.
+  Body: `productId`, `source` (`one-time`, `client-one-time`, `subscription`), optional `promoCode`,
+  `successUrl`, `failUrl`. Arbitrary actor, amount, level and discount fields are not forwarded.
+- Read identity-bound existing operation before fresh catalog/rule checks, even with a different key.
+  An unattempted preparation checks fresh canonical level and full saved rule before claiming POST.
+  Once dispatched, unknown never expires into permission to POST again. A new process returns the
+  original receipt or pending state. There is no provider idempotency/attribution claim for lost POST.
+- Same historical cart: one product, `count:1`, embedded tournament `bookingRequests`, subscription
+  identifiers, WIDGET, unchanged promo and all redirect aliases. Viva remains the ordinary price/promo
+  calculator. Catalog `discountAmount` was not a normalized ordinary product field; custom-energy's
+  server discount formula and subscription money-discount owner remain their dedicated paths.
+  Unit payload parity is not a real provider charge/settlement test.
+- `POST /api/tournaments/:id/checkout/reconcile` reads authenticated bookings and transfers the held
+  seat to a participant only for one exact actor/exercise/acknowledged transaction, paid booking.
+  A lost transaction ID remains unknown; do not infer ownership from one booking for the exercise.
+- `POST /api/tournaments/:id/subscription-admission` accepts the existing Node operation ID and
+  subscription ID. It creates a durable capacity hold after canonical admission. Response binds actor,
+  exercise, subscription and original request ID. GET level-decision remains preview only.
+- Node's confirmed owner calls `POST /api/tournaments/:id/subscription-admission/complete` using the
+  original Bearer plus existing CUP integration token. Browser Bearer alone cannot attest completion.
+  Atomic hold-to-roster transfer preserves the first booking ID and rejects a conflicting receipt.
+- LK's source composer is applied LAST to the full current booking function. It preserves daily,
+  managed-entitlement and other overlays and all graph wires. A definitive refusal only CASes an
+  unattempted original operation; uncertain outcomes keep their hold. After readback it releases only
+  the matching daily-guard owner. Dispatch/use markers prohibit release; restart and lost ACK are tested.
+- Admin additions, waitlist promotion and `maxPlayers` reduction include roster plus active pending
+  seats (unique actor phones); complete preimage CAS includes pending holds even at the same timestamp.
+- Public card projections exclude the private pending journal and never derive a display name from
+  an unnamed pending payer's phone. Owner receipts remain on authenticated operation responses only.
+- LK2 local JOIN removes its projection-based pre-gate; CUP returns a durable admission/refusal receipt.
+  LK2 preserves command custody and consumes additive refusal codes. This does not add a native paid
+  Viva tournament checkout route that did not previously exist.
 
-- `lk/scripts/nodered_trial_group_nodes/checkout.js` supplies verified profile/target/catalog reads,
-  durable target-key insert ACK, single Viva v2 POST and status-only replay after unknown outcome.
-- A dedicated tournament route must rebuild the same one-time/client-one-time/composite payload
-  from authoritative product and ownership evidence. Preserve promo codes and current product
-  pricing. `lk/src/utils/tournamentCustomPricing.ts` defines the current composite payload.
-- Existing trial checkout only supports one-time/client-one-time. Composite SUBSCRIPTION selection,
-  client subscription IDs and discount evidence require their own catalog/ownership contract and
-  parity tests. Do not blindly forward an arbitrary browser payload. The experimental admin v1
-  route's static `details.booking.serverBooking` price does not have this parity.
-- Node-RED must consume owner admission before new durable reservations and before resumed
-  PREPARED operations. The daily-visit patch acquires a separate guard at the start of preaccept.
-  A denial after that acquisition needs an exact prewrite refusal CAS and safe release of that
-  operation's guard. Simply returning 403 can strand a daily subscription visit. A GET precheck
-  by itself is insufficient for cross-service commit-time ownership.
-- Confirm mapping of every tournament exercise to an authoritative custom tournament. Unmapped
-  targets must refuse instead of silently becoming unrestricted.
-- Obtain evidence that direct Viva self-booking is closed for all affected API/widget paths while
-  authorized server booking remains usable. A previous draft's statement that this is already
-  closed is not current verification and is not relied upon here.
-- Experimental server booking additionally lacks proven pre-existing-booking attribution across
-  alternative tournament IDs for one exercise, complete capacity/publication checks and payment
-  settlement-to-confirmed integration. Do not activate it as the release solution.
-- Provider staging booking/payment parity, LK2 end-to-end and deployed Node-RED checks require a
-  prepared test target and separately authorized external actions. None was attempted here.
+## Writer matrix: evidence and remaining boundaries
+
+All CUP new-admission paths use `resolveCanonicalLevelByIdentity` and persisted raw
+`accessLevels`/`levelTolerance`/gender. Trusted level is retained even for an unrestricted tournament.
+
+| Writer | New action / recovery | Evidence | Remaining limitation |
+|---|---|---|---|
+| Legacy register API / public registrations | CUP canonical gate + atomic participant/waitlist write; existing member replay | level-enforcement, gender-admission, payment persistence Mongo | Provider direct ingress independent |
+| Public join purchase | Canonical gate and full-rule reservation; unattempted restart rechecks; dispatched payment recovery bypasses fresh eligibility | actual controller/service recovery, public-join-flow incl lost majority ACK | Unknown provider receipt remains held |
+| Public waitlist / admin promotion | Fresh canonical decision for added member; exact preimage and held-seat count | level-enforcement + physical mixed-writer CAS | No automatic promotion worker found |
+| Admin add / source import | Added users checked; imported existing provider roster is observational, not a newly authorized provider booking | level-enforcement/import tests | Provider-created historical rows cannot prove provider gate |
+| Custom energy | Canonical level + complete rule equality immediately before new financial operation | same-timestamp range/tolerance regression | Existing dedicated price formula retained; provider staging not executed |
+| Browser single/composite | CUP checkout; trusted catalog payload, durable actor hold and one dispatch | owner unit, 14 Mongo scenarios, actual browser function test | Direct external Viva API still callable independently |
+| Owned subscription / money discount | Node composed owner POST before reserve/preaccept; own denial cleanup; confirmed completion | actual function tests and real Mongo crash/restart/guard takeover | Requires configured CUP base and integration token on authorized rollout |
+| LK2 local owner JOIN | CUP canonical admission and atomic receipt; unchanged command identity on retry | local-owner unit and real Mongo two-connection CAS | Deploy compatible receipt consumer before owner changes |
+| Experimental coordinator | Full decision before booking; expired payment lease becomes unknown; late receipt CAS retained | server-booking tests | OFF; not ordinary cart replacement |
+| Direct Viva API/widget/admin | Viva is final writer and does not consume CUP admission in these repositories | Repository boundary audit only | **P0 OPEN**, provider requirement below |
+| Personal invitation | No authenticated exception contract exists | forged flag negatives | No client flag grants exception |
+
+## Provider integration requirement (P0 owner: Viva + platform integration)
+
+For mapped tournament exercises, Viva must reject end-user `POST .../end-user/api/v2/:widget/transactions`
+with tournament bookingRequests, direct exercise booking endpoints, widget self-enrollment and any
+other provider admission writer unless a server-authenticated CUP grant is atomically consumed.
+The grant must bind tenant, exercise, actor, saved rule version/full hash, original operation and
+capacity hold. It must be single-use with durable idempotent result lookup by operation ID. Provider
+admin/import writers need the same gate or an explicit server-authorized audited policy; no implicit
+invitation bypass. A server credential restriction alone is insufficient unless client self-booking
+is actually disabled for every tournament writer and authorized server writes remain functional.
+No such provider enforcement capability/configuration is proven available here; do not invent a
+configuration flag. Obtain provider documentation/contract and staging evidence before P0 closure.
+
+Reproduction protocol for a separately authorized disposable provider fixture:
+1. Publish a mapped tournament with maxPlayers=2, explicit range and an out-of-range synthetic actor.
+2. Observe refusal and zero new write via CUP, browser and Node routes.
+3. With that same end-user credential, try the old Viva transaction cart directly, direct subscription
+   booking and widget path. Expect provider refusal and zero booking/transaction/debit. A success is
+   a reproduced bypass regardless of green application tests.
+4. Use an in-range actor through CUP. Race requests on two processes and alternate keys, drop first
+   provider response, restart, then recover exactly one provider record and the same payment link.
+5. Repeat promo, zero-price promotion, ordinary single and composite subscription cart; compare
+   provider calculated amount/discount/line items and paid completion. Do not use production payments.
+
+No live/provider step above was executed. Unknown dispatch cannot be released by local timeout.
 
 ## Verification, rollout and recovery
 
@@ -149,7 +200,7 @@ raw-rule restoration fences, booking uncertainty and payment lease recovery. CI 
 suites and physical Mongo admission CAS tests; the latter now include same-timestamp range and
 tolerance edits. Report local results separately from CI and provider tests.
 
-No migration/backfill ran. The inherited experimental collection
+No live migration/backfill ran. The inherited experimental collection
 `tournament_server_booking_attempts_v1` uses Mongo's unique `_id`; no added secondary index or
 live collection setup was performed. Existing fields are additive; existing absent tolerance is
 read as zero. Preserve this collection and existing payment eligibility snapshots during rollback.

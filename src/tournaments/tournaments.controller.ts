@@ -1,3 +1,4 @@
+import { TournamentCheckoutService } from './tournament-checkout.service';
 import {
   Body,
   Controller,
@@ -52,7 +53,8 @@ export class TournamentsController {
     private readonly tournamentsService: TournamentsService,
     private readonly vivaStatusSyncService: TournamentsVivaStatusSyncService,
     private readonly tournamentResultsExportService: TournamentResultsExportService,
-    @Optional() private readonly serverBookingService?: TournamentServerBookingService
+    @Optional() private readonly serverBookingService?: TournamentServerBookingService,
+    @Optional() private readonly checkoutService?: TournamentCheckoutService
   ) {}
 
   @Get()
@@ -365,6 +367,36 @@ export class TournamentsController {
   }> {
     const client = await this.resolveLkClient(request, user);
     return this.tournamentsService.cancelPublicRegistrationByTournamentRef(id, client.phone);
+  }
+
+  @Post(':id/checkout')
+  @Roles()
+  checkout(@Param('id') id: string, @Req() request: Request, @Body() body: unknown) {
+    if (!this.checkoutService) throw new ServiceUnavailableException();
+    return this.checkoutService.checkout(id, this.pickString(request.headers.authorization), body,
+      this.pickString(request.headers['idempotency-key']));
+  }
+
+  @Post(':id/checkout/reconcile')
+  @Roles()
+  checkoutStatus(@Param('id') id: string, @Req() request: Request) {
+    if (!this.checkoutService) throw new ServiceUnavailableException();
+    return this.checkoutService.reconcile(id, this.pickString(request.headers.authorization));
+  }
+
+  @Post(':id/subscription-admission/complete')
+  @Roles()
+  completeSubscriptionAdmission(@Param('id') id: string, @Req() request: Request, @Body() body: unknown) {
+    if (!this.checkoutService) throw new ServiceUnavailableException();
+    return this.checkoutService.completeSubscription(id, this.pickString(request.headers.authorization),
+      this.pickString(request.headers['x-cup-integration-token']), body);
+  }
+
+  @Post(':id/subscription-admission')
+  @Roles()
+  subscriptionAdmission(@Param('id') id: string, @Req() request: Request, @Body() body: unknown) {
+    if (!this.checkoutService) throw new ServiceUnavailableException();
+    return this.checkoutService.subscriptionAdmission(id, this.pickString(request.headers.authorization), body);
   }
 
   @Post(':exerciseId/custom-energy-checkout')

@@ -267,7 +267,7 @@ async function main(): Promise<void> {
   assert.equal(sourceBooking?.purchaseFlowUrl, 'https://example.com/persisted-purchase');
   assert.equal((sourceBooking?.acceptedSubscriptions as unknown[])?.length, 1);
   assert.equal((sourceBooking?.purchaseOptions as unknown[])?.length, 1);
-  assert.equal((sourceBooking?.pendingJoinPayments as unknown[])?.length, 1);
+  assert.equal(sourceBooking?.pendingJoinPayments, undefined, "private payment journal is not a public card field");
   assert.equal(sourceDetail.pricePopover?.triggerLabel, '5 500 ₽');
   assert.equal(sourceDetail.hasFriendlySubscriptionTag, true);
   assert.equal(sourceDetail.summerSubscriptionOffer?.id, 'summer-pass');
