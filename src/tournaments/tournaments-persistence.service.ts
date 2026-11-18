@@ -296,7 +296,8 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
 
   async updateCustomTournament(
     id: string,
-    mutation: UpdateCustomTournamentMutation
+    mutation: UpdateCustomTournamentMutation,
+    admissionPreimage?: CustomTournament
   ): Promise<CustomTournament | null> {
     const collection = await this.collection();
     const existing = (await collection.findOne(this.buildIdFilter(id))) as MongoCustomTournamentDocument | null;
@@ -304,6 +305,13 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       return null;
     }
 
+    if (admissionPreimage) {
+      const observed = this.toCustomTournament(existing);
+      const keys = ['updatedAt', 'accessLevels', 'levelTolerance', 'participants', 'waitlist'] as const;
+      if (!observed || keys.some(key => JSON.stringify(observed[key]) !== JSON.stringify(admissionPreimage[key]))) {
+        throw new ConflictException({ code: 'TOURNAMENT_RULE_CHANGED' });
+      }
+    }
     const now = new Date().toISOString();
     const setPayload: Record<string, unknown> = {
       updatedAt: now
@@ -498,7 +506,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     const organizerAdopted = Object.prototype.hasOwnProperty.call(existing, 'tournamentOrganizerV1')
       || (Object.prototype.hasOwnProperty.call(existing, 'tournamentChatV1') || Object.prototype.hasOwnProperty.call(existing, 'tournamentChatReadV1'));
     const changed = await collection.updateOne({ ...this.buildIdFilter(id), localParticipationOperations: { $exists: false },
-      ...(organizerAdopted ? { $expr: { $eq: ['$$ROOT', { $literal: existing }] } }
+      ...(organizerAdopted || admissionPreimage ? { $expr: { $eq: ['$$ROOT', { $literal: existing }] } }
         : { tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false }, tournamentChatReadV1: { $exists: false } })
     }, { $set: setPayload });
     if (changed.matchedCount !== 1) throw new ConflictException({ code: 'TOURNAMENT_LOCAL_OWNER_REQUIRED' });
@@ -569,13 +577,16 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
   async readPublicAdmissionRule(id: string): Promise<TournamentAdmissionRule | null> {
     const collection = await this.collection(false);
     const row = await collection.findOne(this.buildIdFilter(id), {
-      projection: { _id: 0, gender: 1, updatedAt: 1 }, readPreference: 'primary',
+      projection: { _id: 0, gender: 1, updatedAt: 1, accessLevels: 1, levelTolerance: 1 }, readPreference: 'primary',
       readConcern: { level: 'majority' }, maxTimeMS: 5000
     });
     if (!row || !['MALE', 'FEMALE', 'MIXED'].includes(String(row.gender))
       || typeof row.gender !== 'string' || typeof row.updatedAt !== 'string'
       || !Number.isFinite(Date.parse(row.updatedAt))) return null;
-    return { gender: row.gender as TournamentAdmissionRule['gender'], updatedAt: row.updatedAt };
+    if (!Array.isArray(row.accessLevels) || row.accessLevels.some(x => typeof x !== 'string')
+      || (row.levelTolerance != null && (typeof row.levelTolerance !== 'number' || !Number.isFinite(row.levelTolerance)))) return null;
+    return { gender: row.gender as TournamentAdmissionRule['gender'], updatedAt: row.updatedAt,
+      accessLevels: row.accessLevels, ...(row.levelTolerance != null ? { levelTolerance: row.levelTolerance as number } : {}) };
   }
 
   async appendPublicWaitlistWithAdmission(
@@ -583,7 +594,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
   ): Promise<CustomTournament | null> {
     const collection = await this.collection();
     const row = await collection.findOneAndUpdate({
-      ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false }, tournamentChatReadV1: { $exists: false }, gender: rule.gender, updatedAt: rule.updatedAt,
+      ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false }, tournamentChatReadV1: { $exists: false }, gender: rule.gender, updatedAt: rule.updatedAt, ...(rule.accessLevels ? { accessLevels: rule.accessLevels, levelTolerance: rule.levelTolerance ?? { $in: [null, 0] } } : {}),
       status: { $nin: [TournamentStatus.FINISHED, TournamentStatus.CANCELED, 'CANCELLED'] },
       participants: { $not: { $elemMatch: { phone } } },
       waitlist: { $not: { $elemMatch: { phone } } },
@@ -609,7 +620,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     const document = await collection.findOneAndUpdate(
       {
         ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false }, tournamentChatReadV1: { $exists: false },
-        ...(admissionRule ? { gender: admissionRule.gender, updatedAt: admissionRule.updatedAt } : {}),
+        ...(admissionRule ? { gender: admissionRule.gender, updatedAt: admissionRule.updatedAt, ...(admissionRule.accessLevels ? { accessLevels: admissionRule.accessLevels, levelTolerance: admissionRule.levelTolerance ?? { $in: [null, 0] } } : {}) } : {}),
         status: { $nin: [TournamentStatus.FINISHED, TournamentStatus.CANCELED, 'CANCELLED'] },
         participants: { $not: { $elemMatch: { phone } } },
         waitlist: { $not: { $elemMatch: { phone } } },
@@ -1001,7 +1012,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     const document = await collection.findOneAndUpdate(
       {
         ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false }, tournamentChatReadV1: { $exists: false },
-        ...(admissionRule ? { gender: admissionRule.gender, updatedAt: admissionRule.updatedAt } : {}),
+        ...(admissionRule ? { gender: admissionRule.gender, updatedAt: admissionRule.updatedAt, ...(admissionRule.accessLevels ? { accessLevels: admissionRule.accessLevels, levelTolerance: admissionRule.levelTolerance ?? { $in: [null, 0] } } : {}) } : {}),
         status: { $nin: [TournamentStatus.FINISHED, TournamentStatus.CANCELED, 'CANCELLED'] },
         participants: { $not: { $elemMatch: { phone } } },
         waitlist: { $not: { $elemMatch: { phone } } },
@@ -1374,7 +1385,12 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       createdAt: this.pickString(existing.createdAt)
     });
 
-    const changed = await collection.updateOne({ ...this.buildDocumentFilter(existing), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false }, tournamentChatReadV1: { $exists: false } }, {
+    // Only an empty, unrestricted shell can be restored automatically. A malformed existing
+    // tournament must not lose its saved rule or roster through a repeated import.
+    const changed = await collection.updateOne({ ...this.buildDocumentFilter(existing),
+      accessLevels: { $eq: [] }, participants: { $eq: [] }, waitlist: { $eq: [] },
+      $expr: { $eq: ['$$ROOT', { $literal: existing }] },
+      localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false }, tournamentChatReadV1: { $exists: false } }, {
       $set: payload
     });
     if (changed.matchedCount !== 1) throw new ConflictException({ code: 'TOURNAMENT_LOCAL_OWNER_REQUIRED' });

@@ -249,7 +249,7 @@ export class TournamentServerBookingCoordinator {
       if (existing.idempotencyKey !== idempotencyKey && existing.state === 'BOOKING' && !this.leaseExpired(existing)) {
         throw new TournamentServerBookingError('SERVER_BOOKING_IN_PROGRESS', 409, 'Запись уже выполняется.');
       }
-      return this.view(await this.resume(existing, admission));
+      return this.view(await this.resume(existing, admission, () => this.ports.admission.admit(tournamentRef, authorizationHeader)));
     }
     if (!admission.decision.allowed || admission.otherRefusal) return this.refusal(admission);
     const { exerciseId, studioId } = admission;
@@ -285,10 +285,10 @@ export class TournamentServerBookingCoordinator {
       const current = await this.ports.store.find(id);
       if (!current) throw new TournamentServerBookingError('SERVER_BOOKING_STORE_CONFLICT', 409, 'Повторите попытку.');
       if (TERMINAL.has(current.state)) return this.view(current);
-      return this.view(await this.resume(current, admission));
+      return this.view(await this.resume(current, admission, () => this.ports.admission.admit(tournamentRef, authorizationHeader)));
     }
     this.log('tournament_server_booking_admitted', { tournamentId: doc.tournamentId, generation: doc.generation, ruleVersion: doc.startDecision.ruleVersion });
-    return this.view(await this.resume(doc, admission));
+    return this.view(await this.resume(doc, admission, () => this.ports.admission.admit(tournamentRef, authorizationHeader)));
   }
 
   /** Read-only status plus the same read-based recovery as a join retry. */
@@ -322,11 +322,12 @@ export class TournamentServerBookingCoordinator {
 
   private async resume(
     doc: TournamentServerBookingAttempt,
-    admission: TournamentServerBookingAdmission
+    admission: TournamentServerBookingAdmission,
+    refresh: () => Promise<TournamentServerBookingAdmission>
   ): Promise<TournamentServerBookingAttempt> {
     let current = doc;
     for (let step = 0; step < 6; step += 1) {
-      const next = await this.advance(current, admission);
+      const next = await this.advance(current, admission, refresh);
       if (!next) {
         // Lost a CAS: another request moved the attempt. Report what is stored now.
         return (await this.ports.store.find(current._id)) ?? current;
@@ -340,12 +341,20 @@ export class TournamentServerBookingCoordinator {
   /** One transition. Returns the same object when nothing more can happen in this request. */
   private async advance(
     doc: TournamentServerBookingAttempt,
-    admission: TournamentServerBookingAdmission
+    admission: TournamentServerBookingAdmission,
+    refresh: () => Promise<TournamentServerBookingAdmission>
   ): Promise<TournamentServerBookingAttempt | null> {
     switch (doc.state) {
       case 'ADMITTED': {
         // Fresh decision immediately before the only provider write of this generation.
-        const fresh = admission.decision;
+        const checked = await refresh();
+        if (checked.tournamentId !== doc.tournamentId || checked.actor.clientId !== doc.clientId
+          || checked.exerciseId !== doc.exerciseId || checked.studioId !== doc.studioId
+          || JSON.stringify(checked.price) !== JSON.stringify(doc.price)) {
+          return this.transition(doc, { state: 'REJECTED', errorCode: 'TOURNAMENT_RULE_CHANGED' });
+        }
+        admission = checked;
+        const fresh = checked.decision;
         if (!fresh.allowed || admission.otherRefusal) {
           return this.transition(doc, {
             state: 'REJECTED',
@@ -383,6 +392,9 @@ export class TournamentServerBookingCoordinator {
         return this.leaseExpired(doc) ? this.recoverBooking(doc) : doc;
       case 'BOOKING_UNKNOWN':
         return this.recoverBooking(doc);
+      case 'PAYMENT_CREATING':
+        return this.leaseExpired(doc)
+          ? this.transition(doc, { state: 'PAYMENT_UNKNOWN', errorCode: 'CHECKOUT_RESULT_UNKNOWN' }) : doc;
       case 'BOOKED': {
         const claimed = await this.transition(doc, { state: 'PAYMENT_CREATING' });
         if (!claimed || !claimed.bookingId) return null;
@@ -415,7 +427,7 @@ export class TournamentServerBookingCoordinator {
       }
       default:
         // PAYMENT_CREATING, PAYMENT_UNKNOWN, PAYMENT_PENDING, CONFIRMED and terminal states are
-        // reported as stored. Payment confirmation comes from the existing Viva status sync.
+        // reported as stored. Exact payment settlement readback is an activation prerequisite.
         return doc;
     }
   }
@@ -428,8 +440,10 @@ export class TournamentServerBookingCoordinator {
     } catch {
       found = 'UNAVAILABLE';
     }
-    if (found && found !== 'UNAVAILABLE' && PROVIDER_ID.test(found.bookingId)) {
-      return this.transition(doc, { state: 'BOOKED', bookingId: found.bookingId, errorCode: null });
+    // Viva exposes no operation key here. A matching attendee is not evidence that this
+    // attempt created it; adopting it could charge an earlier/admin booking again.
+    if (found && found !== 'UNAVAILABLE') {
+      return this.transition(doc, { state: 'BOOKING_UNKNOWN', errorCode: 'BOOKING_ATTRIBUTION_REQUIRED' });
     }
     if (doc.state === 'BOOKING') {
       return this.transition(doc, { state: 'BOOKING_UNKNOWN', errorCode: found === 'UNAVAILABLE' ? 'RECOVERY_READ_UNAVAILABLE' : 'BOOKING_NOT_VISIBLE' });

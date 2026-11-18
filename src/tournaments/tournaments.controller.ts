@@ -470,6 +470,7 @@ export class TournamentsController {
     participant?: { status?: string };
   }): {
     status: 'NONE' | 'REGISTERED' | 'WAITLIST';
+    code: string;
     canRegister: boolean;
     canCancel: boolean;
     message: string;
@@ -487,6 +488,7 @@ export class TournamentsController {
           : 'NONE';
     return {
       status,
+      code: outcome.code,
       canRegister: status === 'NONE' && outcome.ok !== false,
       canCancel: status !== 'NONE',
       message: outcome.message

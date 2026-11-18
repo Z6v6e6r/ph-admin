@@ -147,10 +147,10 @@ async function main() {
     const current = await allowed.service.status('level-cup', 'Bearer synthetic');
     assert.equal(current.state, 'PAYMENT_PENDING');
   });
-  // Level gate not enforced: server booking does not run.
+  // An absent rollout variable still enforces the owner gate.
   await withEnv({ TOURNAMENT_SERVER_BOOKING_MODE: 'enabled', TOURNAMENT_LEVEL_ADMISSION_MODE: undefined }, async () => {
     const h = build(tournament(price), 3.31);
-    await status(h.service.join('level-cup', 'Bearer synthetic', 'fixture-key-0001'), 503, 'SERVER_BOOKING_REQUIRES_LEVEL_ENFORCE');
+    assert.equal((await h.service.join('level-cup', 'Bearer synthetic', 'fixture-key-0001')).state, 'PAYMENT_PENDING');
   });
   console.log('tournament-server-booking service tests passed');
 }

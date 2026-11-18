@@ -16,7 +16,7 @@ export enum TournamentStatus {
 export type TournamentSource = 'LK_PADELHUB' | 'VIVA' | 'CUSTOM';
 // Internal identity capability; symbols never enter public JSON. Only service-created identities are accepted.
 export const TRUSTED_TOURNAMENT_CLIENT = Symbol('trusted-tournament-client');
-export interface TournamentAdmissionRule { gender: TournamentGender; updatedAt: string }
+export interface TournamentAdmissionRule { gender: TournamentGender; updatedAt: string; accessLevels?: string[]; levelTolerance?: number }
 export interface TournamentGenderDecision extends TournamentAdmissionRule {
   playerGender: 'MALE' | 'FEMALE' | null; evaluatedAt: string;
 }

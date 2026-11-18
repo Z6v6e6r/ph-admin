@@ -114,6 +114,40 @@ async function rejects(promise: Promise<unknown>, code: string, status: number) 
 }
 
 async function main() {
+  // The initial decision cannot survive a level/target change before the provider write.
+  for (const change of ['rating', 'exercise', 'price'] as const) {
+    const h = harness();
+    const insert = h.store.insert.bind(h.store);
+    h.store.insert = async (doc) => {
+      const stored = await insert(doc);
+      if (change === 'rating') h.state.rating = 5;
+      if (change === 'exercise') h.state.exerciseId = 'different-exercise';
+      if (change === 'price') h.state.price = { ...PRICE, baseAmountMinor: 160000 };
+      return stored;
+    };
+    const result = await h.coordinator.join('t-1', 'Bearer x', KEY);
+    assert.ok(!('refused' in result) && result.state === 'REJECTED');
+    assert.equal(h.calls.admit, 2, 'actual fresh read, not the first decision reused');
+    assert.equal(h.calls.booking + h.calls.checkout, 0);
+  }
+  // A crashed checkout is explicitly held after its lease; never repost it.
+  {
+    const h = harness();
+    await h.coordinator.join('t-1', 'Bearer x', KEY);
+    const stored = h.store.rows.values().next().value!;
+    stored.state = 'PAYMENT_CREATING';
+    h.tick(TOURNAMENT_SERVER_BOOKING_LEASE_MS + 1);
+    const held = await h.coordinator.join('t-1', 'Bearer x', KEY);
+    assert.ok(!('refused' in held) && held.state === 'PAYMENT_UNKNOWN');
+    assert.equal(h.calls.checkout, 1);
+  }
+  {
+    const adapter = new VivaAdminTournamentBookingAdapter({
+      listExerciseBookings: async () => [{ id: 'old', exerciseId: 'e', clientId: 'c', status: 'CANCELLED' }],
+      createBookingPaymentCheckout: async () => { throw Error('must not charge'); }
+    });
+    assert.equal(await adapter.findBooking({ clientId: 'c', exerciseId: 'e' }), null);
+  }
   // Switch: unset/unknown is DISABLED.
   assert.equal(readTournamentServerBookingMode({}), 'DISABLED');
   assert.equal(readTournamentServerBookingMode({ TOURNAMENT_SERVER_BOOKING_MODE: 'yes' }), 'DISABLED');
@@ -237,12 +271,13 @@ async function main() {
     assert.equal(h.calls.booking, 1);
     h.state.find = async () => ({ bookingId: 'booking-late' });
     const recovered = await h.coordinator.status('t-1', 'Bearer x');
-    assert.equal(recovered.state, 'BOOKED');
-    assert.equal(recovered.bookingId, 'booking-late');
+    assert.equal(recovered.state, 'BOOKING_UNKNOWN');
+    assert.equal(recovered.bookingId, null);
+    assert.equal(recovered.errorCode, 'BOOKING_ATTRIBUTION_REQUIRED');
     const paid = await h.coordinator.join('t-1', 'Bearer x', KEY);
-    assert.ok(!('refused' in paid) && paid.state === 'PAYMENT_PENDING');
+    assert.ok(!('refused' in paid) && paid.state === 'BOOKING_UNKNOWN');
     assert.equal(h.calls.booking, 1);
-    assert.equal(h.calls.checkout, 1);
+    assert.equal(h.calls.checkout, 0);
   }
   // Provider throws: same as unknown.
   {

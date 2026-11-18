@@ -4,9 +4,9 @@ import { PLAYER_RATING_PRECISION, ratingNumericToGrade } from '../player-ratings
 /**
  * Tournament level admission, version 2.
  *
- * One server-side rule for every CUP route that admits a player into a tournament. Clients
- * (LK1 browser, Node-RED gateways, composite purchase) receive the decision; they never
- * re-implement it. The player level always comes from CUP `player_rating_state`; this module
+ * Shared owner rule for the CUP admission routes. LK1 Node-RED and browser checkout still
+ * require the integration documented in docs/tournament-level-admission.md; clients must
+ * consume the owner decision instead of re-implementing it. The player level always comes from CUP `player_rating_state`; this module
  * has no provider dependency and must not gain one (see test/tournament-level-admission.test.ts).
  */
 
@@ -54,7 +54,7 @@ export const TOURNAMENT_LEVEL_GRID: ReadonlyArray<{ token: string; scaled: numbe
  */
 export const LEVEL_TOLERANCE_MAX = Math.max(...TOURNAMENT_LEVEL_GRID_BANDS.map((band) => band.max - band.min));
 /** Default suggested for newly created tournaments; absent field on existing rows means 0. */
-export const LEVEL_TOLERANCE_NEW_TOURNAMENT_DEFAULT = 0.2;
+export const LEVEL_TOLERANCE_NEW_TOURNAMENT_DEFAULT = 0;
 
 export type TournamentLevelRule =
   | { kind: 'NONE' }
@@ -64,17 +64,9 @@ export type TournamentLevelRule =
 
 export type TournamentLevelAdmissionMode = 'LEGACY' | 'ENFORCE' | 'OFF';
 
-/**
- * Rollout switch. Unset/unknown keeps the pre-v2 behavior byte-for-byte (LEGACY). ENFORCE turns on
- * the continuous range, the tolerance and the checks on the energy/subscription/decision routes.
- * OFF is an emergency switch that admits without a level check. No mode deletes settings or
- * participants.
- */
-export function readTournamentLevelAdmissionMode(env: NodeJS.ProcessEnv = process.env): TournamentLevelAdmissionMode {
-  const value = String(env.TOURNAMENT_LEVEL_ADMISSION_MODE ?? '').trim().toLowerCase();
-  if (value === 'enforce') return 'ENFORCE';
-  if (value === 'off') return 'OFF';
-  return 'LEGACY';
+/** Admission is mandatory. Historical rollout settings cannot disable owner enforcement. */
+export function readTournamentLevelAdmissionMode(_env: NodeJS.ProcessEnv = process.env): TournamentLevelAdmissionMode {
+  return 'ENFORCE';
 }
 
 export class LevelToleranceValidationError extends Error {}
@@ -118,7 +110,9 @@ const NUMERIC_TOKEN = /^\d+(?:[.,]\d+)?$/;
 export function parseTournamentLevelRule(accessLevels: unknown): TournamentLevelRule {
   if (accessLevels === undefined || accessLevels === null) return { kind: 'NONE' };
   if (!Array.isArray(accessLevels)) return { kind: 'INVALID', reason: 'NOT_A_LIST' };
-  const items = accessLevels.map((item) => String(item ?? '').trim().toUpperCase()).filter(Boolean);
+  if (accessLevels.some(item => typeof item !== 'string' && typeof item !== 'number'
+    || !String(item).trim())) return { kind: 'INVALID', reason: 'UNKNOWN_TOKEN' };
+  const items = accessLevels.map((item) => String(item).trim().toUpperCase());
   if (items.length === 0) return { kind: 'NONE' };
   const numeric = items.filter((item) => NUMERIC_TOKEN.test(item));
   if (numeric.length > 0 && numeric.length !== items.length) return { kind: 'INVALID', reason: 'MIXED_FORMAT' };

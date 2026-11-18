@@ -30,7 +30,7 @@ function fixture() {
   };
   Object.assign(service,{tournamentsPersistence:persistence,trustedRegistrationIdentities:new WeakMap(),
     lkIdentityService:{verify:async(a:string,t:string)=>{auth++;assert.equal(a,'Bearer fixture');assert.equal(t,'integration-fixture');return {actor:clone(actor)};}},
-    playerRatingsService:{resolveCanonicalLevelByIdentity:async()=>({levelLabel:'C'})},
+    playerRatingsService:{resolveCanonicalLevelByIdentity:async()=>({levelLabel:'3.25',ratingNumeric:3.25})},
     vivaAdminService:{readTournamentProfileSex:async()=> 'MALE'},
     prepareTournamentOwner:async()=>{prepares++;return {status:'RESOLVED',owner:'CUP_CUSTOM',binding:{exerciseId:null,customTournamentId:row.id,customUpdatedAt:row.updatedAt,mappingSha256:'sha256:'+'a'.repeat(64)}};},
     invalidatePublicDirectoryCache:()=>{}

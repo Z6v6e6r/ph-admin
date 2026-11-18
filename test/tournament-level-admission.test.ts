@@ -126,11 +126,11 @@ for (const status of ['MISSING', 'UNKNOWN', 'UNAVAILABLE'] as const) {
   assert.equal(decide(rule(C_SLIDER, 0.2), { status }).allowed, false);
 }
 
-// Modes: unset keeps legacy; OFF admits without deleting anything; only ENFORCE is enforced.
-assert.equal(readTournamentLevelAdmissionMode({}), 'LEGACY');
+// Runtime mode is mandatory regardless of historical rollout settings.
+assert.equal(readTournamentLevelAdmissionMode({}), 'ENFORCE');
 assert.equal(readTournamentLevelAdmissionMode({ TOURNAMENT_LEVEL_ADMISSION_MODE: 'enforce' }), 'ENFORCE');
-assert.equal(readTournamentLevelAdmissionMode({ TOURNAMENT_LEVEL_ADMISSION_MODE: 'off' }), 'OFF');
-assert.equal(readTournamentLevelAdmissionMode({ TOURNAMENT_LEVEL_ADMISSION_MODE: 'typo' }), 'LEGACY');
+assert.equal(readTournamentLevelAdmissionMode({ TOURNAMENT_LEVEL_ADMISSION_MODE: 'off' }), 'ENFORCE');
+assert.equal(readTournamentLevelAdmissionMode({ TOURNAMENT_LEVEL_ADMISSION_MODE: 'typo' }), 'ENFORCE');
 {
   const off = evaluateTournamentLevelAdmission(rule(C_SLIDER, 0), ok(5), { mode: 'OFF' });
   assert.equal(off.allowed, true);

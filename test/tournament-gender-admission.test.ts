@@ -11,7 +11,7 @@ function fixture(gender = 'MALE', sex: 'MALE' | 'FEMALE' | null = 'MALE') {
     name: 'Synthetic', status: 'OPEN', maxPlayers: 4, accessLevels: [], participants: [], waitlist: [],
     details: { booking: { enabled: true, required: true, vivaExerciseId: 'exercise-1', vivaStudioId: 'studio-1', vivaWidgetId: 'iSkq6G' } } };
   const counters = { profile: 0, append: 0, waitlist: 0, reserve: 0, provider: 0 };
-  let raw: any = { gender, updatedAt: NOW };
+  let raw: any = { gender, updatedAt: NOW, accessLevels: [] };
   const persistence: any = {
     isEnabled: () => true,
     readPublicAdmissionRule: async () => raw,
@@ -143,9 +143,9 @@ async function main() {
   {
     const p: any = Object.create(TournamentsPersistenceService.prototype);
     p.buildIdFilter = (id: string) => ({ id });
-    let row: any = { gender: 'MALE', updatedAt: NOW }; const queries: any[] = [];
+    let row: any = { gender: 'MALE', updatedAt: NOW, accessLevels: [] }; const queries: any[] = [];
     p.collection = async (indexes?: boolean) => ({
-      findOne: async (q: any, options: any) => { assert.equal(indexes, false); assert.deepEqual(options.projection, { _id: 0, gender: 1, updatedAt: 1 }); return row; },
+      findOne: async (q: any, options: any) => { assert.equal(indexes, false); assert.deepEqual(options.projection, { _id: 0, gender: 1, updatedAt: 1, accessLevels: 1, levelTolerance: 1 }); return row; },
       findOneAndUpdate: async (q: any) => { queries.push(q); return null; }
     });
     assert.deepEqual(await p.readPublicAdmissionRule('cup'), row);

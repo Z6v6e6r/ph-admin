@@ -59,7 +59,7 @@ function service(row: CustomTournament, rating: ReturnType<typeof ratings>, viva
     {} as never,
     {
       isEnabled: () => true,
-      readPublicAdmissionRule: async () => ({ gender: row.gender, updatedAt: row.updatedAt }),
+      readPublicAdmissionRule: async () => ({ gender: row.gender, updatedAt: row.updatedAt, accessLevels: row.accessLevels, levelTolerance: row.levelTolerance }),
       listCustomTournaments: async () => [row],
       findCustomTournamentById: async (id: string) => (id === row.id ? row : null),
       findCustomTournamentBySlug: async (slug: string) => (slug === row.slug ? row : null),
@@ -148,10 +148,10 @@ async function energyCases(): Promise<void> {
         client: { id: 'client-1', phone: PHONE, levelLabel: '3.2', ratingNumeric: 3.2 } }));
       assert.ok(rating.calls.every((call) => call.clientId === 'client-1' && call.phone === PHONE));
     });
-    // Rollout switch: LEGACY (unset) keeps the previous energy behavior; OFF disables the gate.
+    // Historical rollout settings cannot bypass the mandatory gate.
     current = 5;
-    await withMode(undefined, async () => assert.equal((await run()).ok, true));
-    await withMode('off', async () => assert.equal((await run()).ok, true));
+    await withMode(undefined, async () => refusal('LEVEL_NOT_ALLOWED', 403));
+    await withMode('off', async () => refusal('LEVEL_NOT_ALLOWED', 403));
     // Unrestricted tournament never reads the rating and never refuses.
     const unrestricted = ratings(() => { throw new Error('must not read rating'); });
     await withMode('enforce', async () => {
@@ -174,6 +174,8 @@ async function decisionCases(): Promise<void> {
   await withMode('enforce', async () => {
     const allowed = await svc.getLevelDecisionByTournamentRef('custom-level-1', 'Bearer synthetic');
     assert.equal(allowed.allowed, true);
+    assert.equal(allowed.actorClientId, 'client-1');
+    assert.equal(allowed.exerciseId, 'exercise-level-1');
     assert.equal(allowed.reasonCode, 'LEVEL_ALLOWED');
     assert.deepEqual(allowed.baseRange, { min: 3, max: 3.5 });
     assert.deepEqual(allowed.effectiveRange, { min: 2.8, max: 3.7 });
@@ -189,10 +191,16 @@ async function decisionCases(): Promise<void> {
   await withMode(undefined, async () => {
     current = 5;
     const legacy = await svc.getLevelDecisionByTournamentRef('custom-level-1', 'Bearer synthetic');
-    assert.equal(legacy.enforced, false);
-    assert.equal(legacy.allowed, true);
-    assert.equal(legacy.reasonCode, 'LEVEL_GATE_LEGACY');
+    assert.equal(legacy.enforced, true);
+    assert.equal(legacy.allowed, false);
+    assert.equal(legacy.reasonCode, 'LEVEL_NOT_ALLOWED');
   });
+
+  const unrestricted = service(tournament({ accessLevels: [] }), ratings(() => 5));
+  await assert.rejects(() => unrestricted.getLevelDecisionByTournamentRef('custom-level-1', 'Bearer forged'));
+  const stale = service(tournament(), rating, {}, { readPublicAdmissionRule: async () => null });
+  await assert.rejects(() => stale.getLevelDecisionByTournamentRef('custom-level-1', 'Bearer synthetic'),
+    (e: any) => e.getResponse().code === 'TOURNAMENT_RULE_CHANGED');
 
   // registration/me: only a new registration is gated; existing participants are not re-evaluated.
   const registrationFor = (status: 'NONE' | 'REGISTERED') => ({
@@ -223,7 +231,7 @@ async function decisionCases(): Promise<void> {
   await withMode(undefined, async () => {
     current = 4.2;
     const legacy = await controller('NONE').getMyRegistration('custom-level-1', request);
-    assert.equal(legacy.canRegister, true, 'LEGACY must not change the LK button');
+    assert.equal(legacy.canRegister, false, 'missing mode cannot bypass eligibility');
   });
 }
 
@@ -243,14 +251,14 @@ async function purchaseCases(): Promise<void> {
   await withMode('enforce', async () => {
     // Rating 4.5 is now outside 2.80–3.70, but the paid participation is finalized, not lost.
     const result = await svc.createPublicJoinPurchaseTransaction('level-cup', {
-      phone: PHONE, name: 'Synthetic', levelLabel: '4.5', selectedPurchaseOptionId: 'one-time'
+      phone: PHONE, name: 'Synthetic', levelLabel: '4.5', selectedPurchaseOptionId: 'one-time', vivaAuthorizationHeader: 'Bearer synthetic'
     });
     assert.equal(result.code, 'REGISTERED');
     assert.equal(finalized, 1);
     // Without a started payment the same player is refused before any payment exists.
     svc.findPendingJoinPayment = () => null;
     const refused = await svc.createPublicJoinPurchaseTransaction('level-cup', {
-      phone: PHONE, name: 'Synthetic', levelLabel: '4.5', selectedPurchaseOptionId: 'one-time'
+      phone: PHONE, name: 'Synthetic', levelLabel: '4.5', selectedPurchaseOptionId: 'one-time', vivaAuthorizationHeader: 'Bearer synthetic'
     });
     assert.equal(refused.ok, false);
     assert.equal(refused.code, 'LEVEL_NOT_ALLOWED');
@@ -262,27 +270,30 @@ async function purchaseCases(): Promise<void> {
 // ---- Registration route (registerPublicParticipant) ----------------------------------------
 
 async function registrationCases(): Promise<void> {
-  const rating = ratings(() => null);
+  let current: Rating = null;
+  const rating = ratings(() => current);
   let appended = 0;
   const row = tournament({ details: {} as never });
   const svc = service(row, rating, {}, {
     appendPublicParticipantIfCapacity: async () => { appended += 1; return { ...row, participants: [{ phone: PHONE, name: 'S' }] }; }
   }) as any;
   svc.fetchVivaJoinPurchaseOptions = async () => [];
-  const register = (levelLabel?: string) => svc.registerPublicParticipant('level-cup', { phone: PHONE, name: 'S', levelLabel });
+  const register = (levelLabel?: string) => svc.registerPublicParticipant('level-cup', { phone: PHONE, name: 'S', levelLabel, vivaAuthorizationHeader: 'Bearer synthetic' });
   await withMode('enforce', async () => {
     for (const [level, code] of [['3.80001', 'LEVEL_NOT_ALLOWED'], [undefined, 'PLAYER_LEVEL_REQUIRED']] as const) {
+      current = level === undefined ? null : Number(level);
       const result = await register(level);
       assert.equal(result.ok, false);
       assert.equal(result.code, code);
     }
     assert.equal(appended, 0, 'refused registrations write nothing');
     const corrupt = service(tournament({ accessLevels: ['3', '3.5'] }), rating) as any;
-    const invalid = await corrupt.registerPublicParticipant('level-cup', { phone: PHONE, name: 'S', levelLabel: '3.2' });
+    const invalid = await corrupt.registerPublicParticipant('level-cup', { phone: PHONE, name: 'S', levelLabel: '3.2', vivaAuthorizationHeader: 'Bearer synthetic' });
     assert.equal(invalid.code, 'ACTIVITY_LEVEL_INVALID');
   });
   await withMode(undefined, async () => {
-    // LEGACY keeps the audited behaviour (documents why ENFORCE is required for the fix).
+    // Missing setting still checks current CUP state.
+    current = 5;
     const legacy = await register('3.31');
     assert.equal(legacy.code, 'LEVEL_NOT_ALLOWED');
   });
@@ -345,10 +356,10 @@ async function persistenceCases(): Promise<void> {
   }
   assert.equal(collection.rows[0].levelTolerance, 0.2);
 
-  // New tournament: default 0.2 when omitted; explicit 0 is kept.
+  // New tournament: default 0 when omitted; explicit 0 is kept.
   const created = await persistence.buildCreateDocument({ name: 'New', tournamentType: 'AMERICANO', accessLevels: C_SLIDER,
     gender: 'MIXED', maxPlayers: 8, participants: [], waitlist: [], allowedManagerPhones: [] });
-  assert.equal(created.levelTolerance, 0.2);
+  assert.equal(created.levelTolerance, 0);
   const strict = await persistence.buildCreateDocument({ name: 'Strict', tournamentType: 'AMERICANO', accessLevels: C_SLIDER,
     levelTolerance: 0, gender: 'MIXED', maxPlayers: 8, participants: [], waitlist: [], allowedManagerPhones: [] });
   assert.equal(strict.levelTolerance, 0);

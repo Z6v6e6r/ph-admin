@@ -57,7 +57,8 @@ export class VivaAdminTournamentBookingAdapter implements VivaAdminBookingPort, 
       const bookingId = text(item.bookingId) ?? text(item.id) ?? text(item.uuid);
       const exerciseId = text(item.exerciseId) ?? text(record(item.exercise).id);
       const clientId = text(item.clientId) ?? text(record(item.client).id);
-      const cancelled = item.isCancelled === true || item.cancelled === true || item.canceled === true;
+      const cancelled = item.isCancelled === true || item.cancelled === true || item.canceled === true
+        || ['CANCELLED', 'CANCELED', 'CANCEL', 'DELETED', 'REJECTED', 'REFUNDED'].includes(String(item.status ?? item.state ?? '').trim().toUpperCase());
       return bookingId && exerciseId === input.exerciseId && clientId === input.clientId && !cancelled ? [bookingId] : [];
     });
     const unique = Array.from(new Set(matches));
