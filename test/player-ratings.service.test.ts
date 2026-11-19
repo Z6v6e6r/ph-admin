@@ -109,6 +109,24 @@ async function main(): Promise<void> {
     previousState.padlHubProjectionRevision,
     'disabled projection does not advance the PadlHub revision'
   );
+
+  written.nextState.rating = 'C';
+  const align = {
+    ratingNumeric: 3.55, expectedPreviousGrade: 'C' as const, expectedClientId: state.clientId,
+    expectedLastEventId: written.nextState.lastEventId, reason: 'Приравнивание буквы к действующей шкале',
+    idempotencyKey: 'synthetic-alignment-1'
+  };
+  await assert.rejects(() => disabledService.change(state.playerKey, { ...align, ratingNumeric: 4 }, actor as any),
+    (error: any) => error?.status === 409);
+  const aligned = await disabledService.change(state.playerKey, align, actor as any);
+  assert.deepEqual([aligned.state.ratingNumeric, aligned.event.delta, aligned.event.gradeBefore, aligned.event.gradeAfter],
+    [3.55, 0, 'C', 'C+']);
+  assert.deepEqual(written.expectedGradeAlignment, {
+    previousGrade: 'C', clientId: state.clientId, previousEventId: align.expectedLastEventId
+  });
+  assert.equal((await disabledService.change(state.playerKey, align, actor as any)).event.id, aligned.event.id);
+  await assert.rejects(() => disabledService.change(state.playerKey, { ...align, expectedLastEventId: 'other' }, actor as any),
+    (error: any) => error?.status === 409);
   console.log('Player ratings service test passed');
 }
 

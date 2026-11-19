@@ -1,4 +1,5 @@
-import { IsNumber, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { IsIn, IsNumber, IsString, Matches, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
+import { PlayerRatingGrade } from '../player-ratings.types';
 
 export class ChangePlayerRatingDto {
   @IsNumber({ maxDecimalPlaces: 5 })
@@ -15,6 +16,14 @@ export class ChangePlayerRatingDto {
   @MinLength(1)
   @MaxLength(200)
   expectedLastEventId!: string;
+
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsIn(['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'])
+  expectedPreviousGrade?: PlayerRatingGrade;
+
+  @ValidateIf((object: ChangePlayerRatingDto, value) => value !== undefined || object.expectedPreviousGrade !== undefined)
+  @Matches(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/)
+  expectedClientId?: string;
 
   @IsString()
   @MinLength(12)

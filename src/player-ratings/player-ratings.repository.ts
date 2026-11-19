@@ -19,11 +19,14 @@ import {
   PadlHubPlayerLevelProjectionOutboxDocument,
   PadlHubPlayerLevelProjectionPayload,
   PlayerRatingProjectionOutboxDocument,
+  PlayerRatingSource,
   PlayerRatingStateDocument
 } from './player-ratings.types';
 import { PlayerRatingActor } from './player-ratings.types';
+import { PlayerLevelPilotBinding, readPlayerLevelPilot } from './player-level-projection-pilot';
 
 export class PlayerRatingRepository {
+  private readonly projectionPilot = readPlayerLevelPilot();
   private readonly padlHubProjectionEnabled = readBoolean(
     process.env.PADLHUB_PLAYER_LEVEL_PROJECTION_ENABLED
   );
@@ -127,6 +130,8 @@ export class PlayerRatingRepository {
     nextState: PlayerRatingStateDocument;
     expectedLastEventId: string;
     compatibility: Document;
+    expectedGradeAlignment?: NonNullable<PlayerRatingSource['gradeAlignment']>;
+    expectedProjectionRevision?: number;
     outbox?: PlayerRatingProjectionOutboxDocument;
     padlHubOutbox?: PadlHubPlayerLevelProjectionOutboxDocument;
   }): Promise<'ok' | 'conflict'> {
@@ -137,15 +142,28 @@ export class PlayerRatingRepository {
     try {
       await session.withTransaction(async () => {
         result = 'conflict';
+        const alignment = input.expectedGradeAlignment;
+        const preimage: Filter<PlayerRatingStateDocument> = {
+          playerKey: input.nextState.playerKey,
+          lastEventId: input.expectedLastEventId,
+          ...(alignment ? {
+            ownership: 'CUP_CANONICAL' as const,
+            clientId: alignment.clientId,
+            ratingNumeric: input.nextState.ratingNumeric,
+            rating: alignment.previousGrade
+          } : {})
+        };
         const current = await this.states().findOne(
-          { playerKey: input.nextState.playerKey },
-          { session, projection: { lastEventId: 1 } }
+          preimage,
+          { session, projection: { lastEventId: 1, padlHubProjectionRevision: 1 } }
         );
-        if (!current || current.lastEventId !== input.expectedLastEventId) return;
+        if (!current || current.lastEventId !== input.expectedLastEventId
+          || (input.expectedProjectionRevision !== undefined
+            && (current.padlHubProjectionRevision ?? 0) !== input.expectedProjectionRevision)) return;
 
         await this.events().insertOne(input.event, { session });
         const stateResult = await this.states().replaceOne(
-          { playerKey: input.nextState.playerKey, lastEventId: input.expectedLastEventId },
+          preimage,
           input.nextState,
           { session }
         );
@@ -207,11 +225,14 @@ export class PlayerRatingRepository {
     return error instanceof MongoServerError && error.code === 11000;
   }
 
-  async listStatesForPadlHubReconcile(afterPlayerKey: string | undefined, limit: number): Promise<PlayerRatingStateDocument[]> {
+  async listStatesForPadlHubReconcile(
+    afterPlayerKey: string | undefined, limit: number, pilot?: readonly PlayerLevelPilotBinding[]
+  ): Promise<PlayerRatingStateDocument[]> {
     return this.states()
       .find(
         {
           clientId: { $type: 'string' },
+          ...(pilot ? { $or: [...pilot] } : {}),
           ...(afterPlayerKey ? { playerKey: { $gt: afterPlayerKey } } : {})
         } as Filter<PlayerRatingStateDocument>,
         { projection: { _id: 0 } }
@@ -224,30 +245,43 @@ export class PlayerRatingRepository {
   async ensurePadlHubProjectionDesired(
     state: PlayerRatingStateDocument,
     payload: PadlHubPlayerLevelProjectionPayload
-  ): Promise<void> {
+  ): Promise<'pilot-binding-conflict' | void> {
+    const preimage = { playerKey: state.playerKey, clientId: payload.player.externalClientId, lastEventId: state.lastEventId };
     const existing = await this.padlHubOutbox().findOne(
       { playerKey: state.playerKey },
-      { projection: { _id: 0, desiredRevision: 1, 'desired.sourceEventId': 1 } }
+      { projection: { _id: 0, desiredRevision: 1, 'desired.sourceEventId': 1, 'desired.player.externalClientId': 1, inFlight: 1 } }
     );
-    if (existing && existing.desiredRevision >= payload.sourceRevision) {
-      if (existing.desired.sourceEventId === payload.sourceEventId) return;
+    if (existing && this.projectionPilot && (
+      existing.desired?.player?.externalClientId !== payload.player.externalClientId
+      || (existing.inFlight && existing.inFlight.player?.externalClientId !== payload.player.externalClientId)
+      || !Number.isSafeInteger(existing.desiredRevision) || existing.desiredRevision < 0
+    )) {
+      return 'pilot-binding-conflict';
+    }
+    if (existing && existing.desiredRevision >= payload.sourceRevision && existing.desired.sourceEventId === payload.sourceEventId) {
+      if (existing.desiredRevision > payload.sourceRevision) {
+        await this.states().updateOne(preimage, { $max: { padlHubProjectionRevision: existing.desiredRevision } });
+      }
+      return;
     }
     const effectiveRevision = existing && existing.desired.sourceEventId !== payload.sourceEventId
       ? Math.max(payload.sourceRevision, existing.desiredRevision + 1)
       : payload.sourceRevision;
-    const stateRevision = await this.states().updateOne(
-      { playerKey: state.playerKey, lastEventId: state.lastEventId },
-      { $set: { padlHubProjectionRevision: effectiveRevision } }
+    const current = await this.states().findOneAndUpdate(
+      preimage,
+      { $max: { padlHubProjectionRevision: effectiveRevision } },
+      { returnDocument: 'after', projection: { padlHubProjectionRevision: 1 } }
     );
-    if (stateRevision.matchedCount !== 1) return;
+    if (!current) return;
+    const sourceRevision = current.padlHubProjectionRevision ?? effectiveRevision;
     const effectivePayload: PadlHubPlayerLevelProjectionPayload = {
       ...payload,
-      sourceRevision: effectiveRevision
+      sourceRevision
     };
     const now = new Date().toISOString();
     const document: PadlHubPlayerLevelProjectionOutboxDocument = {
       playerKey: state.playerKey,
-      desiredRevision: effectiveRevision,
+      desiredRevision: sourceRevision,
       deliveredRevision: -1,
       desired: effectivePayload,
       status: 'PENDING',
@@ -264,11 +298,18 @@ export class PlayerRatingRepository {
     leaseOwner: string;
     now: string;
     leaseUntil: string;
+    pilot?: readonly PlayerLevelPilotBinding[];
   }): Promise<PadlHubPlayerLevelProjectionOutboxDocument | null> {
     const result = await this.padlHubOutbox().findOneAndUpdate(
       {
+        ...(input.pilot ? {
+          desiredRevision: { $type: 'number', $gte: 0 },
+          $and: [{ $or: input.pilot.map(binding => ({
+            playerKey: binding.playerKey, ...pilotOutboxIdentity(binding.clientId)
+          })) }]
+        } : {}),
         $or: [
-          { status: { $in: ['PENDING', 'FAILED_RETRYABLE'] }, nextAttemptAt: { $lte: input.now } },
+          { status: { $in: ['PENDING', 'FAILED_RETRYABLE', 'WAITING_FOR_MAPPING'] }, nextAttemptAt: { $lte: input.now } },
           { status: 'DELIVERING', leaseUntil: { $lte: input.now } }
         ]
       } as Filter<PadlHubPlayerLevelProjectionOutboxDocument>,
@@ -331,6 +372,7 @@ export class PlayerRatingRepository {
     now: string;
     nextAttemptAt: string;
     errorCode: string;
+    waitingForMapping?: boolean;
   }): Promise<boolean> {
     const result = await this.padlHubOutbox().updateOne(
       {
@@ -346,11 +388,16 @@ export class PlayerRatingRepository {
               $cond: [
                 { $gt: ['$desiredRevision', input.revision] },
                 'PENDING',
-                { $cond: [{ $gte: ['$attempts', '$maxAttempts'] }, 'DEAD', 'FAILED_RETRYABLE'] }
+                input.waitingForMapping
+                  ? 'WAITING_FOR_MAPPING'
+                  : { $cond: [{ $gte: ['$attempts', '$maxAttempts'] }, 'DEAD', 'FAILED_RETRYABLE'] }
               ]
             },
             attempts: {
-              $cond: [{ $gt: ['$desiredRevision', input.revision] }, 0, '$attempts']
+              $cond: [
+                { $gt: ['$desiredRevision', input.revision] }, 0,
+                input.waitingForMapping ? { $max: [0, { $subtract: ['$attempts', 1] }] } : '$attempts'
+              ]
             },
             nextAttemptAt: {
               $cond: [
@@ -379,13 +426,18 @@ export class PlayerRatingRepository {
 
   async retryPadlHubProjection(
     playerKey: string,
-    actor: PlayerRatingActor
+    actor: PlayerRatingActor,
+    pilotState?: Pick<PlayerRatingStateDocument, 'clientId' | 'lastEventId'>
   ): Promise<PadlHubPlayerLevelProjectionOutboxDocument | null> {
     const now = new Date().toISOString();
     return this.padlHubOutbox().findOneAndUpdate(
       {
         playerKey,
-        status: { $in: ['DEAD', 'FAILED_RETRYABLE'] }
+        status: { $in: ['DEAD', 'FAILED_RETRYABLE', 'WAITING_FOR_MAPPING'] },
+        ...(pilotState ? {
+          ...pilotOutboxIdentity(pilotState.clientId ?? ''),
+          'desired.sourceEventId': pilotState.lastEventId
+        } : {})
       } as Filter<PadlHubPlayerLevelProjectionOutboxDocument>,
       {
         $set: {
@@ -428,50 +480,72 @@ export class PlayerRatingRepository {
     const incomingIsNewer = {
       $gt: [document.desiredRevision, { $ifNull: ['$desiredRevision', -1] }]
     };
+    const update = {
+      playerKey: document.playerKey,
+      desiredRevision: {
+        $cond: [incomingIsNewer, document.desiredRevision, '$desiredRevision']
+      },
+      desired: { $cond: [incomingIsNewer, document.desired, '$desired'] },
+      deliveredRevision: { $ifNull: ['$deliveredRevision', document.deliveredRevision] },
+      status: {
+        $cond: [
+          incomingIsNewer,
+          { $cond: [{ $eq: ['$status', 'DELIVERING'] }, 'DELIVERING', 'PENDING'] },
+          '$status'
+        ]
+      },
+      attempts: {
+        $cond: [
+          incomingIsNewer,
+          0,
+          { $ifNull: ['$attempts', 0] }
+        ]
+      },
+      maxAttempts: { $ifNull: ['$maxAttempts', document.maxAttempts] },
+      nextAttemptAt: {
+        $cond: [
+          incomingIsNewer,
+          {
+            $cond: [
+              { $eq: ['$status', 'DELIVERING'] },
+              '$nextAttemptAt',
+              document.nextAttemptAt
+            ]
+          },
+          '$nextAttemptAt'
+        ]
+      },
+      createdAt: { $ifNull: ['$createdAt', document.createdAt] },
+      updatedAt: { $cond: [incomingIsNewer, document.updatedAt, '$updatedAt'] }
+    };
+    // An existing row for the old identity belongs to a separate reconciliation.
+    const pipeline = this.projectionPilot ? [{
+      $replaceWith: {
+        $cond: [
+          { $or: [
+            { $and: [
+              { $eq: [{ $type: '$desiredRevision' }, 'missing'] },
+              { $eq: [{ $type: '$desired' }, 'missing'] },
+              { $eq: [{ $type: '$status' }, 'missing'] }
+            ] },
+            { $and: [
+              { $isNumber: '$desiredRevision' },
+              { $gte: ['$desiredRevision', 0] },
+              { $eq: ['$desired.player.externalClientId', document.desired.player.externalClientId] },
+              { $or: [
+                { $eq: [{ $ifNull: ['$inFlight', null] }, null] },
+                { $eq: ['$inFlight.player.externalClientId', document.desired.player.externalClientId] }
+              ] }
+            ] }
+          ] },
+          { $mergeObjects: ['$$ROOT', update] },
+          '$$ROOT'
+        ]
+      }
+    }] : [{ $set: update }];
     await this.padlHubOutbox().updateOne(
       { playerKey: document.playerKey },
-      [
-        {
-          $set: {
-            playerKey: document.playerKey,
-            desiredRevision: {
-              $cond: [incomingIsNewer, document.desiredRevision, '$desiredRevision']
-            },
-            desired: { $cond: [incomingIsNewer, document.desired, '$desired'] },
-            deliveredRevision: { $ifNull: ['$deliveredRevision', document.deliveredRevision] },
-            status: {
-              $cond: [
-                incomingIsNewer,
-                { $cond: [{ $eq: ['$status', 'DELIVERING'] }, 'DELIVERING', 'PENDING'] },
-                '$status'
-              ]
-            },
-            attempts: {
-              $cond: [
-                incomingIsNewer,
-                0,
-                { $ifNull: ['$attempts', 0] }
-              ]
-            },
-            maxAttempts: { $ifNull: ['$maxAttempts', document.maxAttempts] },
-            nextAttemptAt: {
-              $cond: [
-                incomingIsNewer,
-                {
-                  $cond: [
-                    { $eq: ['$status', 'DELIVERING'] },
-                    '$nextAttemptAt',
-                    document.nextAttemptAt
-                  ]
-                },
-                '$nextAttemptAt'
-              ]
-            },
-            createdAt: { $ifNull: ['$createdAt', document.createdAt] },
-            updatedAt: { $cond: [incomingIsNewer, document.updatedAt, '$updatedAt'] }
-          }
-        }
-      ] as Document[],
+      pipeline,
       { upsert: true, ...(session ? { session } : {}) }
     );
   }
@@ -569,6 +643,13 @@ export class PlayerRatingRepository {
     }
     return ensureMongoIndex(collection, key, options);
   }
+}
+
+function pilotOutboxIdentity(clientId: string): Filter<PadlHubPlayerLevelProjectionOutboxDocument> {
+  return {
+    'desired.player.externalClientId': clientId,
+    $or: [{ inFlight: null }, { 'inFlight.player.externalClientId': clientId }]
+  };
 }
 
 function readBoolean(value: unknown): boolean {

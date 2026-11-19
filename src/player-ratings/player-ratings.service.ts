@@ -32,11 +32,14 @@ import {
   ratingNumericToGrade
 } from './player-ratings.types';
 
+import { isInPlayerLevelPilot, readPlayerLevelPilot } from './player-level-projection-pilot';
+
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
 @Injectable()
 export class PlayerRatingsService implements OnModuleDestroy {
+  private readonly projectionPilot = readPlayerLevelPilot();
   private readonly padlHubProjectionEnabled =
     String(process.env.PADLHUB_PLAYER_LEVEL_PROJECTION_ENABLED ?? '').trim().toLowerCase() ===
     'true';
@@ -178,14 +181,15 @@ export class PlayerRatingsService implements OnModuleDestroy {
       occurredAt: now, createdAt: now, player: { key, clientId: dto.clientId, name: identity.displayName || 'Игрок' },
       change: { before: null, delta: null, after: numeric, gradeBefore: null, gradeAfter: grade }, formula: { version: 'padel-rating-grade-v1' },
       source: { domain: 'CUP_ADMIN', reason: dto.reason.trim() }, actor, projectionIntent: { viva: 'NONE_CUP_ONLY' } };
+    const project = this.shouldProject({ playerKey: key, clientId: dto.clientId });
     const nextState: PlayerRatingStateDocument = { schemaVersion: 1, playerKey: key, clientId: dto.clientId,
       ...(normalizePlayerPhone(identity.phone) ? { phoneNorm: normalizePlayerPhone(identity.phone) } : {}),
       name: event.player.name, nameSearch: normalizePlayerName(event.player.name), ratingNumeric: numeric, rating: grade,
       ownership: 'CUP_CANONICAL', source: 'CUP', createdAt: now, updatedAt: now,
       lastEventId: eventId, lastEventAt: now, lastEventType: event.eventType, lastSource: event.source.domain, lastChangedBy: actor,
-      ...(this.padlHubProjectionEnabled ? { padlHubProjectionRevision: 1 } : {}) };
+      ...(project ? { padlHubProjectionRevision: 1 } : {}) };
     event.stateSnapshot = nextState;
-    const padlHubOutbox = this.padlHubProjectionEnabled ? this.padlHubProjectionOutbox(nextState, event) : undefined;
+    const padlHubOutbox = project ? this.padlHubProjectionOutbox(nextState, event) : undefined;
     try {
       const outcome = await this.call(() => this.repository.runAtomicInitialAssignment({ event, nextState,
         compatibility: this.compatibilityProjection(nextState), ...(padlHubOutbox ? { padlHubOutbox } : {}) }));
@@ -209,9 +213,23 @@ export class PlayerRatingsService implements OnModuleDestroy {
     if (reason.length < 10) throw new BadRequestException('reason must contain at least 10 characters');
     const idempotencyKey = String(dto.idempotencyKey ?? '').trim();
     if (idempotencyKey.length < 12) throw new BadRequestException('idempotencyKey must contain at least 12 non-blank characters');
+    const gradeAlignment = dto.expectedPreviousGrade === undefined ? undefined : {
+      previousGrade: dto.expectedPreviousGrade,
+      previousEventId: dto.expectedLastEventId,
+      clientId: dto.expectedClientId
+    };
+    if ((gradeAlignment && !gradeAlignment.clientId) || (!gradeAlignment && dto.expectedClientId !== undefined)) {
+      throw new BadRequestException('Grade alignment requires both expectedPreviousGrade and expectedClientId');
+    }
+    const matchesRequest = (event: PlayerRatingEventDocument) =>
+      event.player.key === playerKey && event.change.after === nextNumeric
+      && event.source.reason === reason && event.actor.id === actor.id
+      && event.source.gradeAlignment?.previousGrade === gradeAlignment?.previousGrade
+      && event.source.gradeAlignment?.previousEventId === gradeAlignment?.previousEventId
+      && event.source.gradeAlignment?.clientId === gradeAlignment?.clientId;
     const existing = await this.call(() => this.repository.eventByIdempotencyKey(idempotencyKey));
     if (existing) {
-      if (existing.player.key !== playerKey || existing.change.after !== nextNumeric || existing.source.reason !== reason || existing.actor.id !== actor.id) throw new ConflictException('Idempotency key belongs to another change');
+      if (!matchesRequest(existing)) throw new ConflictException('Idempotency key belongs to another change');
       return this.resultFromExistingEvent(existing);
     }
 
@@ -220,7 +238,12 @@ export class PlayerRatingsService implements OnModuleDestroy {
     const before = normalizeRatingNumeric(current.ratingNumeric);
     if (before === null) throw new InternalServerErrorException('Stored canonical rating is invalid');
     const afterGrade = ratingNumericToGrade(nextNumeric);
-    const beforeGrade = ratingNumericToGrade(before);
+    if (gradeAlignment && (
+      current.ownership !== 'CUP_CANONICAL' || current.clientId !== gradeAlignment.clientId
+      || current.ratingNumeric !== nextNumeric || current.rating !== gradeAlignment.previousGrade
+      || current.rating === afterGrade
+    )) throw await this.conflict(playerKey);
+    const beforeGrade = gradeAlignment ? current.rating : ratingNumericToGrade(before);
     if (!afterGrade || !beforeGrade) throw new InternalServerErrorException('Rating grade formula rejected a valid rating');
     const now = new Date().toISOString();
     const eventId = `rating_evt:${randomUUID()}`;
@@ -234,10 +257,14 @@ export class PlayerRatingsService implements OnModuleDestroy {
       player: { key: current.playerKey, clientId: current.clientId ?? null, phoneNorm: current.phoneNorm ?? null, name: current.name },
       change: { before, delta: Number((nextNumeric - before).toFixed(5)), after: nextNumeric, gradeBefore: beforeGrade, gradeAfter: afterGrade },
       formula: { version: 'padel-rating-grade-v1' },
-      source: { domain: 'CUP_ADMIN', reason },
+      source: {
+        domain: 'CUP_ADMIN', reason,
+        ...(gradeAlignment?.clientId ? { gradeAlignment: { ...gradeAlignment, clientId: gradeAlignment.clientId } } : {})
+      },
       actor,
       projectionIntent: { viva: 'NONE_CUP_ONLY' }
     };
+    const project = this.shouldProject(current);
     const nextState: PlayerRatingStateDocument = {
       ...current,
       ratingNumeric: nextNumeric,
@@ -251,12 +278,12 @@ export class PlayerRatingsService implements OnModuleDestroy {
       updatedAt: now,
       ownership: 'CUP_CANONICAL',
       source: 'CUP',
-      ...(this.padlHubProjectionEnabled
+      ...(project
         ? { padlHubProjectionRevision: (current.padlHubProjectionRevision ?? 0) + 1 }
         : {})
     };
     event.stateSnapshot = nextState;
-    const padlHubOutbox = this.padlHubProjectionEnabled && current.clientId
+    const padlHubOutbox = project
       ? this.padlHubProjectionOutbox(nextState, event)
       : undefined;
     try {
@@ -265,14 +292,20 @@ export class PlayerRatingsService implements OnModuleDestroy {
         nextState,
         expectedLastEventId: dto.expectedLastEventId,
         compatibility: this.compatibilityProjection(nextState),
+        ...(event.source.gradeAlignment ? { expectedGradeAlignment: event.source.gradeAlignment } : {}),
+        ...(project ? { expectedProjectionRevision: current.padlHubProjectionRevision ?? 0 } : {}),
         ...(padlHubOutbox ? { padlHubOutbox } : {})
       }));
-      if (written !== 'ok') throw await this.conflict(playerKey);
+      if (written !== 'ok') {
+        const concurrent = await this.call(() => this.repository.eventByIdempotencyKey(idempotencyKey));
+        if (concurrent && matchesRequest(concurrent)) return this.resultFromExistingEvent(concurrent);
+        throw await this.conflict(playerKey);
+      }
     } catch (error) {
       if (this.repository.isDuplicateKey(error)) {
         const duplicated = await this.call(() => this.repository.eventByIdempotencyKey(idempotencyKey));
         if (duplicated) {
-          if (duplicated.player.key !== playerKey || duplicated.change.after !== nextNumeric || duplicated.source.reason !== reason || duplicated.actor.id !== actor.id) throw new ConflictException('Idempotency key belongs to another change');
+          if (!matchesRequest(duplicated)) throw new ConflictException('Idempotency key belongs to another change');
           return this.resultFromExistingEvent(duplicated);
         }
       }
@@ -291,9 +324,12 @@ export class PlayerRatingsService implements OnModuleDestroy {
     user?: RequestUser
   ): Promise<{ status: 'PENDING' }> {
     const actor = this.actorFromUser(user);
-    await this.findState(playerKey);
+    const current = await this.findState(playerKey);
+    if (!isInPlayerLevelPilot(this.projectionPilot, current)) {
+      throw new NotFoundException('No failed PadlHub player-level projection exists for this player');
+    }
     const outbox = await this.call(() =>
-      this.repository.retryPadlHubProjection(playerKey, actor)
+      this.repository.retryPadlHubProjection(playerKey, actor, this.projectionPilot ? current : undefined)
     );
     if (!outbox) {
       throw new NotFoundException('No failed PadlHub player-level projection exists for this player');
@@ -307,6 +343,10 @@ export class PlayerRatingsService implements OnModuleDestroy {
     const state = await this.call(() => this.repository.stateByKey(normalized));
     if (!state) throw new NotFoundException('Player rating state not found');
     return state;
+  }
+
+  private shouldProject(state: Pick<PlayerRatingStateDocument, 'playerKey' | 'clientId'>): boolean {
+    return this.padlHubProjectionEnabled && Boolean(state.clientId) && isInPlayerLevelPilot(this.projectionPilot, state);
   }
 
   private async resultFromExistingEvent(event: PlayerRatingEventDocument): Promise<PlayerRatingChangeResult> {

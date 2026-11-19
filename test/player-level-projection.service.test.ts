@@ -90,6 +90,9 @@ async function main(): Promise<void> {
       stale: 0,
       circuitSkippedCycles: 0,
       invalidCanonicalStates: 0,
+      waitingForMapping: 0,
+      pilotStateChanged: 0,
+      pilotBindingConflicts: 0,
       circuitOpen: false
     });
 

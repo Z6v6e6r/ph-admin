@@ -23,6 +23,7 @@ export interface PlayerRatingActor {
 export interface PlayerRatingSource {
   domain: string;
   reason?: string;
+  gradeAlignment?: { previousGrade: PlayerRatingGrade; previousEventId: string; clientId: string };
   sourceId?: string;
   legacyRowId?: string;
   legacyUpdatedAt?: string;
@@ -101,7 +102,7 @@ export interface PadlHubPlayerLevelProjectionOutboxDocument {
   desiredRevision: number;
   deliveredRevision: number;
   desired: PadlHubPlayerLevelProjectionPayload;
-  status: 'PENDING' | 'DELIVERING' | 'SYNCED' | 'FAILED_RETRYABLE' | 'DEAD';
+  status: 'PENDING' | 'DELIVERING' | 'SYNCED' | 'WAITING_FOR_MAPPING' | 'FAILED_RETRYABLE' | 'DEAD';
   attempts: number;
   maxAttempts: number;
   nextAttemptAt: string;
