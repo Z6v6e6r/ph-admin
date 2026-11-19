@@ -471,10 +471,25 @@ export class AuthService implements OnModuleInit {
     this.setRoles(defaults);
   }
 
-  /** Loads stored roles if persistence became available after startup used the defaults. */
+  /**
+   * Loads stored roles if persistence became available after startup used the defaults, and
+   * reconnects a configured store that is unavailable. Users and roles are reloaded together
+   * once it is back.
+   */
   private async ensurePersistedRoles(): Promise<void> {
+    if (this.persistence.isConfigured?.() && !this.persistence.isEnabled()) {
+      if (!(await this.persistence.ensureConnected())) return;
+      this.rolesFromPersistence = false;
+      await this.refreshUsersFromPersistence();
+    }
     if (this.rolesFromPersistence || !this.persistence.isEnabled()) return;
     await this.refreshRolesFromPersistence();
+  }
+
+  /** Stored rights are confirmed when persistence is not configured, or it is connected and its roles are loaded. */
+  private storedRightsConfirmed(): boolean {
+    if (!this.persistence.isConfigured?.()) return true;
+    return this.persistence.isEnabled() && this.rolesFromPersistence;
   }
 
   private async initializeUsers(): Promise<void> {
@@ -685,9 +700,12 @@ export class AuthService implements OnModuleInit {
     const matchedRoles = roleIds
       .map((roleId) => this.rolesById.get(roleId))
       .filter((role): role is AdminRoleDefinition => Boolean(role));
+    // While the configured store cannot confirm stored rights, explicit grants (e.g. player level
+    // changes) are not effective; they return as soon as the store and its roles are loaded.
+    const confirmed = this.storedRightsConfirmed();
     const permissions = Array.from(
       new Set(matchedRoles.flatMap((role) => role.permissions.map((permission) => String(permission))))
-    );
+    ).filter((permission) => confirmed || !EXPLICIT_GRANT_PERMISSIONS.has(permission));
     const accountScope = this.normalizeStringList(user.stationIds);
     const roleScope = Array.from(
       new Set(matchedRoles.flatMap((role) => this.normalizeStringList(role.stationIds)))
@@ -712,6 +730,7 @@ export class AuthService implements OnModuleInit {
       ),
       stationIds,
       connectorRoutes: user.connectorRoutes.slice(),
+      ...(confirmed ? {} : { storedRightsConfirmed: false }),
       authSource
     };
   }

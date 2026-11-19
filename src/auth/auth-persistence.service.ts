@@ -14,6 +14,12 @@ export class AuthPersistenceService implements OnModuleInit, OnModuleDestroy {
   private client?: MongoClient;
   private db?: Db;
   private initialization?: Promise<void>;
+  private reconnection?: Promise<boolean>;
+  private lastConnectAttemptAt = 0;
+  private readonly reconnectIntervalMs = Math.max(
+    1000,
+    Number(process.env.ADMIN_AUTH_RECONNECT_INTERVAL_MS ?? 5000) || 5000
+  );
   private collectionName =
     String(process.env.ADMIN_AUTH_MONGODB_COLLECTION ?? '').trim() || 'admin_users';
   private rolesCollectionName =
@@ -26,7 +32,30 @@ export class AuthPersistenceService implements OnModuleInit, OnModuleDestroy {
     return this.initialization;
   }
 
+  /** True when auth persistence is configured; stored roles then are the only source of explicit grants. */
+  isConfigured(): boolean {
+    return Boolean(String(process.env.MONGODB_URI ?? '').trim());
+  }
+
+  /**
+   * Returns whether the configured store is connected, retrying a failed connection at most once
+   * per interval. Concurrent callers share one attempt.
+   */
+  async ensureConnected(): Promise<boolean> {
+    if (this.db) return true;
+    if (!this.isConfigured()) return false;
+    await this.onModuleInit().catch(() => undefined);
+    if (this.db) return true;
+    if (this.reconnection) return this.reconnection;
+    if (Date.now() - this.lastConnectAttemptAt < this.reconnectIntervalMs) return false;
+    this.reconnection = this.initialize()
+      .then(() => Boolean(this.db), () => false)
+      .finally(() => { this.reconnection = undefined; });
+    return this.reconnection;
+  }
+
   private async initialize(): Promise<void> {
+    this.lastConnectAttemptAt = Date.now();
     const uri = String(process.env.MONGODB_URI ?? '').trim();
     if (!uri) {
       this.logger.log('MONGODB_URI is empty. Auth persistence disabled (env/in-memory mode).');
