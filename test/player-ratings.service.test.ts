@@ -98,8 +98,9 @@ async function main(): Promise<void> {
   };
   await assert.rejects(service.change(state.playerKey, retryDto, { ...actor, permissions: [] } as any),
     (error: any) => error.status === 403);
+  // The same key replayed on behalf of a station is a different command, not the global change.
   await assert.rejects(service.change(state.playerKey, retryDto, { ...actor, stationIds: ['synthetic-station'] } as any),
-    (error: any) => error.status === 403);
+    (error: any) => error.status === 409);
   await assert.rejects(service.change(state.playerKey, { ...retryDto, expectedLastEventId: 'different' }, actor as any),
     (error: any) => error.status === 409);
 

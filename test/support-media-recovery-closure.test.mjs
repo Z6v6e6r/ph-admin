@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { MEDIA_RECOVERY_SOURCES, verifyMediaRecoverySources, verifyMediaRecoveryCompilation, restoreEquivalentRecoveryDeclarations, verifyMediaRecoveryCandidateHash, MEDIA_RECOVERY_SDK_SHA256, MEDIA_FPR_CANDIDATE_SDK_SHA256, MEDIA_CUP_LEVEL_CANDIDATE_SDK_SHA256, MEDIA_CUP_LEVEL_AUDIT_CANDIDATE_SDK_SHA256 } from '../scripts/lib/cup-media-recovery-closure.mjs';
+import { MEDIA_RECOVERY_SOURCES, verifyMediaRecoverySources, verifyMediaRecoveryCompilation, restoreEquivalentRecoveryDeclarations, verifyMediaRecoveryCandidateHash, MEDIA_RECOVERY_SDK_SHA256, MEDIA_FPR_CANDIDATE_SDK_SHA256, MEDIA_CUP_LEVEL_CANDIDATE_SDK_SHA256, MEDIA_CUP_LEVEL_AUDIT_CANDIDATE_SDK_SHA256, MEDIA_CUP_LEVEL_STATION_CANDIDATE_SDK_SHA256 } from '../scripts/lib/cup-media-recovery-closure.mjs';
 test('actual recovery patch derives exactly21 reviewed sources with the pinned historical photo SDK', t => {
   assert.equal(MEDIA_RECOVERY_SOURCES.length, 21);
   const root = path.resolve(import.meta.dirname, '..'), derived = fs.mkdtempSync(path.join(os.tmpdir(), 'media-recovery-source-'));
@@ -35,6 +35,7 @@ test('SDK compatibility permits only the exact historical, FPR, CUP level and ra
     verifyMediaRecoveryCandidateHash(name, MEDIA_RECOVERY_SDK_SHA256, MEDIA_RECOVERY_SDK_SHA256);
     verifyMediaRecoveryCandidateHash(name, MEDIA_CUP_LEVEL_CANDIDATE_SDK_SHA256, MEDIA_RECOVERY_SDK_SHA256);
     verifyMediaRecoveryCandidateHash(name, MEDIA_CUP_LEVEL_AUDIT_CANDIDATE_SDK_SHA256, MEDIA_RECOVERY_SDK_SHA256);
+    verifyMediaRecoveryCandidateHash(name, MEDIA_CUP_LEVEL_STATION_CANDIDATE_SDK_SHA256, MEDIA_RECOVERY_SDK_SHA256);
     assert.throws(() => verifyMediaRecoveryCandidateHash(name, MEDIA_RECOVERY_SDK_SHA256, MEDIA_CUP_LEVEL_AUDIT_CANDIDATE_SDK_SHA256), /recovery SDK drift/);
     assert.throws(() => verifyMediaRecoveryCandidateHash(name, MEDIA_CUP_LEVEL_CANDIDATE_SDK_SHA256, MEDIA_FPR_CANDIDATE_SDK_SHA256), /recovery SDK drift/);
     assert.throws(() => verifyMediaRecoveryCandidateHash(name, '0'.repeat(64), MEDIA_RECOVERY_SDK_SHA256), /candidate SDK drift/);
