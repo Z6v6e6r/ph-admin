@@ -1,0 +1,162 @@
+{
+  "formatVersion": 1,
+  "result": "BLOCKED",
+  "task": "https://github.com/Z6v6e6r/ph-admin/pull/133#issuecomment-7002705456",
+  "sources": {
+    "cup": {
+      "pr": "https://github.com/Z6v6e6r/ph-admin/pull/133",
+      "sourceEnv": "RATING_CUP_SOURCE",
+      "commit": "a74a83884cc71eec8e6e6338787bf5047658656f",
+      "tree": "7920d361df6d1e38f896a620a7c4f9612b5343b2",
+      "inputs": {
+        "119": "7b1fd839cbcc2c2e1532e5bbd12d80cfad56aef1",
+        "132": "77d6c666c8c06334a50b4aa05e0c320fa75de8b3"
+      },
+      "previous": "5326c96de5f565c031107c05669601a28518fb74",
+      "ciContracts": "https://github.com/Z6v6e6r/ph-admin/actions/runs/44460869111"
+    },
+    "lk1": {
+      "pr": "https://github.com/Z6v6e6r/lk/pull/454",
+      "sourceEnv": "RATING_LK1_SOURCE",
+      "commit": "efa4f7db661a9385f673914e45992215e8b7aed9",
+      "tree": "a86732bbc980d79ea3dafdccb9f18524e17af390",
+      "ci": "https://github.com/Z6v6e6r/lk/actions/runs/44385385988"
+    },
+    "lk2": {
+      "pr": "https://github.com/Z6v6e6r/lk2/pull/688",
+      "sourceEnv": "RATING_LK2_SOURCE",
+      "commit": "6ef89621b41e9d5adeab2f2e35ed0189fc3768ce",
+      "tree": "beb8c3c4115bf4dd294233d68e4b222d6bf30438",
+      "previous": "016d9a9cc845a55df8dfe98f471c4fa00fa197b3",
+      "ci": "https://github.com/Z6v6e6r/lk2/actions/runs/44481712500"
+    }
+  },
+  "runtime": {
+    "node": "22.23.2",
+    "nodeRed": "4.0.9",
+    "postgres": "16.16",
+    "mongo": "7.0.48",
+    "mongoDatabaseTools": "100.20.1",
+    "mongoImage": "mongo@sha256:884c055bff8b7144ca44830d01826facd3083b33c4dea44b94a1476c62de3c32",
+    "postgresImage": "postgres@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e",
+    "lastAppliedLk2Migration": "0119_cup_calculated_player_levels.sql",
+    "ports": {
+      "mongo": 27183,
+      "postgres": 25483,
+      "lk2": 18183
+    }
+  },
+  "cupCiRuntime": {
+    "url": "https://github.com/Z6v6e6r/ph-admin/actions/runs/44460868941/artifacts/14500401132",
+    "zipSha256": "0ae3cffd613ba8d9f9ff4daf5b8bf987b78be204940894cdabf3905f7ce60243",
+    "zipBytes": 72133930,
+    "zipExpiresAt": "2026-11-26T04:50:54Z",
+    "runtimeTgzSha256": "9915c4b9a304db830316073ebb8b394d4236b93baf53c4d047555cfc988e8daa",
+    "runtimeManifestSha256": "2819832d70f25bad59db1d4060cc20e60b93474f4025cf62ba22e0552b31e415",
+    "jsFilesMatchingLocalBuild": 350
+  },
+  "lk1Router": {
+    "id": "lk_subscription_booking_router_20260804",
+    "candidateGraphSha256": "037d9bbb607c0bdccea505fa6666df03f5e43805fc1b7b2b3fd20705dc635689",
+    "functionSha256": "f3661e5d01854d62fdc0bb795f5d34d489337f476aae20d8148a6937f705c210"
+  },
+  "checks": {
+    "restoreAndRun": "observed.jsonl",
+    "seedCompletedAt": "2026-11-19T07:45:08Z",
+    "recoverCompletedAt": "2026-11-19T07:46:15Z",
+    "mongoRestoredDocuments": 12,
+    "mongoRestoreErrors": 0,
+    "recoverExitCode": 1,
+    "blockingScenarios": [
+      "complete-ingress",
+      "fresh-server-booking-enabled"
+    ],
+    "previousPilotEvidence": {
+      "cup": "a74a83884cc71eec8e6e6338787bf5047658656f",
+      "lk2": "016d9a9cc845a55df8dfe98f471c4fa00fa197b3",
+      "syntheticCorrections": 374,
+      "numericChanges": 0,
+      "vivaOutboxRows": 0,
+      "actualMappingRefusals": 6,
+      "waitingRecoveredWithSameEventAndRevision": true
+    }
+  },
+  "artifacts": {
+    "README.md": {
+      "bytes": 12293,
+      "sha256": "7e077f6340692c393594a8cce39e00dcd27c5f178738e1f6eb6ad03c8569e0c6"
+    },
+    "cup-dist.sha256": {
+      "bytes": 39733,
+      "sha256": "00b4d122fdbae340a988cb11db52bb57e13545ffdcc07452cbffde1e7817983a"
+    },
+    "cup.cjs": {
+      "bytes": 4756,
+      "sha256": "1850400813bbb976cc2ab99511bfd96fc8d7c8861cf020abc79221bec2d7d18b"
+    },
+    "databases.sh": {
+      "bytes": 2783,
+      "sha256": "a64f2eb76c7e1c17fbff23f1e505fcd1e68cc7007115bb82abec1a4e25241108"
+    },
+    "identity.cjs": {
+      "bytes": 307,
+      "sha256": "7dcb599f217571cb1532232be129fd62852270061e4d1b3e3201805d1e57255a"
+    },
+    "lk1-router.json": {
+      "bytes": 541536,
+      "sha256": "fd045a32b967d324af44cfdd9399a52477b2d31e0101b7743f1588a3f4e5705b"
+    },
+    "loopback-only.cjs": {
+      "bytes": 653,
+      "sha256": "8586eac40280972088fec8b0992ca8c16acead40041ea8dc7e105fc305119455"
+    },
+    "make-lk2-fixture.py": {
+      "bytes": 823,
+      "sha256": "66ffa2edfa8ca773c3f3c0875f0bf582af3ec9e6162949b4d8d36ac0c1f01d63"
+    },
+    "nodered/package-lock.json": {
+      "bytes": 136379,
+      "sha256": "1dea77d30e64e2068f2d14b4064e2bacdef16f01adfc2c2f67846e887e0275b2"
+    },
+    "nodered/package.json": {
+      "bytes": 313,
+      "sha256": "07c930aa7961afdd7fd0c23fbb983bafafc4a0931667446eca70e4643b18d2b7"
+    },
+    "observed.jsonl": {
+      "bytes": 2919,
+      "sha256": "e4a9094a62bf8ed6264cefabbefc1fbbb79bb4d7104d8928fb0b037ffc8845ce"
+    },
+    "rehearse.cjs": {
+      "bytes": 22269,
+      "sha256": "824641846c2a5204674e13c53c7c49f4e2ee9e2989aa4d6f483643b7aa1bf6cf"
+    },
+    "router.cjs": {
+      "bytes": 3343,
+      "sha256": "54271404d9e64319dcc2da8177e719620c67ca15fda8f87517b23acf993f8dd0"
+    },
+    "run.sh": {
+      "bytes": 3011,
+      "sha256": "d81bc365c5ecfa5c6434c1528c14bb48bdf4e7b1d40e736a60757819cd8d294f"
+    },
+    "snapshot/checkpoint.json": {
+      "bytes": 757,
+      "sha256": "5224bbabebae2cb901a24058f86af3aaec720f8cec7167a837c6e0a88da3bee9"
+    },
+    "snapshot/mongo.archive.gz": {
+      "bytes": 4459,
+      "sha256": "a2995337d149d37c51529260a987996bcf2ec6807abe66152a311c6de10e95bd"
+    },
+    "snapshot/postgres-roles.sql": {
+      "bytes": 653,
+      "sha256": "af4128b77a16ab2c608490ef768e51f4d112d3f72ce00eae32857df56e41d187"
+    },
+    "snapshot/postgres.dump": {
+      "bytes": 1167349,
+      "sha256": "b5d52c082a1ba84c7fa1ddd1205b0120c1cdb6556164217565c403ed98efb482"
+    },
+    "verify.py": {
+      "bytes": 2044,
+      "sha256": "2694b948eace64a44ec27489c987a747bc0475350cc39fc9803ff09160e2e4c2"
+    }
+  }
+}
