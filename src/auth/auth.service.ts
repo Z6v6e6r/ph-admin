@@ -73,10 +73,15 @@ export class AuthService implements OnModuleInit {
   private readonly usersByLogin = new Map<string, AdminUserRecord>();
   private readonly usersById = new Map<string, AdminUserRecord>();
   private readonly rolesById = new Map<string, AdminRoleDefinition>();
+  /** True once role definitions come from MongoDB; defaults alone never authorize a persisted deployment. */
+  private rolesFromPersistence = false;
 
   constructor(private readonly persistence: AuthPersistenceService) {}
 
   async onModuleInit(): Promise<void> {
+    // Nest runs one module's init hooks concurrently. Wait for the shared, memoized MongoDB
+    // connection so stored roles, not defaults, decide authorization from the first request.
+    await this.persistence.onModuleInit?.();
     await this.initializeRoles();
     await this.initializeUsers();
   }
@@ -332,6 +337,7 @@ export class AuthService implements OnModuleInit {
       throw new UnauthorizedException('Auth is disabled');
     }
     await this.refreshUsersFromPersistence();
+    await this.ensurePersistedRoles();
     const normalizedLogin = String(login).trim().toLowerCase();
     const user = this.usersByLogin.get(normalizedLogin);
     if (!user || !user.active || !this.passwordsEqual(password, user.password)) {
@@ -394,6 +400,7 @@ export class AuthService implements OnModuleInit {
       const payload = this.verifyToken(token);
       if (payload) {
         const persisted = await this.findActiveUserById(payload.sub);
+        await this.ensurePersistedRoles();
         if (persisted) {
           return { user: this.toRequestUser(persisted, 'token'), source: 'token' };
         }
@@ -453,9 +460,16 @@ export class AuthService implements OnModuleInit {
       }
       const persisted = await this.persistence.loadRoles();
       this.setRoles(persisted.length > 0 ? persisted : defaults);
+      this.rolesFromPersistence = true;
       return;
     }
     this.setRoles(defaults);
+  }
+
+  /** Loads stored roles if persistence became available after startup used the defaults. */
+  private async ensurePersistedRoles(): Promise<void> {
+    if (this.rolesFromPersistence || !this.persistence.isEnabled()) return;
+    await this.refreshRolesFromPersistence();
   }
 
   private async initializeUsers(): Promise<void> {
@@ -519,6 +533,7 @@ export class AuthService implements OnModuleInit {
     if (roles.length > 0) {
       this.setRoles(roles);
     }
+    this.rolesFromPersistence = true;
   }
 
   private async findActiveUserById(id: string): Promise<AdminUserRecord | null> {
