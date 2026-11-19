@@ -11,11 +11,14 @@ import { PlayerRatingStateDocument } from '../src/player-ratings/player-ratings.
 const STATION_A = 'synthetic-station-a';
 const now = '2026-10-01T00:00:00.000Z';
 
-function storedPersistence(managerPermissions: string[]) {
+// managerPermissions: stored list; null = no MANAGER document at all; 'unset' = stored without a permissions field.
+function storedPersistence(managerPermissions: string[] | null | 'unset') {
   let enabled = false;
-  const roles = new Map<string, any>([[Role.MANAGER, {
-    id: Role.MANAGER, name: 'Управляющий', permissions: managerPermissions, stationIds: [], isSystem: true, createdAt: now, updatedAt: now
-  }]]);
+  const roles = new Map<string, any>();
+  if (managerPermissions !== null) roles.set(Role.MANAGER, {
+    id: Role.MANAGER, name: 'Управляющий', stationIds: [], isSystem: true, createdAt: now, updatedAt: now,
+    ...(managerPermissions === 'unset' ? {} : { permissions: managerPermissions })
+  });
   const users = new Map<string, any>([
     ['stored-manager', { id: 'stored-manager', login: 'stored_manager', password: 'SyntheticManager123', title: 'Stored manager',
       roles: [Role.MANAGER], roleIds: [Role.MANAGER], stationIds: [STATION_A], connectorRoutes: [], active: true }]
@@ -59,7 +62,7 @@ function ratings() {
   return { controller: new PlayerRatingsController(new PlayerRatingsService(repository), {} as any), events, state: () => current };
 }
 
-async function coldStart(managerPermissions: string[]) {
+async function coldStart(managerPermissions: string[] | null | 'unset') {
   const persistence = storedPersistence(managerPermissions);
   const auth = new AuthService(persistence as unknown as AuthPersistenceService);
   // Nest calls the hooks of one module concurrently.
@@ -113,6 +116,16 @@ async function main(): Promise<void> {
     await assert.rejects(r3.controller.change(request, r3.state().playerKey, change(r3.state(), 'synthetic-cold-late-1'), lateUser),
       (error: any) => error.status === 403);
     assert.equal(r3.events.length, 0);
+    // A built-in role that is missing or stored without permissions never receives the write grant from defaults.
+    for (const stored of [null, 'unset'] as const) {
+      const user = await firstRequest(await coldStart(stored));
+      assert.equal(user.permissions?.includes('player-ratings:read'), true, 'other default permissions stay');
+      assert.equal(user.permissions?.includes('player-ratings:write'), false, `no write from defaults (${stored})`);
+      const r = ratings();
+      await assert.rejects(r.controller.change(request, r.state().playerKey, change(r.state(), `synthetic-cold-${stored}-1`), user),
+        (error: any) => error.status === 403);
+      assert.equal(r.events.length, 0);
+    }
     console.log('cold start: stored roles decide the first request');
   } finally {
     process.env = saved;
