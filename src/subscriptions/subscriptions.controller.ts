@@ -28,6 +28,7 @@ import { CreateSubscriptionTypeDto } from './dto/create-subscription-type.dto';
 import { SubscriptionProviderMappingPreviewDto } from './dto/subscription-provider-mapping-preview.dto';
 import { SubscriptionShadowQuoteAdapterDto } from './dto/subscription-shadow-quote-adapter.dto';
 import { SubscriptionRuntimeContextDto } from './dto/subscription-runtime-context.dto';
+import { ResidencyPurchasePolicyDto } from './dto/residency-purchase-policy.dto';
 import {
   ConfirmSubscriptionEntitlementDto,
   PreflightSubscriptionEntitlementDto,
@@ -83,6 +84,7 @@ import {
 import { SubscriptionsTestRuntimeService } from './subscriptions-test-runtime.service';
 import { SubscriptionsExceptionFilter } from './subscriptions-exception.filter';
 import { ResidencyProviderSyncService } from './residency-provider-sync.service';
+import { ResidencyPurchasePolicyService } from './residency-purchase-policy.service';
 import {
   ReleaseProgram,
   ReleaseProgramPage,
@@ -323,7 +325,8 @@ export class SubscriptionTrustedShadowController {
     private readonly saleReadinessService: SubscriptionSaleReadinessService,
     private readonly saleBindingService: SubscriptionSaleBindingService,
     private readonly quoteJournal: SubscriptionShadowQuoteJournalService,
-    @Optional() private readonly residencySync?: ResidencyProviderSyncService
+    @Optional() private readonly residencySync?: ResidencyProviderSyncService,
+    @Optional() private readonly residencyPurchasePolicy?: ResidencyPurchasePolicyService
   ) {}
 
   @Post('shadow-quote')
@@ -456,6 +459,20 @@ export class SubscriptionTrustedShadowController {
   ) {
     if (!this.residencySync) throw new ServiceUnavailableException({ code: 'RESIDENCY_SYNC_DISABLED' });
     return this.residencySync.refresh(authorization, integrationToken, dto);
+  }
+
+  @Post('residency-purchase-policy')
+  @SkipAdminMutationAudit()
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  purchasePolicy(
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Body() target: ResidencyPurchasePolicyDto
+  ) {
+    if (!this.residencyPurchasePolicy) throw new ServiceUnavailableException({ code: 'RESIDENCY_PURCHASE_POLICY_DISABLED' });
+    return this.residencyPurchasePolicy.read(authorization, integrationToken, target);
   }
 
   @Get('policy-registry')

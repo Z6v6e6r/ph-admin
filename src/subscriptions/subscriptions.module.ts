@@ -19,6 +19,7 @@ import { SubscriptionEntitlementLifecycleService } from './subscription-entitlem
 import { SubscriptionRuntimeContextService } from './subscription-runtime-context.service';
 import { ResidencyObservationRepository } from './residency-observation.repository';
 import { ResidencyProviderSyncService } from './residency-provider-sync.service';
+import { ResidencyPurchasePolicyService } from './residency-purchase-policy.service';
 import { SubscriptionPolicyRegistryService } from './subscription-policy-registry.service';
 import { SubscriptionActivationService } from './subscription-activation.service';
 import { SubscriptionActivationDeadlineWorker } from './subscription-activation-deadline.worker';
@@ -56,6 +57,7 @@ import { Lk2ShadowQuoteEvaluator } from './lk2-runtime/lk2-shadow-quote-evaluato
     SubscriptionRuntimeContextService,
     ResidencyObservationRepository,
     ResidencyProviderSyncService,
+    ResidencyPurchasePolicyService,
     SubscriptionPolicyRegistryService,
     SubscriptionActivationService,
     SubscriptionActivationDeadlineWorker,

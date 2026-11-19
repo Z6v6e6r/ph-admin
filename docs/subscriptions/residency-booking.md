@@ -116,6 +116,20 @@ The admin benefit editor preserves every selected action and has an explicit all
 
 ## Live provider refresh
 
+`POST /api/internal/subscriptions/residency-purchase-policy` resolves the published
+group-training rule for an LK1 purchase quote. It requires the runtime integration
+token and the player's trusted bearer. It accepts `exerciseId`, `stationId`,
+`externalEventTypeId`, `startsAt` (UTC ISO with milliseconds) and
+`durationMinutes` from the trusted LK server after resolving the exercise in Viva.
+The response binds those same fields to the product, publication ID, policy
+version, digest, discount percentage and a validity window of up to 30 seconds.
+It uses the effective publication for an acquisition now and rejects uncovered
+event types, unsupported durations and sessions outside the purchase window.
+The endpoint is read-only and can be called before a subscription instance exists.
+Enable it with `SUBSCRIPTIONS_RESIDENCY_PURCHASE_POLICY_ENABLED` and the existing
+runtime-context flag. The LK server still owns the Viva prices and the owned
+subscription check. The rule response cannot authorize a payment or a booking.
+
 `POST /api/internal/subscriptions/residency-booking-refresh` is an explicit,
 authenticated refresh command. It returns the existing residency context envelope;
 the old `residency-booking-context` and generic `runtime-context` remain read-only.

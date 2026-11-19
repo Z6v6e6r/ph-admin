@@ -81,6 +81,14 @@ export class SubscriptionRuntimeContextService {
     return this.verifiedIdentity(authorizationHeader, integrationToken, true);
   }
 
+  async authorizeResidencyPurchasePolicy(authorizationHeader?: string, integrationToken?: string): Promise<SubscriptionRuntimeIdentity> {
+    this.assertEnabled();
+    if (!this.flag('SUBSCRIPTIONS_RESIDENCY_PURCHASE_POLICY_ENABLED')) {
+      throw new ServiceUnavailableException({ code: 'RESIDENCY_PURCHASE_POLICY_DISABLED' });
+    }
+    return this.verifiedIdentity(authorizationHeader, integrationToken, true);
+  }
+
   async resolveResidency(
     authorizationHeader: string | undefined, integrationToken: string | undefined, dto: SubscriptionRuntimeContextDto
   ) {
