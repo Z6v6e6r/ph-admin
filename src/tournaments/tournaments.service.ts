@@ -7043,9 +7043,12 @@ export class TournamentsService {
     if (!transactionId || !phone) {
       return null;
     }
-    const ownerSubscription = this.toRecord(record.ownerCommand)?.kind === 'SUBSCRIPTION';
+    // Public profile enrichment normalizes the holds before the display projection reads them again.
+    const ownerSubscription = this.toRecord(record.ownerCommand)?.kind === 'SUBSCRIPTION' || record.ownerSubscription === true;
     const receipt = this.toRecord(record.ownerReceipt);
-    const copayBookingId = ownerSubscription && receipt?.kind === 'COPAY' ? this.pickString(receipt.bookingId) : undefined;
+    const copayBookingId = ownerSubscription
+      ? this.pickString(receipt?.kind === 'COPAY' ? receipt.bookingId : record.copayBookingId)
+      : undefined;
     const rawSnapshot = this.toRecord(record.eligibilitySnapshot);
     const snapshotResult = this.pickString(rawSnapshot?.result);
     const snapshotActivityType = this.pickString(rawSnapshot?.activityType);

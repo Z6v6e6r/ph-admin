@@ -468,6 +468,9 @@ async function main() {
       ] };
       assert.equal(originalRoster.length, 1);
       assert.deepEqual(f.tournaments.buildDisplayTournamentParticipants(before), originalRoster);
+      const standalone = { ...before, participants: [], participantsCount: 0 };
+      const enriched = await f.tournaments.enrichTournamentVivaProfiles(standalone);
+      assert.deepEqual(f.tournaments.buildDisplayTournamentParticipants(enriched), []);
       const beforeView = f.tournaments.mergeCustomWithSourceTournament(before, staleViva);
       assert.equal(beforeView.participants.length, 1);
       assert.equal(beforeView.participantsCount, 1);
