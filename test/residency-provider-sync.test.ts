@@ -111,6 +111,62 @@ async function main() {
   }
   assert.equal(providerInstant('2026-11-10T15:00:00.123000000+03:00'), '2026-11-10T12:00:00.123Z'); cases += 1;
 
+  // Composite order: participation line + residency line in one PAID transaction.
+  const composite = () => {
+    const f = providerFixture();
+    f.transaction.products = [
+      { id: 'service:group-training', count: 1, cost: 160000, discount: 80000, bookingRequests: [{ exerciseId: 'exercise:test' }] },
+      { id: RESIDENCY_PRODUCT_ID, count: 1, cost: 79000, discount: 0 }];
+    f.transaction.sum = 239000; f.transaction.discount = 80000; f.transaction.toPay = 159000;
+    return f;
+  };
+  const normalizeComposite = (f: any, allowCompositeLines = true) => normalizeResidencyProviderFacts({ ...f,
+    providerClientId: actor.providerClientId, clientSubscriptionId: 'subscription:residency-test', observedAt: NOW, allowCompositeLines });
+  const lines = (e: any) => e?.getResponse?.()?.code === 'RESIDENCY_SYNC_PAYMENT_LINES';
+  // Off by default: the original single-line contract is unchanged.
+  assert.throws(() => normalize(composite()), lines); cases += 1;
+  assert.throws(() => normalizeComposite(composite(), false), lines); cases += 1;
+  const accepted = normalizeComposite(composite());
+  assert.equal(accepted.eligible, true); assert.equal(accepted.purchaseAmountMinor, 79000);
+  assert.equal(accepted.activeTo, '2026-12-10T12:00:00.000Z'); cases += 1;
+  // Residency line order does not matter; residency discount is attributed to its own line only.
+  const reversed = composite(); reversed.transaction.products.reverse();
+  reversed.transaction.products[0].discount = 9000; reversed.transaction.discount = 89000; reversed.transaction.toPay = 150000;
+  assert.equal(normalizeComposite(reversed).purchaseAmountMinor, 70000); cases += 1;
+  // Single-line purchases behave identically with the flag on.
+  assert.deepEqual(normalizeComposite(providerFixture()), normalize()); cases += 1;
+  for (const mutate of [
+    (f: any) => f.transaction.products[0].id = RESIDENCY_PRODUCT_ID,               // two residency lines
+    (f: any) => f.transaction.products[1].id = 'product:foreign',                  // no residency line
+    (f: any) => f.transaction.products[1].count = 2,
+    (f: any) => f.transaction.products[0].count = 0,
+    (f: any) => f.transaction.products[0].cost = -1,
+    (f: any) => f.transaction.products[0].discount = 160001,
+    (f: any) => f.transaction.products[1].discount = 0.5,
+    (f: any) => { delete f.transaction.products[0].id; },                         // unidentified line
+    (f: any) => f.transaction.products[0].productId = 'service:other',             // conflicting aliases
+    (f: any) => f.transaction.productId = RESIDENCY_PRODUCT_ID,                    // ambiguous top-level id
+    (f: any) => f.transaction.sum = 79000,
+    (f: any) => f.transaction.discount = 0,
+    (f: any) => f.transaction.toPay = 79000,
+    (f: any) => f.transaction.products = Array.from({ length: 9 }, (_, i) => i ? { id: 'service:x' + i, count: 1, cost: 0, discount: 0 }
+      : { id: RESIDENCY_PRODUCT_ID, count: 1, cost: 79000, discount: 0 }),
+    (f: any) => f.transaction.products = [],
+    (f: any) => f.transaction.products[0] = null,
+  ]) {
+    const fixture = composite(); mutate(fixture); assert.throws(() => normalizeComposite(fixture)); cases += 1;
+  }
+  for (const mutate of [
+    // A refund of any line of a composite payment is a conservative denial; refunds stay manual (OD-05).
+    (f: any) => f.transaction.refundSum = 80000,
+    (f: any) => f.transaction.transactionRefunds = [{ status: 'COMPLETED' }],
+    (f: any) => f.transaction.status = 'PARTIALLY_REFUNDED',
+    (f: any) => f.transaction.products[0].refunded = true,
+    (f: any) => f.transaction.status = 'WAITING',
+  ]) {
+    const fixture = composite(); mutate(fixture); assert.equal(normalizeComposite(fixture).eligible, false); cases += 1;
+  }
+
   const env = ['SUBSCRIPTIONS_RESIDENCY_SYNC_STUDIO_ID', 'SUBSCRIPTIONS_RUNTIME_CONTEXT_MAX_STALENESS_SECONDS',
     'SUBSCRIPTIONS_RUNTIME_CONTEXT_ENABLED', 'SUBSCRIPTIONS_RESIDENCY_BOOKING_CONTEXT_ENABLED', 'SUBSCRIPTIONS_RESIDENCY_SYNC_ENABLED',
     'SUBSCRIPTIONS_RUNTIME_CONTEXT_INTEGRATION_TOKEN', 'SUBSCRIPTIONS_RUNTIME_HASH_PEPPER', 'SUBSCRIPTIONS_RUNTIME_TENANT_ID'];

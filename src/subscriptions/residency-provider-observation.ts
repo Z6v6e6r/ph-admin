@@ -116,10 +116,49 @@ export interface ResidencyProviderFacts {
   sourceDigest: string;
 }
 
+const lineProductIds = (line: ProviderObject): unknown[] =>
+  [line.id, line.uuid, line.productId, line.product?.id].filter(v => v !== undefined && v !== null);
+
+/**
+ * Selects the residency line of the linked PAID transaction.
+ * Single-line transactions keep the original strict contract. A composite transaction (participation
+ * + residency in one payment) is accepted only when explicitly enabled: exactly one residency line,
+ * every other line is a different product, and every line plus the transaction totals reconcile exactly.
+ */
+function residencyPaymentLine(t: ProviderObject, allowComposite: boolean, money: (v: unknown) => v is number): ProviderObject {
+  if (!Array.isArray(t.products) || t.products.length === 0) residencyFailure('PAYMENT_LINES');
+  if (t.products.length === 1) {
+    const line = providerObject(t.products[0]);
+    exactProviderId([...lineProductIds(line), t.productId], RESIDENCY_PRODUCT_ID);
+    if (line.count !== 1 || !money(line.cost) || !money(line.discount) || line.discount > line.cost
+      || t.sum !== line.cost || t.discount !== line.discount || t.toPay !== line.cost - line.discount) residencyFailure('PAYMENT_AMOUNTS');
+    return line;
+  }
+  if (!allowComposite || t.products.length > 8) residencyFailure('PAYMENT_LINES');
+  // A transaction-level productId is ambiguous once there are several lines.
+  if (t.productId !== undefined && t.productId !== null) residencyFailure('PAYMENT_LINES');
+  const lines = t.products.map(providerObject);
+  const residency = lines.filter(line => lineProductIds(line).includes(RESIDENCY_PRODUCT_ID));
+  if (residency.length !== 1) residencyFailure('PAYMENT_LINES');
+  let sum = 0, discount = 0;
+  for (const line of lines) {
+    const ids = lineProductIds(line);
+    if (line === residency[0]) exactProviderId(ids, RESIDENCY_PRODUCT_ID);
+    else exactProviderId(ids);
+    if (!Number.isSafeInteger(line.count) || line.count < 1 || !money(line.cost) || !money(line.discount)
+      || line.discount > line.cost) residencyFailure('PAYMENT_AMOUNTS');
+    sum += line.cost; discount += line.discount;
+  }
+  if (residency[0].count !== 1 || t.sum !== sum || t.discount !== discount || t.toPay !== sum - discount) residencyFailure('PAYMENT_AMOUNTS');
+  return residency[0];
+}
+
 /** Exact owned-client response + linked transaction. The published CUP PURCHASE profile owns the monetary window. */
 export function normalizeResidencyProviderFacts(input: {
   providerClientId: string; clientSubscriptionId: string;
   subscription: unknown; transaction: unknown; observedAt: string;
+  /** Composite order (participation + residency in one payment). Off unless the owner flag is on. */
+  allowCompositeLines?: boolean;
 }): ResidencyProviderFacts {
   const s = providerObject(input.subscription), t = providerObject(input.transaction);
   exactProviderId([s.subscriptionId, s.clientSubscriptionId, s.id, s.uuid], input.clientSubscriptionId);
@@ -129,12 +168,8 @@ export function normalizeResidencyProviderFacts(input: {
   const transactionId = exactProviderId([s.transactionId, s.transactionUuid, s.transaction?.id, s.transaction?.uuid]);
   exactProviderId([t.id, t.uuid, t.transactionId], transactionId);
   exactProviderId([t.clientId, t.client?.id, t.client?.uuid, t.client?.clientId], input.providerClientId);
-  if (!Array.isArray(t.products) || t.products.length !== 1) residencyFailure('PAYMENT_LINES');
-  const line = providerObject(t.products[0]);
-  exactProviderId([line.id, line.uuid, line.productId, line.product?.id, t.productId], RESIDENCY_PRODUCT_ID);
   const money = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) >= 0;
-  if (line.count !== 1 || !money(line.cost) || !money(line.discount) || line.discount > line.cost
-    || t.sum !== line.cost || t.discount !== line.discount || t.toPay !== line.cost - line.discount) residencyFailure('PAYMENT_AMOUNTS');
+  const line = residencyPaymentLine(t, input.allowCompositeLines === true, money);
   const paymentStatus = exactProviderId([t.status, t.state, t.paymentStatus]);
   const providerStatus = exactProviderId([s.status, s.subscriptionStatus, s.state]);
   if (!['PAID', 'UNPAID', 'REFUND', 'REFUNDED', 'WAITING', 'PARTIALLY_REFUNDED', 'PARTIALLY_PAID'].includes(paymentStatus)
@@ -153,14 +188,16 @@ export function normalizeResidencyProviderFacts(input: {
     residencyFailure('NO_PAYMENT_AMOUNT_CONTRADICTION');
   }
   for (const value of [t.refundSum, s.refundSum]) if (value != null && !money(value)) residencyFailure('REFUND_SHAPE');
-  for (const row of [s, t, line]) {
+  // Every payment line counts: a refund of any line of a composite payment is a conservative denial.
+  const paymentRows = [s, t, ...(t.products as unknown[]).map(providerObject)];
+  for (const row of paymentRows) {
     if (row.refundStatus != null && !['NONE', 'PARTIAL', 'FULL'].includes(row.refundStatus)) residencyFailure('REFUND_SHAPE');
     if (row.refunded != null && typeof row.refunded !== 'boolean') residencyFailure('REFUND_SHAPE');
   }
   if (t.transactionRefunds != null && !Array.isArray(t.transactionRefunds)) residencyFailure('REFUND_SHAPE');
   const refunds = (t.transactionRefunds ?? []) as ProviderObject[];
   const refund = !!t.refundedAt || !!s.refundedAt || (t.refundSum ?? 0) > 0 || (s.refundSum ?? 0) > 0
-    || [s, t, line].some(row => row.refunded === true || (row.refundStatus != null && row.refundStatus !== 'NONE'))
+    || paymentRows.some(row => row.refunded === true || (row.refundStatus != null && row.refundStatus !== 'NONE'))
     || refunds.some(r => !r || r.status !== 'FAILED');
   // These timestamps belong to provider hold/counter bookkeeping. Presence is a conservative
   // denial; no timezone is guessed to turn ambiguous hold evidence into permission.
