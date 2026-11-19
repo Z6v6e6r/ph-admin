@@ -16,6 +16,8 @@ export interface RequestUser {
    * roles with different station lists.
    */
   permissionStationScopes?: Record<string, string[] | null>;
+  /** false while a configured auth store cannot confirm stored rights; explicit grants are then denied. */
+  storedRightsConfirmed?: boolean;
   stationIds: string[];
   connectorRoutes: string[];
   authSource?: 'token' | 'headers' | 'anonymous';

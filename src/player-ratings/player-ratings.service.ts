@@ -52,6 +52,9 @@ const STATION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
  */
 export function requireRatingPermission(user: RequestUser | undefined, permission: string): string[] | null {
   if (!user?.id || user.authSource !== 'token') throw new UnauthorizedException('Staff token required');
+  if (permission === 'player-ratings:write' && user.storedRightsConfirmed === false) {
+    throw new ServiceUnavailableException({ code: 'STAFF_RIGHTS_UNCONFIRMED', message: 'Хранилище прав недоступно: изменение уровня временно невозможно.' });
+  }
   if (!hasAdminPermission(user.permissions, permission)) throw new ForbiddenException(`Нет права ${permission}`);
   const scope = getStationScopeForPermission(user, permission);
   if (scope !== null && scope.length === 0) throw new ForbiddenException(`Право ${permission} не действует ни на одной станции`);
