@@ -256,7 +256,8 @@ export class TournamentsController {
     @Req() request: Request,
     @CurrentUser() user?: RequestUser
   ): Promise<{
-    status: 'NONE' | 'REGISTERED' | 'WAITLIST';
+    status: 'NONE' | 'REGISTERED' | 'WAITLIST' | 'PAYMENT_PENDING';
+    bookingId?: string;
     placeNumber?: number;
     waitlistNumber?: number;
     canRegister: boolean;
@@ -390,6 +391,14 @@ export class TournamentsController {
     if (!this.checkoutService) throw new ServiceUnavailableException();
     return this.checkoutService.abortSubscription(id, this.pickString(request.headers.authorization),
       this.pickString(request.headers['x-cup-integration-token']), body);
+  }
+
+  @Post(':id/subscription-admission/copay')
+  @Roles()
+  recordSubscriptionCopay(@Param('id') id: string, @Req() request: Request, @Body() body: unknown) {
+    if (!this.checkoutService) throw new ServiceUnavailableException();
+    return this.checkoutService.completeSubscription(id, this.pickString(request.headers.authorization),
+      this.pickString(request.headers['x-cup-integration-token']), body, true);
   }
 
   @Post(':id/subscription-admission/complete')

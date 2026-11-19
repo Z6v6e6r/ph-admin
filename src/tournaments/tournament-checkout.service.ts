@@ -1,5 +1,6 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { VivaAdminService } from '../integrations/viva/viva-admin.service';
 import { TournamentsService } from './tournaments.service';
 import { TournamentsPersistenceService } from './tournaments-persistence.service';
 
@@ -13,6 +14,45 @@ const safelyRefused = (operation: Row) => operation.state === 'FAILED' && operat
 const permitsFreshAttempt = (operation: Row) => safelyRefused(operation) || operation.state === 'OWNER_CANCELLED';
 const pending = (operation: Row) => ({ operationId: operation.transactionId, state: 'PENDING_CONFIRMATION',
   code: 'TOURNAMENT_CHECKOUT_OUTCOME_UNRESOLVED', message: 'Результат записи уточняется. Повторная оплата заблокирована.' });
+
+function agree(values: unknown[], expected: unknown, required = false): boolean {
+  const present = values.filter(value => value !== undefined && value !== null);
+  return (!required || present.length > 0) && present.every(value => value === expected);
+}
+
+function hasCancellationOrRefund(row: Row): boolean {
+  return [row, row.cardPaymentInfo, row.cardPaymentStatus].filter(record).some(value =>
+    value.cancelled || value.canceled || value.isCancelled || value.refunded || value.isRefunded
+    || [value.refundedAt, value.refundDate, value.refund].some(marker =>
+      marker !== undefined && marker !== null && marker !== '')
+    || (value.refundedAmountMinor != null && value.refundedAmountMinor !== 0)
+    || /CANCEL|REFUND|FAIL|EXPIRE|DELETE|REJECT/.test(String(value.status ?? '').toUpperCase()));
+}
+
+function matchesCopayTransaction(transaction: Row, operation: Row): boolean {
+  const receipt = operation.ownerReceipt;
+  const products = transaction.products;
+  if (products !== undefined && (!Array.isArray(products) || products.length !== 1 || !record(products[0]))) return false;
+  const product = products?.[0];
+  const bookings = [
+    transaction.bookingId, transaction.bookingIds, transaction.paymentBookingIds,
+    product?.bookingId, product?.clientBookingId, product?.bookingIds, product?.paymentBookingIds,
+    ...(Array.isArray(product?.pricingDetails) ? product.pricingDetails.flatMap((detail: Row) =>
+      [detail?.bookingId, detail?.clientBookingId]) : [])
+  ].flat(Infinity).flatMap(value => record(value)
+    ? [value.id, value.uuid, value.bookingId, value.clientBookingId]
+    : [value]);
+  return agree([transaction.id, transaction.transactionId], receipt.transactionId, true)
+    && agree([transaction.toPay, transaction.toPayMinor], receipt.amountMinor, true)
+    && agree([transaction.status, transaction.state, transaction.paymentStatus, transaction.transactionStatus], 'PAID', true)
+    && agree([transaction.currency], 'RUB')
+    && agree([transaction.clientId, transaction.client?.id, transaction.client?.uuid,
+      transaction.client?.clientId], operation.clientId)
+    && agree([transaction.exerciseId, transaction.exercise?.id], operation.exerciseId)
+    && agree([transaction.studioId, transaction.studio?.id], operation.studioId)
+    && agree(bookings, receipt.bookingId)
+    && !hasCancellationOrRefund(transaction);
+}
 
 /** Same Viva v2 cart as LK1; only authenticated catalog data can supply product fields. */
 export function tournamentCheckoutProduct(row: Row, source: string, exerciseId: string): Row {
@@ -45,7 +85,39 @@ export function tournamentCheckoutReturnUrl(value: unknown): string | undefined 
 
 @Injectable()
 export class TournamentCheckoutService {
-  constructor(private readonly tournaments: TournamentsService, private readonly persistence: TournamentsPersistenceService) {}
+  constructor(
+    private readonly tournaments: TournamentsService,
+    private readonly persistence: TournamentsPersistenceService,
+    @Optional() private readonly vivaAdmin?: VivaAdminService
+  ) {}
+
+  private subscriptionPaymentView(operation: Row): Row {
+    return { state: operation.state === 'OWNER_COMPLETED' ? 'COMPLETED' : 'PAYMENT_PENDING',
+      bookingId: operation.ownerReceipt.bookingId, transactionId: operation.ownerReceipt.transactionId,
+      requestOperationId: operation.ownerCommand.requestOperationId };
+  }
+
+  private async reconcileSubscriptionPayment(context: CheckoutContext, operation: Row, auth?: string): Promise<Row> {
+    const receipt = operation.ownerReceipt;
+    if (operation.state === 'OWNER_COMPLETED') return this.subscriptionPaymentView(operation);
+    const raw = await this.vivaAdmin?.readTournamentCopayTransaction(receipt.transactionId).catch(() => undefined);
+    const transaction = record(raw) && record(raw.data) ? raw.data : raw;
+    if (!record(transaction) || !matchesCopayTransaction(transaction, operation)
+      || (raw !== transaction && record(raw) && hasCancellationOrRefund(raw))) {
+      return this.subscriptionPaymentView(operation);
+    }
+    const bookings = await this.readProviderBookings(operation, auth).catch(() => []);
+    const booking = bookings.length === 1 ? bookings[0] : undefined;
+    if (!booking || hasCancellationOrRefund(booking)
+      || !agree([booking.id, booking.bookingId], receipt.bookingId, true)
+      || !agree([booking.clientId, booking.client?.id, booking.client?.clientId], operation.clientId, true)
+      || !agree([booking.exerciseId, booking.exercise?.id], operation.exerciseId, true)
+      || !agree([booking.studioId, booking.studio?.id], operation.studioId)) return this.subscriptionPaymentView(operation);
+    if (await this.persistence.completeTournamentCheckout(context.tournament.id, operation, receipt.bookingId, true)) {
+      return this.subscriptionPaymentView({ ...operation, state: 'OWNER_COMPLETED' });
+    }
+    return this.subscriptionPaymentView(operation);
+  }
 
   private async http(url: string, auth: string | undefined, body?: Row): Promise<unknown> {
     const response = await fetch(url, { method: body ? 'POST' : 'GET', redirect: 'error',
@@ -237,6 +309,10 @@ export class TournamentCheckoutService {
     if (cancelled && await this.persistence.cancelTournamentCheckout(context.tournament.id, operation, cancelled.id)) {
       return this.view({ ...operation, state: 'OWNER_CANCELLED' });
     }
+    if (operation.ownerCommand?.kind === 'SUBSCRIPTION' && operation.ownerReceipt?.kind === 'COPAY') {
+      return cancelledBookingId ? this.subscriptionPaymentView(operation)
+        : this.reconcileSubscriptionPayment(context, operation, auth);
+    }
     const matches = cancelledBookingId || operation.ownerCommand?.kind !== 'CHECKOUT'
       ? [] : await this.readProviderBookings(operation, auth);
     const booking = matches.length === 1 ? matches[0] : undefined;
@@ -251,16 +327,18 @@ export class TournamentCheckoutService {
     return cancelledBookingId ? pending(operation) : this.view(operation);
   }
 
-  async completeSubscription(ref: string, auth: string | undefined, token: string | undefined, body: unknown): Promise<Row> {
+  async completeSubscription(ref: string, auth: string | undefined, token: string | undefined, body: unknown,
+    bindCopay = false): Promise<Row> {
     // Only the authenticated Node-RED write owner can attest its durable confirmed result.
     const actor = await this.tournaments.verifyCheckoutOwner(auth, token);
     const context = await this.tournaments.resolveCheckoutIdentity(ref, auth);
     if (actor.clientId !== context.actor.clientId || actor.phoneNorm !== context.actor.phoneNorm || actor.tenantKey !== context.tenantKey) throw new ConflictException();
-    if (!record(body) || !id(body.operationId) || !id(body.clientSubscriptionId) || !id(body.bookingId)) throw new BadRequestException();
+    if (!record(body) || !id(body.operationId) || !id(body.clientSubscriptionId) || !id(body.bookingId)
+      || bindCopay !== (body.payment !== undefined)) throw new BadRequestException();
     const operation = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, actor.phoneNorm, { requestKey: body.operationId });
     if (!operation) {
       const other = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, actor.phoneNorm);
-      if (other || body.ownerOperationId !== undefined) {
+      if (other || body.ownerOperationId !== undefined || body.payment !== undefined) {
         throw new ConflictException({ code: 'TOURNAMENT_OPERATION_BINDING_MISMATCH' });
       }
       return { state: 'LEGACY_UNTRACKED', requestOperationId: body.operationId };
@@ -271,6 +349,20 @@ export class TournamentCheckoutService {
       throw new ConflictException({ code: 'TOURNAMENT_OPERATION_BINDING_MISMATCH' });
     }
     if (operation.state === 'OWNER_CANCELLED') throw new ConflictException({ code: 'TOURNAMENT_BOOKING_CANCELLED' });
+    if (body.payment !== undefined) {
+      if (!id(body.ownerOperationId) || !record(body.payment) || !id(body.payment.transactionId)
+        || !Number.isSafeInteger(body.payment.amountMinor) || body.payment.amountMinor <= 0
+        || body.payment.amountMinor > 1_000_000) throw new BadRequestException();
+      const receipt = { kind: 'COPAY', bookingId: body.bookingId,
+        transactionId: body.payment.transactionId, amountMinor: body.payment.amountMinor };
+      const state = await this.persistence.bindTournamentSubscriptionCopay(context.tournament.id, operation, receipt);
+      if (!state) throw new ConflictException({ code: 'TOURNAMENT_OPERATION_BINDING_MISMATCH' });
+      return { state, requestOperationId: body.operationId, bookingId: body.bookingId,
+        transactionId: receipt.transactionId };
+    }
+    if (operation.ownerReceipt?.kind === 'COPAY' && operation.state !== 'OWNER_COMPLETED') {
+      throw new ConflictException({ code: 'TOURNAMENT_PAYMENT_PENDING' });
+    }
     if (!await this.persistence.completeTournamentCheckout(context.tournament.id, operation, body.bookingId, false)) {
       throw new ServiceUnavailableException({ code: 'TOURNAMENT_COMPLETION_UNRESOLVED' });
     }
