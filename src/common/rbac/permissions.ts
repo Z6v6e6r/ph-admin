@@ -49,7 +49,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, string[]> = {
     'dialogs:read',
     'dialogs:write',
     'games:read',
-    'tournaments:read'
+    'tournaments:read',
+    'player-ratings:read',
+    'player-ratings:write'
   ],
   [Role.MANAGER]: [
     'dialogs:read',
@@ -63,6 +65,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, string[]> = {
     'admin-users:read',
     'audit:read',
     'player-ratings:read',
+    'player-ratings:write',
     'advertising:read',
     'advertising:write'
   ],

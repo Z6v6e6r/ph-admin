@@ -43,15 +43,47 @@ const MAX_LIMIT = 100;
 const MAX_EXPORT_ROWS = 5000;
 const MANUAL_DOMAINS = ['ADMIN_MANUAL', 'CUP_ADMIN'];
 
-export function requireGlobalRatingPermission(user: RequestUser | undefined, permission: string): void {
+const STATION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+/**
+ * Effective station scope of one rating permission from the staff session:
+ * `null` covers every station, a non-empty list covers only those stations.
+ * A grant whose station scope collapsed to nothing is a denial.
+ */
+export function requireRatingPermission(user: RequestUser | undefined, permission: string): string[] | null {
   if (!user?.id || user.authSource !== 'token') throw new UnauthorizedException('Staff token required');
-  if (!hasAdminPermission(user.permissions, permission) || getStationScopeForPermission(user, permission) !== null) {
-    throw new ForbiddenException('A global grant is required for canonical player levels');
-  }
+  if (!hasAdminPermission(user.permissions, permission)) throw new ForbiddenException(`Нет права ${permission}`);
+  const scope = getStationScopeForPermission(user, permission);
+  if (scope !== null && scope.length === 0) throw new ForbiddenException(`Право ${permission} не действует ни на одной станции`);
+  return scope;
 }
 
-export function requireGlobalRatingWrite(user: RequestUser | undefined): void {
-  requireGlobalRatingPermission(user, 'player-ratings:write');
+/**
+ * The canonical level is shared by every station. A station-scoped writer changes it on behalf of
+ * one station from its own scope, and the event records that station. A global writer may name
+ * any station or none.
+ */
+export function resolveRatingWriteStation(user: RequestUser | undefined, requested?: unknown): string | undefined {
+  const scope = requireRatingPermission(user, 'player-ratings:write');
+  if (requested !== undefined && requested !== null && requested !== '') {
+    if (typeof requested !== 'string' || !STATION_ID_PATTERN.test(requested)) throw new BadRequestException('Invalid stationId');
+    if (scope !== null && !scope.includes(requested)) throw new ForbiddenException('Изменение уровня с этой станции не разрешено');
+    return requested;
+  }
+  if (scope === null) return undefined;
+  if (scope.length === 1) return scope[0];
+  throw new BadRequestException({ code: 'RATING_STATION_REQUIRED', message: 'Выберите станцию, от имени которой меняется уровень.' });
+}
+
+/** Journal stations visible to the viewer: `null` for all stations, otherwise the scope shared by both grants. */
+export function ratingJournalScope(user: RequestUser | undefined): string[] | null {
+  const audit = requireRatingPermission(user, 'audit:read');
+  const ratings = requireRatingPermission(user, 'player-ratings:read');
+  if (audit === null) return ratings;
+  if (ratings === null) return audit;
+  const shared = audit.filter(stationId => ratings.includes(stationId));
+  if (!shared.length) throw new ForbiddenException('Права на журнал и уровни выданы для разных станций');
+  return shared;
 }
 
 @Injectable()
@@ -197,7 +229,7 @@ export class PlayerRatingsService implements OnModuleDestroy {
     };
   }
 
-  async audit(input: PlayerRatingAuditQuery, options: { export?: boolean; displayedIds?: string[] } = {}): Promise<{ items: PlayerRatingAuditRow[]; nextCursor: string | null }> {
+  async audit(input: PlayerRatingAuditQuery, options: { export?: boolean; displayedIds?: string[]; stationScope?: string[] | null } = {}): Promise<{ items: PlayerRatingAuditRow[]; nextCursor: string | null }> {
     const { displayedIds } = options;
     const limit = options.export && !displayedIds ? MAX_EXPORT_ROWS : MAX_LIMIT;
     const allowedTypes = ['RATING_INITIAL_ASSIGNED', 'RATING_MANUALLY_CHANGED'];
@@ -207,6 +239,8 @@ export class PlayerRatingsService implements OnModuleDestroy {
       'actor.type': 'ADMIN',
       'source.domain': { $in: MANUAL_DOMAINS }
     };
+    // Station-scoped viewers see only changes made from their stations; unattributed history stays global-only.
+    if (options.stationScope) filter['actor.stationId'] = { $in: options.stationScope };
     for (const [field, value] of [['actor.id', input.actorId], ['player.key', input.playerKey]] as const) {
       if (value === undefined || value === '') continue;
       if (typeof value !== 'string' || value.length > 200) throw new BadRequestException('Invalid journal filter');
@@ -234,7 +268,7 @@ export class PlayerRatingsService implements OnModuleDestroy {
     return {
       items: page.map(event => ({
         id: event.id, occurredAt: event.occurredAt, eventType: event.eventType,
-        actorId: event.actor.id, actorName: event.actor.name || event.actor.id,
+        actorId: event.actor.id, actorName: event.actor.name || event.actor.id, stationId: event.actor.stationId ?? null,
         playerKey: event.player.key, playerName: event.player.name,
         before: event.change.before, gradeBefore: event.change.gradeBefore,
         after: event.change.after, gradeAfter: event.change.gradeAfter, reason: event.source.reason ?? ''
@@ -244,16 +278,17 @@ export class PlayerRatingsService implements OnModuleDestroy {
   }
 
   async assign(dto: AssignPlayerRatingDto, identity: { clientId: string; displayName?: string | null; phone?: string | null }, user?: RequestUser): Promise<PlayerRatingChangeResult> {
-    requireGlobalRatingWrite(user);
+    const stationId = resolveRatingWriteStation(user, dto.stationId);
     dto = { ...dto, idempotencyKey: String(dto.idempotencyKey || '').trim(), reason: String(dto.reason || '').trim() };
     if (dto.idempotencyKey.length < 12) throw new BadRequestException('idempotencyKey must contain at least 12 non-blank characters');
-    const actor = this.actorFromUser(user), numeric = normalizeRatingNumeric(dto.ratingNumeric);
+    const actor = this.actorFromUser(user, stationId), numeric = normalizeRatingNumeric(dto.ratingNumeric);
     if (String(dto.reason || '').trim().length < 10) throw new BadRequestException('reason must contain at least 10 non-blank characters');
     if (!identity || identity.clientId !== dto.clientId || numeric === null) throw new BadRequestException('Verified client identity and level are required');
     const matchesRequest = (event: PlayerRatingEventDocument) =>
       event.eventType === 'RATING_INITIAL_ASSIGNED' && MANUAL_DOMAINS.includes(event.source.domain)
       && event.player.clientId === dto.clientId && event.change.after === numeric
-      && event.source.reason === dto.reason && event.actor.id === actor.id;
+      && event.source.reason === dto.reason && event.actor.id === actor.id
+      && (event.actor.stationId ?? undefined) === actor.stationId;
     const existing = await this.call(() => this.repository.eventByIdempotencyKey(dto.idempotencyKey));
     if (existing) {
       if (!matchesRequest(existing)) throw new ConflictException('Idempotency key belongs to another assignment');
@@ -294,8 +329,7 @@ export class PlayerRatingsService implements OnModuleDestroy {
   }
 
   async change(playerKey: string, dto: ChangePlayerRatingDto, user?: RequestUser): Promise<PlayerRatingChangeResult> {
-    requireGlobalRatingWrite(user);
-    const actor = this.actorFromUser(user);
+    const actor = this.actorFromUser(user, resolveRatingWriteStation(user, dto.stationId));
     const nextNumeric = normalizeRatingNumeric(dto.ratingNumeric);
     if (nextNumeric === null) throw new BadRequestException('ratingNumeric must be between 1.00000 and 7.00000');
     const reason = String(dto.reason ?? '').trim();
@@ -315,6 +349,7 @@ export class PlayerRatingsService implements OnModuleDestroy {
       && event.player.key === playerKey && event.change.after === nextNumeric
       && (event.source.expectedLastEventId === undefined || event.source.expectedLastEventId === dto.expectedLastEventId)
       && event.source.reason === reason && event.actor.id === actor.id
+      && (event.actor.stationId ?? undefined) === actor.stationId
       && event.source.gradeAlignment?.previousGrade === gradeAlignment?.previousGrade
       && event.source.gradeAlignment?.previousEventId === gradeAlignment?.previousEventId
       && event.source.gradeAlignment?.clientId === gradeAlignment?.clientId;
@@ -458,9 +493,9 @@ export class PlayerRatingsService implements OnModuleDestroy {
     const state = await this.findState(playerKey);
     return new ConflictException({ code: 'RATING_STATE_CONFLICT', message: 'Уровень уже был изменён. Обновите карточку.', state: await this.toStateDto(state) });
   }
-  private actorFromUser(user?: RequestUser): PlayerRatingActor {
+  private actorFromUser(user?: RequestUser, stationId?: string): PlayerRatingActor {
     if (!user?.id) throw new UnauthorizedException('User context is missing');
-    return { id: user.id, name: user.title || user.login || user.id, type: 'ADMIN' };
+    return { id: user.id, name: user.title || user.login || user.id, type: 'ADMIN', ...(stationId ? { stationId } : {}) };
   }
   private async toStateDto(state: PlayerRatingStateDocument, knownOutbox?: PlayerRatingProjectionOutboxDocument | null): Promise<PlayerRatingStateDto> {
     const outbox = knownOutbox === undefined ? await this.call(() => this.repository.latestOutbox(state.playerKey)) : knownOutbox;
@@ -474,7 +509,7 @@ export class PlayerRatingsService implements OnModuleDestroy {
   }
   private async toEventDto(event: PlayerRatingEventDocument, knownOutbox?: PlayerRatingProjectionOutboxDocument | null): Promise<PlayerRatingEventDto> {
     const outbox = knownOutbox === undefined ? await this.call(() => this.repository.latestOutbox(event.player.key)) : knownOutbox;
-    return { id: event.id, eventType: event.eventType, occurredAt: event.occurredAt, before: event.change.before, delta: event.change.delta, after: event.change.after, gradeBefore: event.change.gradeBefore, gradeAfter: event.change.gradeAfter, source: this.eventSource(event), actor: { id: event.actor.id, name: event.actor.name, type: event.actor.type }, projectionStatus: this.projectionStatus(outbox) };
+    return { id: event.id, eventType: event.eventType, occurredAt: event.occurredAt, before: event.change.before, delta: event.change.delta, after: event.change.after, gradeBefore: event.change.gradeBefore, gradeAfter: event.change.gradeAfter, source: this.eventSource(event), actor: { id: event.actor.id, name: event.actor.name, type: event.actor.type, ...(event.actor.stationId ? { stationId: event.actor.stationId } : {}) }, projectionStatus: this.projectionStatus(outbox) };
   }
   private eventSource(event: PlayerRatingEventDocument): PlayerRatingEventDocument['source'] {
     const source = event.source;

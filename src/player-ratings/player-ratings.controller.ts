@@ -12,7 +12,7 @@ import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role, STAFF_ROLES } from '../common/rbac/role.enum';
 import { Roles } from '../common/rbac/roles.decorator';
 import { ChangePlayerRatingDto } from './dto/change-player-rating.dto';
-import { PlayerRatingsService, requireGlobalRatingPermission, requireGlobalRatingWrite } from './player-ratings.service';
+import { PlayerRatingsService, ratingJournalScope, requireRatingPermission } from './player-ratings.service';
 import { PlayerRatingChangeResult, PlayerRatingEventDto, PlayerRatingEventsResult, PlayerRatingProjectionStatus, PlayerRatingSearchResult, PlayerRatingStateDto } from './player-ratings.types';
 
 @Controller('admin/player-ratings')
@@ -22,14 +22,14 @@ export class PlayerRatingsController {
   @Get('assignment-candidates') @Permissions('player-ratings:write') @Header('Cache-Control', 'private, no-store')
   async candidates(@Req() request: Request, @Query('q') q?: string, @CurrentUser() user?: RequestUser) {
     this.requireTrustedOrigin(request);
-    requireGlobalRatingWrite(user);
+    requireRatingPermission(user, 'player-ratings:write');
     const rows = await this.viva.searchClients(q);
     return { items: rows.slice(0, 20).map(row => ({ clientId: row.clientId, name: row.clientLabel || row.clientId })) };
   }
   @Post('assignments') @Permissions('player-ratings:write') @SkipAdminMutationAudit()
   async assign(@Req() request: Request, @Body() dto: AssignPlayerRatingDto, @CurrentUser() user?: RequestUser) {
     this.requireTrustedOrigin(request);
-    requireGlobalRatingWrite(user);
+    requireRatingPermission(user, 'player-ratings:write');
     const identity = await this.viva.getClientProfile(dto.clientId, true);
     if (!identity || identity.clientId !== dto.clientId) throw new NotFoundException('Клиент не найден');
     return this.service.assign(dto, identity, user);
@@ -39,8 +39,7 @@ export class PlayerRatingsController {
   @Permissions('audit:read', 'player-ratings:read')
   journal(@Req() request: Request, @Query() query: PlayerRatingAuditQuery, @CurrentUser() user?: RequestUser) {
     this.requireTrustedOrigin(request);
-    this.requireJournalAccess(user);
-    return this.service.audit(query);
+    return this.service.audit(query, { stationScope: ratingJournalScope(user) });
   }
 
   @Get(['journal.csv', 'journal.xlsx'])
@@ -52,12 +51,12 @@ export class PlayerRatingsController {
     @CurrentUser() user?: RequestUser
   ): Promise<StreamableFile> {
     this.requireTrustedOrigin(response.req);
-    this.requireJournalAccess(user);
+    const stationScope = ratingJournalScope(user);
     const format = response.req.path.endsWith('.xlsx') ? 'xlsx' : 'csv';
     if (ids !== undefined && (typeof ids !== 'string' || ids.length > 10099)) {
       throw new BadRequestException('Invalid journal page');
     }
-    const { items } = await this.service.audit(query, { export: true, displayedIds: ids?.split(',') });
+    const { items } = await this.service.audit(query, { export: true, displayedIds: ids?.split(','), stationScope });
     response.setHeader('Cache-Control', 'private, no-store');
     return new StreamableFile(await exportPlayerRatingAudit(items, format), {
       disposition: `attachment; filename="player-rating-journal.${format}"`,
@@ -73,11 +72,6 @@ export class PlayerRatingsController {
       (fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none')) {
       throw new ForbiddenException('Источник запроса не доверен.');
     }
-  }
-
-  private requireJournalAccess(user?: RequestUser): void {
-    requireGlobalRatingPermission(user, 'audit:read');
-    requireGlobalRatingPermission(user, 'player-ratings:read');
   }
 
   @Get(':playerKey/events/:eventId/result')
@@ -126,6 +120,6 @@ export class PlayerRatingsController {
 
   private requirePlayerRatingRead(request: Request, user: RequestUser | undefined): void {
     this.requireTrustedOrigin(request);
-    requireGlobalRatingPermission(user, 'player-ratings:read');
+    requireRatingPermission(user, 'player-ratings:read');
   }
 }

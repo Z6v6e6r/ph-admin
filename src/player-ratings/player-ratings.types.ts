@@ -16,6 +16,8 @@ export interface PlayerRatingActor {
   id: string;
   name: string;
   type: 'ADMIN' | 'SYSTEM' | 'IMPORT';
+  /** Station on whose behalf a staff member changed the canonical level; absent for global changes. */
+  stationId?: string;
   memberKey?: string | null;
   phoneNorm?: string | null;
 }
@@ -245,6 +247,7 @@ export interface PlayerRatingAuditRow {
   eventType: string;
   actorId: string;
   actorName: string;
+  stationId: string | null;
   playerKey: string;
   playerName: string;
   before: number | null;

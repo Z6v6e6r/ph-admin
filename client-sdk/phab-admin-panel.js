@@ -14131,6 +14131,15 @@
     playerRatingEditReasonInput.placeholder = 'Минимум 10 символов';
     playerRatingEditReasonLabel.appendChild(playerRatingEditReasonInput);
 
+    var playerRatingEditStationLabel = document.createElement('label');
+    playerRatingEditStationLabel.className = 'phab-admin-player-rating-form-label phab-admin-hidden';
+    playerRatingEditStationLabel.appendChild(document.createTextNode('Станция, от имени которой меняется уровень'));
+    playerRatingEditForm.appendChild(playerRatingEditStationLabel);
+
+    var playerRatingEditStationSelect = document.createElement('select');
+    playerRatingEditStationSelect.className = 'phab-admin-settings-input';
+    playerRatingEditStationLabel.appendChild(playerRatingEditStationSelect);
+
     var playerRatingEditConfirm = document.createElement('div');
     playerRatingEditConfirm.className = 'phab-admin-player-rating-form-confirm';
     playerRatingEditConfirm.textContent = 'Укажите новое значение';
@@ -14458,6 +14467,8 @@
       playerRatingEditNumericInput: playerRatingEditNumericInput,
       playerRatingEditGrade: playerRatingEditGrade,
       playerRatingEditReasonInput: playerRatingEditReasonInput,
+      playerRatingEditStationLabel: playerRatingEditStationLabel,
+      playerRatingEditStationSelect: playerRatingEditStationSelect,
       playerRatingEditConfirm: playerRatingEditConfirm,
       playerRatingEditError: playerRatingEditError,
       playerRatingEditCancelBtn: playerRatingEditCancelBtn,
@@ -14882,7 +14893,7 @@
       'access:manage': ['SUPER_ADMIN'],
       'audit:read': ['SUPER_ADMIN', 'MANAGER'],
       'player-ratings:read': ['SUPER_ADMIN', 'MANAGER', 'SUPPORT', 'GAME_MANAGER', 'TOURNAMENT_MANAGER', 'STATION_ADMIN'],
-      'player-ratings:write': ['SUPER_ADMIN'],
+      'player-ratings:write': ['SUPER_ADMIN', 'MANAGER', 'STATION_ADMIN'],
       'advertising:read': ['SUPER_ADMIN', 'MANAGER'],
       'advertising:write': ['SUPER_ADMIN', 'MANAGER'],
       'subscriptions:read': ['SUPER_ADMIN'],
@@ -15121,13 +15132,34 @@
     return hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']);
   }
 
+  // Effective station scope of a rating grant: null for all stations, a list for station-scoped
+  // grants, undefined without the grant. The canonical level itself is shared by all stations.
+  function playerRatingPermissionScope(cfg, permission) {
+    if (!cfg || cfg.permissionsAuthoritative !== true || !hasPermission(cfg, permission)) return undefined;
+    var scopes = cfg.permissionStationScopes || {};
+    if (Object.prototype.hasOwnProperty.call(scopes, permission)) {
+      return scopes[permission] === null ? null : (Array.isArray(scopes[permission]) ? scopes[permission].slice() : []);
+    }
+    return (cfg.stationIds || []).length ? cfg.stationIds.slice() : null;
+  }
+
+  function hasPlayerRatingPermission(cfg, permission) {
+    var scope = playerRatingPermissionScope(cfg, permission);
+    return scope === null || (Array.isArray(scope) && scope.length > 0);
+  }
+
   function canAccessPlayerRatings(cfg) {
-    return Boolean(cfg && cfg.playerRatingAdminEnabled) && hasGlobalPermission(cfg, 'player-ratings:read');
+    return Boolean(cfg && cfg.playerRatingAdminEnabled) && hasPlayerRatingPermission(cfg, 'player-ratings:read');
   }
 
   function canManagePlayerRatings(cfg) {
     return Boolean(cfg && cfg.playerRatingAdminEnabled) &&
-      hasGlobalPermission(cfg, 'player-ratings:write');
+      hasPlayerRatingPermission(cfg, 'player-ratings:write');
+  }
+
+  function playerRatingWriteStations(cfg) {
+    var scope = playerRatingPermissionScope(cfg, 'player-ratings:write');
+    return Array.isArray(scope) ? scope : [];
   }
 
   function canManageQuickReplySettings(cfg) {
@@ -18000,7 +18032,7 @@
       var hideLaboratoryTab = !canAccessLaboratory(cfg);
       var hidePlayerRatingsTab = !canAccessPlayerRatings(cfg);
       dom.playerRatingJournal.classList.toggle('phab-admin-hidden', hidePlayerRatingsTab ||
-        !hasGlobalPermission(cfg, 'audit:read') || !hasGlobalPermission(cfg, 'player-ratings:read'));
+        !hasPlayerRatingPermission(cfg, 'audit:read') || !hasPlayerRatingPermission(cfg, 'player-ratings:read'));
       [
         { value: 'messages', label: 'Диалоги', hidden: !canAccessDialogs(cfg) },
         { value: 'games', label: 'Игры', hidden: !canAccessGames(cfg) },
@@ -38530,7 +38562,7 @@
           reason.textContent = source.reason;
           row.appendChild(reason);
         }
-        if (source.resultRef && hasGlobalPermission(cfg, 'player-ratings:read')) {
+        if (source.resultRef && hasPlayerRatingPermission(cfg, 'player-ratings:read')) {
           var link = document.createElement('a');
           var url = new URL(window.location.pathname, window.location.origin);
           url.searchParams.set('ratingPlayer', player.playerKey);
@@ -38692,7 +38724,7 @@
             row.appendChild(change);
             var meta = document.createElement('div');
             meta.textContent = [formatDateTimeFull(entry.occurredAt), entry.actorName, entry.actorId,
-              entry.playerKey, entry.eventType === 'RATING_INITIAL_ASSIGNED' ? 'Первое назначение' : 'Изменение'].join(' · ');
+              entry.stationId ? 'Станция ' + entry.stationId : 'Все станции', entry.playerKey, entry.eventType === 'RATING_INITIAL_ASSIGNED' ? 'Первое назначение' : 'Изменение'].join(' · ');
             row.appendChild(meta);
             var reason = document.createElement('div');
             reason.textContent = entry.reason;
@@ -38758,10 +38790,10 @@
     }
 
     function closePlayerRatingEdit() { if (state.playerRatingEditSubmitting) return; state.playerRatingEditRequest = null; dom.playerRatingEditModal.classList.add('phab-admin-hidden'); if (state.selectedPlayerRating && state.selectedPlayerRating.initialAssignment) { state.selectedPlayerRating = state.playerRatingAssignmentPrevious || null; renderPlayerRatingDetail(); } state.playerRatingAssignmentPrevious = null; dom.playerRatingEditError.classList.add('phab-admin-hidden'); if (state.playerRatingEditReturnFocus && state.playerRatingEditReturnFocus.focus) state.playerRatingEditReturnFocus.focus(); state.playerRatingEditReturnFocus = null; }
-    function openPlayerRatingEdit(trigger) { var player = state.selectedPlayerRating; if (!player || !canManagePlayerRatings(cfg)) return; state.playerRatingEditReturnFocus = trigger || document.activeElement; dom.playerRatingEditCurrent.textContent = player.initialAssignment ? player.name + ' · Уровень не определён' : 'Сейчас: ' + formatPlayerRatingNumeric(player.ratingNumeric) + ' · ' + player.rating; dom.playerRatingEditNumericInput.value = player.initialAssignment ? '' : String(player.ratingNumeric); dom.playerRatingEditReasonInput.value = ''; dom.playerRatingEditGrade.textContent = player.initialAssignment ? 'Выберите уровень от 1 до 7' : 'Уровень: ' + player.rating; dom.playerRatingEditConfirm.textContent = player.initialAssignment ? '' : 'Будет: ' + formatPlayerRatingNumeric(player.ratingNumeric) + ' · ' + player.rating; dom.playerRatingEditModal.classList.remove('phab-admin-hidden'); dom.playerRatingEditNumericInput.focus(); }
+    function openPlayerRatingEdit(trigger) { var player = state.selectedPlayerRating; if (!player || !canManagePlayerRatings(cfg)) return; state.playerRatingEditReturnFocus = trigger || document.activeElement; dom.playerRatingEditCurrent.textContent = player.initialAssignment ? player.name + ' · Уровень не определён' : 'Сейчас: ' + formatPlayerRatingNumeric(player.ratingNumeric) + ' · ' + player.rating; dom.playerRatingEditNumericInput.value = player.initialAssignment ? '' : String(player.ratingNumeric); dom.playerRatingEditReasonInput.value = ''; var writeStations = playerRatingWriteStations(cfg); clearNode(dom.playerRatingEditStationSelect); writeStations.forEach(function (stationId) { var option = document.createElement('option'); option.value = stationId; option.textContent = stationId; dom.playerRatingEditStationSelect.appendChild(option); }); dom.playerRatingEditStationSelect.required = writeStations.length > 1; dom.playerRatingEditStationLabel.classList.toggle('phab-admin-hidden', writeStations.length < 2); dom.playerRatingEditGrade.textContent = player.initialAssignment ? 'Выберите уровень от 1 до 7' : 'Уровень: ' + player.rating; dom.playerRatingEditConfirm.textContent = player.initialAssignment ? '' : 'Будет: ' + formatPlayerRatingNumeric(player.ratingNumeric) + ' · ' + player.rating; dom.playerRatingEditModal.classList.remove('phab-admin-hidden'); dom.playerRatingEditNumericInput.focus(); }
     function updatePlayerRatingEditPreview() { var player = state.selectedPlayerRating; var value = Number(dom.playerRatingEditNumericInput.value); var grade = mapPlayerRatingGradeV1(value); dom.playerRatingEditGrade.textContent = 'Grade: ' + grade; dom.playerRatingEditConfirm.textContent = player && grade !== '-' ? (player.initialAssignment ? 'Первый уровень: ' : 'Подтвердите: ' + formatPlayerRatingNumeric(player.ratingNumeric) + ' → ') + formatPlayerRatingNumeric(value) : 'Укажите значение от 1 до 7'; }
     function replacePlayerRatingInList(player) { if (!state.playerRatings.some(function (item) { return item.playerKey === player.playerKey; })) state.playerRatings.push(player); state.playerRatings = state.playerRatings.map(function (item) { return item.playerKey === player.playerKey ? Object.assign({}, item, player) : item; }); renderPlayerRatingsList(); }
-    async function savePlayerRatingEdit() { if (state.playerRatingEditSubmitting) return; var player = state.selectedPlayerRating; var ratingNumeric = Number(dom.playerRatingEditNumericInput.value); var reason = String(dom.playerRatingEditReasonInput.value || '').trim(); if (!player || mapPlayerRatingGradeV1(ratingNumeric) === '-' || reason.length < 10) { dom.playerRatingEditError.textContent = 'Укажите рейтинг от 1 до 7 и причину не короче 10 символов.'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); return; } state.playerRatingEditSubmitting = true; dom.playerRatingEditSaveBtn.disabled = true; try { var signature = JSON.stringify([player.playerKey, player.clientId, player.lastEventId, ratingNumeric, reason]); var pending = state.playerRatingEditRequest; if (!pending || pending.signature !== signature) { pending = { signature: signature, key: window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + '-' + Math.random() }; state.playerRatingEditRequest = pending; } var key = pending.key; var result = player.initialAssignment ? await api.assignPlayerRating({ clientId: player.clientId, ratingNumeric: ratingNumeric, reason: reason, idempotencyKey: key }) : await api.changePlayerRating(player.playerKey, { ratingNumeric: ratingNumeric, reason: reason, expectedLastEventId: player.lastEventId, idempotencyKey: key }); state.selectedPlayerRatingKey = result.state.playerKey; state.selectedPlayerRating = result.state; replacePlayerRatingInList(result.state); state.playerRatingEditSubmitting = false; closePlayerRatingEdit(); dom.playerRatingJournal.dispatchEvent(new Event('rating-updated')); await loadPlayerRatingEvents(); setStatus('Уровень сохранён в ЦУП.', false); } catch (error) { if (error && error.status === 409 && !player.initialAssignment) { dom.playerRatingEditError.textContent = 'Карточка устарела. Актуальное изменение загружено — повторите корректировку.'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); await selectPlayerRating(player.playerKey); } else { dom.playerRatingEditError.textContent = error && error.message ? error.message : 'Не удалось сохранить уровень'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); } } finally { state.playerRatingEditSubmitting = false; dom.playerRatingEditSaveBtn.disabled = false; } }
+    async function savePlayerRatingEdit() { if (state.playerRatingEditSubmitting) return; var player = state.selectedPlayerRating; var ratingNumeric = Number(dom.playerRatingEditNumericInput.value); var reason = String(dom.playerRatingEditReasonInput.value || '').trim(); if (!player || mapPlayerRatingGradeV1(ratingNumeric) === '-' || reason.length < 10) { dom.playerRatingEditError.textContent = 'Укажите рейтинг от 1 до 7 и причину не короче 10 символов.'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); return; } state.playerRatingEditSubmitting = true; dom.playerRatingEditSaveBtn.disabled = true; try { var writeStations = playerRatingWriteStations(cfg); var stationId = writeStations.length > 1 ? String(dom.playerRatingEditStationSelect.value || '') : writeStations[0]; var signature = JSON.stringify([player.playerKey, player.clientId, player.lastEventId, ratingNumeric, reason, stationId || null]); var pending = state.playerRatingEditRequest; if (!pending || pending.signature !== signature) { pending = { signature: signature, key: window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + '-' + Math.random() }; state.playerRatingEditRequest = pending; } var key = pending.key; var result = player.initialAssignment ? await api.assignPlayerRating(Object.assign({ clientId: player.clientId, ratingNumeric: ratingNumeric, reason: reason, idempotencyKey: key }, stationId ? { stationId: stationId } : {})) : await api.changePlayerRating(player.playerKey, Object.assign({ ratingNumeric: ratingNumeric, reason: reason, expectedLastEventId: player.lastEventId, idempotencyKey: key }, stationId ? { stationId: stationId } : {})); state.selectedPlayerRatingKey = result.state.playerKey; state.selectedPlayerRating = result.state; replacePlayerRatingInList(result.state); state.playerRatingEditSubmitting = false; closePlayerRatingEdit(); dom.playerRatingJournal.dispatchEvent(new Event('rating-updated')); await loadPlayerRatingEvents(); setStatus('Уровень сохранён в ЦУП.', false); } catch (error) { if (error && error.status === 409 && !player.initialAssignment) { dom.playerRatingEditError.textContent = 'Карточка устарела. Актуальное изменение загружено — повторите корректировку.'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); await selectPlayerRating(player.playerKey); } else { dom.playerRatingEditError.textContent = error && error.message ? error.message : 'Не удалось сохранить уровень'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); } } finally { state.playerRatingEditSubmitting = false; dom.playerRatingEditSaveBtn.disabled = false; } }
     async function retryPlayerRatingProjection() { var player = state.selectedPlayerRating; if (!player) return; var result = await api.retryPlayerRatingProjection(player.playerKey); state.selectedPlayerRating = result.state; replacePlayerRatingInList(result.state); renderPlayerRatingDetail(); setStatus('Задача синхронизации Viva переведена в ожидание.', false); }
 
     var NOTIFICATION_USER_ID_PATTERN =

@@ -3,7 +3,7 @@ import { PlayerRatingAuditRow } from './player-ratings.types';
 
 const columns: [keyof PlayerRatingAuditRow, string][] = [
   ['id', 'ID записи'], ['occurredAt', 'Дата и время (UTC)'], ['eventType', 'Действие'],
-  ['actorId', 'ID сотрудника'], ['actorName', 'Сотрудник'], ['playerKey', 'ID игрока'],
+  ['actorId', 'ID сотрудника'], ['actorName', 'Сотрудник'], ['stationId', 'Станция'], ['playerKey', 'ID игрока'],
   ['playerName', 'Игрок'], ['before', 'Уровень до'], ['gradeBefore', 'Буква до'],
   ['after', 'Уровень после'], ['gradeAfter', 'Буква после'], ['reason', 'Комментарий']
 ];
