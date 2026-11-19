@@ -1,10 +1,11 @@
-require('reflect-metadata');
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { Module, ForbiddenException } = require('@nestjs/common');
-const { NestFactory } = require('@nestjs/core');
-
+const { createRequire } = require('node:module');
 const dist = process.env.RATING_CUP_DIST;
+const requireFromDist = createRequire(path.join(dist, 'main.js'));
+requireFromDist('reflect-metadata');
+const { Module, ForbiddenException } = requireFromDist('@nestjs/common');
+const { NestFactory } = requireFromDist('@nestjs/core');
 const fromCup = name => require(path.join(dist, name));
 const { TournamentsController } = fromCup('tournaments/tournaments.controller');
 const { TournamentsService } = fromCup('tournaments/tournaments.service');

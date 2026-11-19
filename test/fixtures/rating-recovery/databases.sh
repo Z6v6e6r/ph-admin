@@ -7,6 +7,11 @@ tag=${RATING_DB_TAG:-repro}
 [[ "$tag" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,35}$ ]]
 mongo="phub-rating-recovery-mongo-$tag"
 pg="phub-rating-recovery-pg-$tag"
+mongo_port=${RATING_MONGO_PORT:-27183}
+pg_port=${RATING_PG_PORT:-25483}
+for port in "$mongo_port" "$pg_port"; do
+  [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] && ((port <= 65535)) || exit 2
+done
 label=org.padlhub.fixture=rating-recovery
 db=rating_recovery_fixture
 mongo_image='mongo@sha256:884c055bff8b7144ca44830d01826facd3083b33c4dea44b94a1476c62de3c32'
@@ -26,9 +31,9 @@ poll() {
 
 case "$action" in
   start)
-    docker run -d --label "$label" --name "$mongo" --publish 127.0.0.1:27183:27017 \
+    docker run -d --label "$label" --name "$mongo" --publish "127.0.0.1:$mongo_port:27017" \
       "$mongo_image" --replSet ratingRecovery --bind_ip_all
-    docker run -d --label "$label" --name "$pg" --publish 127.0.0.1:25483:5432 \
+    docker run -d --label "$label" --name "$pg" --publish "127.0.0.1:$pg_port:5432" \
       --env POSTGRES_HOST_AUTH_METHOD=trust --env "POSTGRES_DB=$db" "$pg_image"
     poll docker exec "$mongo" mongosh --quiet --eval 'db.adminCommand({ping:1}).ok'
     docker exec "$mongo" mongosh --quiet --eval \

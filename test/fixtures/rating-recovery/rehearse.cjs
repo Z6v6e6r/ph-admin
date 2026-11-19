@@ -17,7 +17,7 @@ const db = client.db(dbName);
 const tournaments = db.collection('custom_tournaments');
 const ops = db.collection('operations');
 const handoff = process.env.RATING_CHECKPOINT;
-const projectionOrigin = 'http://127.0.0.1:18183';
+const projectionOrigin = 'http://127.0.0.1:' + process.env.RATING_LK2_PORT;
 const completeEvent = 'exercise-complete';
 const abortEvent = 'exercise-abort';
 const freshEvent = 'exercise-fresh';
@@ -155,7 +155,7 @@ async function post(ref, suffix, payload, headers = {}) {
   return { status: response.status, body: await response.json() };
 }
 
-async function cupEffect(effect) {
+async function cupEffect(effect, { loseAck = false } = {}) {
   const { selected, msg } = effect;
   const url = new URL(msg.url);
   assert.equal(selected, 0);
@@ -168,6 +168,10 @@ async function cupEffect(effect) {
   const { status, body } = await post(url.pathname.slice(prefix.length, suffixAt), url.pathname.slice(suffixAt),
     msg.payload, msg.headers);
   if (status >= 400) console.log(JSON.stringify({ cupHttp: url.pathname, status, body }));
+  if (loseAck) {
+    assert.equal(status, 201);
+    return route({ ...msg, error: { message: 'fixture lost CUP HTTP ACK' } });
+  }
   return route({ ...msg, statusCode: status, payload: body, responseUrl: msg.url });
 }
 
@@ -347,8 +351,10 @@ async function recover() {
     cupCheckout: checkout.status, cupSubscription: admission.status, lk1: paused.msg.statusCode }));
   const serverResponse = await post(serverEvent, '/server-booking', {}, { 'idempotency-key': 'synthetic-new-server-booking' });
   const attempts = await db.collection('tournament_server_booking_attempts_v1').countDocuments();
-  const serverPassed = serverResponse.status === 503 && serverResponse.body.code === pauseCode && attempts === 0;
-  console.log(JSON.stringify({ scenario: 'fresh-server-booking-enabled', status: serverPassed ? 'PASS' : 'FAIL',
+  assert.equal(serverResponse.status, 503);
+  assert.equal(serverResponse.body.code, pauseCode);
+  assert.equal(attempts, 0);
+  console.log(JSON.stringify({ scenario: 'fresh-server-booking-enabled', status: 'PASS',
     response: serverResponse, attempts }));
 
   // Changing the event rule after reservation must not force repeat admission on recovery.
@@ -385,28 +391,28 @@ async function recover() {
   console.log(JSON.stringify({ scenario: 'abort', status: 'PASS', ownerId: abortOwner.transactionId,
     requestId: abortOwner.ownerCommand.requestOperationId, releasedSeats: 1 }));
 
-  const completion = await driveActiveBookingReplay();
-  const naturalCompletion = completion.selected === 0 && stage(completion) === 'tournament_completion';
-  console.log(JSON.stringify({ scenario: 'complete-ingress', status: naturalCompletion ? 'PASS' : 'FAIL',
-    stage: stage(completion), effectIndex: completion.selected,
-    statusCode: completion.msg.statusCode, payload: completion.msg.payload,
-    cupOwnerState: (await owner(completed)).state, participants: (await tournament(completed)).participants.length }));
   const completionBody = {
-    operationId: checkpoint.complete.requestId, clientSubscriptionId: completed.clientSubscriptionId, bookingId,
+    operationId: checkpoint.complete.requestId, clientSubscriptionId: completed.clientSubscriptionId,
+    bookingId, ownerOperationId: checkpoint.complete.ownerId,
   };
-  if (!naturalCompletion) {
-    assert.equal((await owner(completed)).state, 'PROVIDER_CREATE_PENDING');
-    assert.deepEqual((await tournament(completed)).participants, []);
-  } else {
+  const exactReplay = async () => {
+    const completion = await driveActiveBookingReplay();
+    assert.equal(completion.selected, 0, JSON.stringify(completion.msg.payload));
+    expect(completion, 'tournament_completion');
     assert.deepEqual(completion.msg.payload, completionBody);
-    assert.ok([200, 201].includes((await cupEffect(completion)).msg.statusCode));
-  }
-  // Isolate CUP's continuation when LK1 ingress does not emit the command.
-  const completeDirectly = () => post(completeEvent, '/subscription-admission/complete', {
-    ...completionBody, ownerOperationId: checkpoint.complete.ownerId,
-  }, { 'x-cup-integration-token': ownerToken });
-  const completeResponse = await completeDirectly();
-  assert.ok([200, 201].includes(completeResponse.status), JSON.stringify(completeResponse.body));
+    return completion;
+  };
+
+  // A tracked operation must remain pending if CUP reports it as untracked.
+  const untracked = (await exactReplay()).msg;
+  const refusedAck = await route({ ...untracked, statusCode: 201, responseUrl: untracked.url,
+    payload: { state: 'LEGACY_UNTRACKED', requestOperationId: completed.operationId } });
+  assert.equal(refusedAck.msg.statusCode, 202);
+  assert.equal((await owner(completed)).state, 'PROVIDER_CREATE_PENDING');
+
+  // CUP completes durably even if LK1 loses its first response. The same ingress replay reads it back.
+  const lostAck = await cupEffect(await exactReplay(), { loseAck: true });
+  assert.equal(lostAck.msg.statusCode, 202);
   const completeOwner = await owner(completed);
   assert.equal(completeOwner.transactionId, checkpoint.complete.ownerId);
   assert.equal(completeOwner.ownerCommand.requestOperationId, checkpoint.complete.requestId);
@@ -416,18 +422,24 @@ async function recover() {
   assert.equal(participants.length, 1);
   assert.equal(participants[0].id, 'owner:' + checkpoint.complete.ownerId);
   assert.equal(participants[0].vivaBookingId, bookingId);
-  assert.ok([200, 201].includes((await completeDirectly()).status));
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { msg } = await cupEffect(await exactReplay());
+    assert.equal(msg.statusCode, 200);
+    assert.equal(msg.payload.state, 'CONFIRMED');
+    assert.equal(msg.payload.bookingId, bookingId);
+  }
   assert.deepEqual((await tournament(completed)).participants, participants);
-  console.log(JSON.stringify({ scenario: 'complete-cup-exact-command', status: 'PASS', participantId: participants[0].id }));
+  assert.deepEqual(await owner(completed), completeOwner);
+  console.log(JSON.stringify({ scenario: 'complete-ingress', status: 'PASS', ownerId: completeOwner.transactionId,
+    requestId: completionBody.operationId, bookingId, participants: participants.length, lostAckRecovered: true }));
 
   assert.deepEqual(await canonical(), level);
   assert.equal(providerPosts, 0);
   assert.equal((await receive(cup, 'provider-calls')).providerCalls, 0);
   console.log(JSON.stringify({ phase, pids: { cup: cup.pid, lk1: router.pid }, level,
-    pause: 503, serverPassed, naturalCompletion,
+    pause: 503,
     complete: { ownerId: completeOwner.transactionId, bookingId, seats: participants.length },
     abort: { ownerId: abortOwner.transactionId, released: true }, providerPosts }));
-  if (!serverPassed || !naturalCompletion) process.exitCode = 1;
 }
 
 async function main() {
