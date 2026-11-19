@@ -444,7 +444,7 @@ async function main() {
     await check('subscription copay holds the last seat until exact paid settlement and replays one participant', async () => {
       const name = 'subscription-copay';
       const exerciseId = 'exercise-' + name;
-      await seed(name, 1);
+      await seedLastSeat(name);
       const f = owner(355);
       const token = 'Bearer synthetic-token';
       const integration = 'synthetic-owner-token';
@@ -462,8 +462,16 @@ async function main() {
         { ...request, payment: { ...request.payment, transactionId: 'wrong-tx' } }, true));
       await assert.rejects(instance(356).service.subscriptionAdmission(exerciseId, token, subscription('other-key')));
       const before = (await collection.findOne({ id: name }))!;
-      assert.equal(before.participants.length, 0);
-      assert.deepEqual(f.tournaments.buildDisplayTournamentParticipants(before), []);
+      const originalRoster = before.participants;
+      const staleViva = { source: 'VIVA', participantsCount: 2, participants: [
+        ...originalRoster, { name: 'Unpaid carrier', vivaBookingId: booking.id, status: 'REGISTERED', paymentStatus: 'UNPAID' }
+      ] };
+      assert.equal(originalRoster.length, 1);
+      assert.deepEqual(f.tournaments.buildDisplayTournamentParticipants(before), originalRoster);
+      const beforeView = f.tournaments.mergeCustomWithSourceTournament(before, staleViva);
+      assert.equal(beforeView.participants.length, 1);
+      assert.equal(beforeView.participantsCount, 1);
+      assert.equal(beforeView.details.sourceTournamentSnapshot.participantsCount, 1);
 
       let readback: Row = { ...transaction, status: 'WAITING' };
       let activeBooking: Row | null = booking;
@@ -493,9 +501,12 @@ async function main() {
       const after = (await collection.findOne({ id: name }))!;
       assert.equal(after.details.booking.pendingJoinPayments[0].state, 'OWNER_COMPLETED');
       assert.equal(after.details.booking.pendingJoinPayments[0].providerTransactionId, transaction.id);
-      assert.equal(after.participants.length, 1);
-      assert.equal(after.participants[0].paymentStatus, 'PAID');
-      assert.equal(after.participants[0].vivaBookingId, booking.id);
+      assert.equal(after.participants.length, 2);
+      assert.equal(after.participants[1].paymentStatus, 'PAID');
+      assert.equal(after.participants[1].vivaBookingId, booking.id);
+      const afterView = f.tournaments.mergeCustomWithSourceTournament(after, staleViva);
+      assert.equal(afterView.participants.length, 2);
+      assert.equal(afterView.participants.filter((player: Row) => player.paymentStatus === 'PAID').length, 1);
     });
     await check('exact cancelled booking with a pending payment releases its only held seat', async () => {
       const name = 'paid-cancelled-before-completion';
