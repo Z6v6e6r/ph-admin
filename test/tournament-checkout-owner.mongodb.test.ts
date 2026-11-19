@@ -507,7 +507,8 @@ async function main() {
       assert.equal(after.participants.length, 2);
       assert.equal(after.participants[1].paymentStatus, 'PAID');
       assert.equal(after.participants[1].vivaBookingId, booking.id);
-      const afterView = f.tournaments.mergeCustomWithSourceTournament(after, staleViva);
+      const storedView = await f.repo.findCustomTournamentBySlug(name);
+      const afterView = f.tournaments.mergeCustomWithSourceTournament(storedView, staleViva);
       assert.equal(afterView.participants.length, 2);
       assert.equal(afterView.participants.filter((player: Row) => player.paymentStatus === 'PAID').length, 1);
     });

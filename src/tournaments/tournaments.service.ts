@@ -2136,9 +2136,10 @@ export class TournamentsService {
       (item) => this.normalizePhone(item.phone) === normalizedPhone
     );
     if (participantIndex >= 0) {
+      const copayBookingId = this.completedCopayBookings(tournament).get(tournament.participants[participantIndex].id ?? '');
       return {
         status: 'REGISTERED',
-        bookingId: this.pickString(this.toRecord(tournament.participants[participantIndex])?.vivaBookingId),
+        ...(copayBookingId ? { bookingId: copayBookingId } : {}),
         placeNumber: participantIndex + 1,
         canRegister: false,
         canCancel: true,
@@ -5453,11 +5454,8 @@ export class TournamentsService {
     const customParticipants = Array.isArray(tournament.participants) ? tournament.participants : [];
     const reserved = this.getPendingJoinPayments(tournament).filter(payment =>
       payment.ownerSubscription && this.isCapacityHoldingPendingJoinPayment(payment));
-    const rawHolds = this.toRecord(this.toRecord(tournament.details)?.booking)?.pendingJoinPayments;
-    const paidOwnerIds = new Set((Array.isArray(rawHolds) ? rawHolds : []).filter(hold =>
-      hold?.state === 'OWNER_COMPLETED' && hold.ownerCommand?.kind === 'SUBSCRIPTION' && hold.ownerReceipt?.kind === 'COPAY'
-    ).map(hold => `owner:${hold.transactionId}`));
-    const paidCopay = customParticipants.filter(participant => participant.paymentStatus === 'PAID' && paidOwnerIds.has(participant.id ?? ''));
+    const completedCopays = this.completedCopayBookings(tournament);
+    const paidCopay = customParticipants.filter(p => p.paymentStatus === 'PAID' && completedCopays.has(p.id ?? ''));
     const sourceParticipants: TournamentParticipant[] = [];
     const emittedPaid = new Set<string>();
     for (const participant of sourceRoster) {
@@ -5466,7 +5464,7 @@ export class TournamentsService {
       if (reserved.some(payment => bookingId && payment.copayBookingId
         ? payment.copayBookingId === bookingId : payment.phone === phone)) continue;
       const settled = paidCopay.find(player => bookingId
-        ? this.toRecord(player)?.vivaBookingId === bookingId : this.normalizePhone(player.phone) === phone);
+        ? completedCopays.get(player.id ?? '') === bookingId : this.normalizePhone(player.phone) === phone);
       if (!settled) sourceParticipants.push(participant);
       else if (!emittedPaid.has(settled.id ?? '')) {
         emittedPaid.add(settled.id ?? '');
@@ -8379,6 +8377,19 @@ export class TournamentsService {
       });
 
     return participants;
+  }
+
+  private completedCopayBookings(tournament: CustomTournament): Map<string, string> {
+    const rows = this.toRecord(this.toRecord(tournament.details)?.booking)?.pendingJoinPayments;
+    const result = new Map<string, string>();
+    for (const row of Array.isArray(rows) ? rows : []) {
+      if (row?.state === 'OWNER_COMPLETED' && row.ownerCommand?.kind === 'SUBSCRIPTION'
+        && row.ownerReceipt?.kind === 'COPAY' && typeof row.providerBookingId === 'string'
+        && row.providerBookingId === row.ownerReceipt.bookingId) {
+        result.set(`owner:${row.transactionId}`, row.providerBookingId);
+      }
+    }
+    return result;
   }
 
   private getPendingJoinPayments(tournament: CustomTournament): PendingJoinPayment[] {
