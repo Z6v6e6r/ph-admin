@@ -111,6 +111,28 @@ async function main() {
     });
     assert.equal(h.collection.rows.size, 0);
   }
+  await withEnv({ TOURNAMENT_SERVER_BOOKING_MODE: 'enabled', TOURNAMENT_OWNER_RECOVERY_ONLY: 'true' }, async () => {
+    const h = build(tournament(price), 3.31);
+    const join = (key = 'fixture-key-0001') => h.service.join('level-cup', 'Bearer synthetic', key);
+    await status(join(), 503, 'TOURNAMENT_NEW_OPERATIONS_PAUSED');
+    assert.equal(h.collection.rows.size, 0);
+    assert.equal(h.viva.bookings.length, 0);
+
+    // Resume an existing operation with its original generation and receipt.
+    const started = await withEnv({ TOURNAMENT_OWNER_RECOVERY_ONLY: undefined }, () => join());
+    const before = structuredClone([...h.collection.rows.values()][0]);
+    assert.equal(started.state, 'PAYMENT_PENDING');
+    assert.deepEqual(await join(), started);
+    assert.deepEqual(await h.service.status('level-cup', 'Bearer synthetic'), started);
+    assert.deepEqual([...h.collection.rows.values()], [before]);
+
+    // A terminal predecessor gives no permission to create a new generation.
+    const terminal = { ...before, state: 'FAILED' as const };
+    h.collection.rows.set(terminal._id, terminal);
+    await status(join('fixture-key-0002'), 503, 'TOURNAMENT_NEW_OPERATIONS_PAUSED');
+    assert.deepEqual([...h.collection.rows.values()], [terminal]);
+    assert.equal(h.viva.bookings.length, 1);
+  });
   await withEnv({ TOURNAMENT_SERVER_BOOKING_MODE: 'enabled', TOURNAMENT_LEVEL_ADMISSION_MODE: 'enforce' }, async () => {
     // Out of range: refusal with the decision, no attempt.
     const refused = build(tournament(price), 3.8);

@@ -208,6 +208,7 @@ export class TournamentServerBookingCoordinator {
   constructor(
     private readonly ports: {
       mode: () => TournamentServerBookingMode;
+      assertNewOperationsOpen: () => void;
       admission: TournamentServerBookingAdmissionPort;
       store: TournamentServerBookingStore;
       booking: VivaAdminBookingPort;
@@ -251,6 +252,7 @@ export class TournamentServerBookingCoordinator {
       }
       return this.view(await this.resume(existing, admission, () => this.ports.admission.admit(tournamentRef, authorizationHeader)));
     }
+    this.ports.assertNewOperationsOpen();
     if (!admission.decision.allowed || admission.otherRefusal) return this.refusal(admission);
     const { exerciseId, studioId } = admission;
     if (!exerciseId || !studioId || !PROVIDER_ID.test(exerciseId) || !PROVIDER_ID.test(studioId)) {

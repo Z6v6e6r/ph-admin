@@ -80,6 +80,7 @@ function harness(options: {
   };
   const coordinator = new TournamentServerBookingCoordinator({
     mode: () => state.mode ?? 'ENABLED',
+    assertNewOperationsOpen: () => {},
     admission: { admit: async () => { calls.admit += 1; return admission(); } },
     store,
     booking: {

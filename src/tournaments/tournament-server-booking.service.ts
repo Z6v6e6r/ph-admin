@@ -74,6 +74,7 @@ export class TournamentServerBookingService {
     });
     this.coordinator = new TournamentServerBookingCoordinator({
       mode: () => readTournamentServerBookingMode(process.env),
+      assertNewOperationsOpen: () => tournamentsService.assertTournamentOwnerNewOperationsOpen(),
       admission: { admit: (ref, auth) => tournamentsService.resolveServerBookingAdmission(ref, auth) },
       store: new MongoTournamentServerBookingStore(() => persistence.serverBookingAttemptsCollection()),
       booking: viva,

@@ -260,7 +260,9 @@ export class TournamentCheckoutService {
     const operation = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, actor.phoneNorm, { requestKey: body.operationId });
     if (!operation) {
       const other = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, actor.phoneNorm);
-      if (other) throw new ConflictException({ code: 'TOURNAMENT_OPERATION_BINDING_MISMATCH' });
+      if (other || body.ownerOperationId !== undefined) {
+        throw new ConflictException({ code: 'TOURNAMENT_OPERATION_BINDING_MISMATCH' });
+      }
       return { state: 'LEGACY_UNTRACKED', requestOperationId: body.operationId };
     }
     if ((body.ownerOperationId !== undefined && operation.transactionId !== body.ownerOperationId)

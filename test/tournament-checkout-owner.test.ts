@@ -53,7 +53,8 @@ function fixture() {
   Object.assign(tournaments, { tournamentsPersistence: persistence, trustedRegistrationIdentities: new WeakMap(),
     lkIdentityService: { verifyTrustedBearer: async (header: string) => {
       assert.equal(header, auth); return { actor };
-    }, verify: async (_header: string, _token: string) => {
+    }, verify: async (header: string, token: string) => {
+      if (header === auth && token === 'synthetic-owner-token') return { actor: { ...actor, verified: true } };
       throw new ForbiddenException({ code: 'INTEGRATION_TOKEN_REQUIRED' });
     } },
     playerRatingsService: { resolveCanonicalLevelByIdentity: async (identity: Row) => {
@@ -192,6 +193,19 @@ test('subscription completion cannot be attested by the ordinary browser bearer'
   }
 });
 
+
+test('an explicit owner ID cannot use the legacy untracked completion path', async () => {
+  const { service } = fixture();
+  const input = { operationId: 'subscription-operation', clientSubscriptionId: 'synthetic-subscription',
+    bookingId: 'original-booking' };
+  const token = 'synthetic-owner-token';
+  await assert.rejects(service.completeSubscription(exerciseId, auth, token, {
+    ...input, ownerOperationId: 'missing-owner',
+  }), errorCode('TOURNAMENT_OPERATION_BINDING_MISMATCH'));
+  assert.deepEqual(await service.completeSubscription(exerciseId, auth, token, input), {
+    state: 'LEGACY_UNTRACKED', requestOperationId: input.operationId,
+  });
+});
 
 test('subscription abort cannot be attested by browser bearer or a malformed proof', async () => {
   const f = fixture();
