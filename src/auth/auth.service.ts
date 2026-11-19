@@ -404,8 +404,9 @@ export class AuthService implements OnModuleInit {
     if (token) {
       const payload = this.verifyToken(token);
       if (payload) {
-        const persisted = await this.findActiveUserById(payload.sub);
+        // Reconnect and reload stored roles before reading the user, so a recovered store decides.
         await this.ensurePersistedRoles();
+        const persisted = await this.findActiveUserById(payload.sub);
         if (persisted) {
           return { user: this.toRequestUser(persisted, 'token'), source: 'token' };
         }

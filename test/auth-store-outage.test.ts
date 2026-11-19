@@ -102,8 +102,20 @@ async function main(): Promise<void> {
     const root = (await auth.resolveUserFromRequest(bearer(rootSession.accessToken))).user!;
     await assertUnchanged(r, root, 'synthetic-outage-root-1', [503]);
 
-    // Store restored: the next request reconnects and stored roles decide.
+    // Tokens issued during the outage: the first request after recovery is decided by stored records.
+    const outageManagerToken = (await auth.login('env_manager', 'SyntheticManager123')).accessToken;
     control.restore();
+    // The very first request after recovery: env-root exists only in ADMIN_AUTH_USERS_JSON, not in the store.
+    const recoveredRoot = await auth.resolveUserFromRequest(bearer(rootSession.accessToken));
+    assert.equal(recoveredRoot.user?.permissions?.includes('*') ?? false, false, 'unstored env superadmin gets no grants after recovery');
+    if (recoveredRoot.user) await assertUnchanged(r, recoveredRoot.user, 'synthetic-recovered-token-root-1', [401, 403, 503]);
+    const recoveredManager = (await auth.resolveUserFromRequest(bearer(outageManagerToken))).user!;
+    assert.equal(recoveredManager.storedRightsConfirmed, undefined);
+    assert.deepEqual(recoveredManager.roleIds, [Role.MANAGER]);
+    assert.equal(recoveredManager.permissions?.includes('player-ratings:write'), false, 'stored MANAGER role, not defaults');
+    await assertUnchanged(r, recoveredManager, 'synthetic-recovered-token-manager-1', [403]);
+
+    // Fresh logins after recovery.
     const managerAfter = (await auth.resolveUserFromRequest(bearer((await auth.login('env_manager', 'SyntheticManager123')).accessToken))).user!;
     assert.equal(managerAfter.storedRightsConfirmed, undefined, 'rights are confirmed after recovery');
     await assertUnchanged(r, managerAfter, 'synthetic-restored-manager-1', [403]);

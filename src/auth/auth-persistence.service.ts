@@ -50,7 +50,11 @@ export class AuthPersistenceService implements OnModuleInit, OnModuleDestroy {
     if (Date.now() - this.lastConnectAttemptAt < this.reconnectIntervalMs) return false;
     this.reconnection = this.initialize()
       .then(() => Boolean(this.db), () => false)
-      .finally(() => { this.reconnection = undefined; });
+      .finally(() => {
+        // Measure the interval from the end of an attempt so requests are not blocked back to back.
+        this.lastConnectAttemptAt = Date.now();
+        this.reconnection = undefined;
+      });
     return this.reconnection;
   }
 
