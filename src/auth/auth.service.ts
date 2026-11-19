@@ -58,6 +58,11 @@ interface AdminRoleInput {
   stationIds?: string[];
 }
 
+/** Grants that a persisted deployment must store in a role; they never come from built-in defaults. */
+const EXPLICIT_GRANT_PERMISSIONS = new Set(['player-ratings:write']);
+const withoutExplicitGrants = (permissions: readonly string[]): string[] =>
+  permissions.filter((permission) => !EXPLICIT_GRANT_PERMISSIONS.has(permission));
+
 @Injectable()
 export class AuthService implements OnModuleInit {
   private readonly logger = new Logger(AuthService.name);
@@ -73,10 +78,15 @@ export class AuthService implements OnModuleInit {
   private readonly usersByLogin = new Map<string, AdminUserRecord>();
   private readonly usersById = new Map<string, AdminUserRecord>();
   private readonly rolesById = new Map<string, AdminRoleDefinition>();
+  /** True once role definitions come from MongoDB; defaults alone never authorize a persisted deployment. */
+  private rolesFromPersistence = false;
 
   constructor(private readonly persistence: AuthPersistenceService) {}
 
   async onModuleInit(): Promise<void> {
+    // Nest runs one module's init hooks concurrently. Wait for the shared, memoized MongoDB
+    // connection so stored roles, not defaults, decide authorization from the first request.
+    await this.persistence.onModuleInit?.();
     await this.initializeRoles();
     await this.initializeUsers();
   }
@@ -332,6 +342,7 @@ export class AuthService implements OnModuleInit {
       throw new UnauthorizedException('Auth is disabled');
     }
     await this.refreshUsersFromPersistence();
+    await this.ensurePersistedRoles();
     const normalizedLogin = String(login).trim().toLowerCase();
     const user = this.usersByLogin.get(normalizedLogin);
     if (!user || !user.active || !this.passwordsEqual(password, user.password)) {
@@ -394,6 +405,7 @@ export class AuthService implements OnModuleInit {
       const payload = this.verifyToken(token);
       if (payload) {
         const persisted = await this.findActiveUserById(payload.sub);
+        await this.ensurePersistedRoles();
         if (persisted) {
           return { user: this.toRequestUser(persisted, 'token'), source: 'token' };
         }
@@ -452,10 +464,17 @@ export class AuthService implements OnModuleInit {
         await this.persistence.seedRoles(defaults);
       }
       const persisted = await this.persistence.loadRoles();
-      this.setRoles(persisted.length > 0 ? persisted : defaults);
+      this.setRoles(persisted, true);
+      this.rolesFromPersistence = true;
       return;
     }
     this.setRoles(defaults);
+  }
+
+  /** Loads stored roles if persistence became available after startup used the defaults. */
+  private async ensurePersistedRoles(): Promise<void> {
+    if (this.rolesFromPersistence || !this.persistence.isEnabled()) return;
+    await this.refreshRolesFromPersistence();
   }
 
   private async initializeUsers(): Promise<void> {
@@ -516,9 +535,10 @@ export class AuthService implements OnModuleInit {
       return;
     }
     const roles = await this.persistence.loadRoles();
-    if (roles.length > 0) {
-      this.setRoles(roles);
+    if (roles.length > 0 || !this.rolesFromPersistence) {
+      this.setRoles(roles, true);
     }
+    this.rolesFromPersistence = true;
   }
 
   private async findActiveUserById(id: string): Promise<AdminUserRecord | null> {
@@ -578,15 +598,21 @@ export class AuthService implements OnModuleInit {
     };
   }
 
-  private setRoles(roles: AdminRoleDefinition[]): void {
+  /**
+   * With persistence, a built-in role missing from MongoDB (or stored without permissions) keeps its
+   * default permissions except grants that must be stored explicitly.
+   */
+  private setRoles(roles: AdminRoleDefinition[], fromPersistence = false): void {
     this.rolesById.clear();
     for (const role of roles) {
-      const normalized = this.normalizeRoleDefinition(role);
+      const normalized = this.normalizeRoleDefinition(role, fromPersistence);
       this.rolesById.set(normalized.id, normalized);
     }
     for (const role of this.defaultRoles()) {
       if (!this.rolesById.has(role.id)) {
-        this.rolesById.set(role.id, role);
+        this.rolesById.set(role.id, fromPersistence
+          ? { ...role, permissions: withoutExplicitGrants(role.permissions) }
+          : role);
       }
     }
   }
@@ -770,7 +796,7 @@ export class AuthService implements OnModuleInit {
     };
   }
 
-  private normalizeRoleDefinition(role: AdminRoleDefinition): AdminRoleDefinition {
+  private normalizeRoleDefinition(role: AdminRoleDefinition, fromPersistence = false): AdminRoleDefinition {
     const id = this.normalizeRoleId(role.id, true);
     const systemRole = (Object.values(Role) as string[]).includes(id);
     const fallbackName = systemRole ? this.defaultRoleName(id as Role) : id;
@@ -778,7 +804,8 @@ export class AuthService implements OnModuleInit {
       id,
       name: this.normalizeOptionalText(role.name, 120) || fallbackName,
       description: this.normalizeOptionalText(role.description, 500),
-      permissions: this.normalizePermissions(role.permissions, systemRole ? DEFAULT_ROLE_PERMISSIONS[id as Role] : []),
+      permissions: this.normalizePermissions(role.permissions, !systemRole ? []
+        : fromPersistence ? withoutExplicitGrants(DEFAULT_ROLE_PERMISSIONS[id as Role]) : DEFAULT_ROLE_PERMISSIONS[id as Role]),
       stationIds: this.normalizeStringList(role.stationIds),
       isSystem: role.isSystem === true || systemRole,
       createdAt: this.normalizeOptionalText(role.createdAt, 80) || new Date(0).toISOString(),
