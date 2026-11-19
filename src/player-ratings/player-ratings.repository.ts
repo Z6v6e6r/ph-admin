@@ -120,9 +120,16 @@ export class PlayerRatingRepository {
   async listEvents(filter: Filter<PlayerRatingEventDocument>, limit: number): Promise<PlayerRatingEventDocument[]> {
     return this.events()
       .find(filter, { projection: { _id: 0 } })
+      .maxTimeMS(5000)
       .sort({ occurredAt: -1, id: 1 })
       .limit(limit)
       .toArray();
+  }
+
+  async gameResult(gameId: string, resultId: string, revision: number | string) {
+    const scoreRevision = revision === 1 ? { $in: [1, null] } : revision;
+    return this.requireDb().collection<{ score?: { teamA: number; teamB: number } }>('lk_game_results')
+      .findOne({ gameId, id: resultId, scoreRevision }, { projection: { _id: 0, score: 1 }, maxTimeMS: 5000 });
   }
 
   async runAtomicChange(input: {
@@ -146,6 +153,8 @@ export class PlayerRatingRepository {
         const preimage: Filter<PlayerRatingStateDocument> = {
           playerKey: input.nextState.playerKey,
           lastEventId: input.expectedLastEventId,
+          ownership: 'CUP_CANONICAL',
+          clientId: input.nextState.clientId,
           ...(alignment ? {
             ownership: 'CUP_CANONICAL' as const,
             clientId: alignment.clientId,

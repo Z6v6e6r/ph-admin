@@ -2,7 +2,7 @@ import * as assert from 'node:assert/strict';
 import { PlayerRatingsService } from '../src/player-ratings/player-ratings.service';
 import { PlayerRatingStateDocument } from '../src/player-ratings/player-ratings.types';
 
-const actor = { id: 'admin-1', login: 'chief', roles: ['SUPER_ADMIN'] as never[], stationIds: [], connectorRoutes: [] };
+const actor = { id: 'admin-1', login: 'chief', roles: ['SUPER_ADMIN'] as never[], stationIds: [], connectorRoutes: [], permissions: ['*'], authSource: 'token' };
 const state: PlayerRatingStateDocument = {
   playerKey: 'player:1', clientId: 'client-1', phoneNorm: '79990000000', name: 'Анна Тест', nameSearch: 'анна тест',
   ratingNumeric: 3.2, rating: 'C', ownership: 'CUP_CANONICAL', source: 'CUP', schemaVersion: 1,
@@ -63,6 +63,10 @@ async function main(): Promise<void> {
   } as any, actor as any);
   assert.equal(events.length, 1);
   assert.equal(changed.event.actor.id, 'admin-1', 'actor comes from current user, never request body');
+  assert.equal(changed.event.source.kind, 'ADMIN_MANUAL');
+  assert.equal(changed.event.source.reason, 'Уточнение после контрольной игры');
+  assert.equal(changed.event.gradeBefore, 'C');
+  assert.equal(changed.event.gradeAfter, 'C');
   assert.equal(changed.state.ratingNumeric, 3.45);
   assert.equal(written.outbox, undefined, 'CUP-only changes never enqueue a Viva write');
   assert.equal(changed.projection.status, 'NOT_REQUIRED');
@@ -87,6 +91,18 @@ async function main(): Promise<void> {
   }, actor as any);
   assert.equal(events.length, 1, 'idempotency prevents duplicate event');
   assert.equal(duplicate.event.id, changed.event.id);
+
+  const retryDto = {
+    ratingNumeric: 3.45, reason: 'Уточнение после контрольной игры', expectedLastEventId: 'rating_evt:old',
+    idempotencyKey: '11111111-1111-4111-8111-111111111111'
+  };
+  await assert.rejects(service.change(state.playerKey, retryDto, { ...actor, permissions: [] } as any),
+    (error: any) => error.status === 403);
+  // The same key replayed on behalf of a station is a different command, not the global change.
+  await assert.rejects(service.change(state.playerKey, retryDto, { ...actor, stationIds: ['synthetic-station'] } as any),
+    (error: any) => error.status === 409);
+  await assert.rejects(service.change(state.playerKey, { ...retryDto, expectedLastEventId: 'different' }, actor as any),
+    (error: any) => error.status === 409);
 
   await assert.rejects(
     () => service.change('player:1', { ratingNumeric: 3.5, reason: 'Достаточная причина', expectedLastEventId: 'rating_evt:old', idempotencyKey: '22222222-2222-4222-8222-222222222222' }, actor as any),
