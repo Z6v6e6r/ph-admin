@@ -2,6 +2,8 @@ import 'reflect-metadata';
 import * as assert from 'node:assert/strict';
 import { MongoClient } from 'mongodb';
 import { ResidencyObservationRepository, ResidencyBindingSnapshot } from '../src/subscriptions/residency-observation.repository';
+import { ResidencyProviderSyncService } from '../src/subscriptions/residency-provider-sync.service';
+import { RESIDENCY_PRODUCT_ID } from '../src/subscriptions/residency-booking-policy';
 import { RESIDENCY_OBSERVATION_COLLECTION, RESIDENCY_OBSERVATION_INDEXES,
   normalizeResidencyProviderFacts, residencyDigest, residencyInstanceId, StoredResidencyObservation } from '../src/subscriptions/residency-provider-observation';
 import { SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES } from '../src/subscriptions/subscriptions.repository';
@@ -160,6 +162,99 @@ async function main() {
     await assert.rejects(repo.persist(b, o)); assert.equal(await mappingRevision(), 1); cases++;
     o = observation(b); o.evidence.productObservedAt = new Date(Date.now() + 10000).toISOString();
     await assert.rejects(repo.persist(b, o)); assert.equal(await mappingRevision(), 1); cases++;
+
+    // Service-level composite evidence on the same disposable replica set:
+    // repeated confirmation and a restart must keep one residency instance, while a
+    // disputed total or a refunded line must deny the right.
+    const oldComposite = process.env.SUBSCRIPTIONS_RESIDENCY_COMPOSITE_LINES_ENABLED;
+    const oldStudio = process.env.SUBSCRIPTIONS_RESIDENCY_SYNC_STUDIO_ID;
+    const oldTtl = process.env.SUBSCRIPTIONS_RUNTIME_CONTEXT_MAX_STALENESS_SECONDS;
+    process.env.SUBSCRIPTIONS_RESIDENCY_SYNC_STUDIO_ID = 'studio:test';
+    process.env.SUBSCRIPTIONS_RUNTIME_CONTEXT_MAX_STALENESS_SECONDS = '60';
+    const compositeFixture = (subscriptionId = 'subscription:residency-test') => {
+      const f: any = providerFixture();
+      f.subscription.subscriptionId = subscriptionId;
+      f.subscription.transactionId = 'transaction:' + subscriptionId;
+      f.transaction.id = 'transaction:' + subscriptionId;
+      f.subscription.purchaseDate = purchaseTime;
+      f.subscription.activationDate = purchaseTime;
+      f.subscription.expirationDate = new Date(Date.parse(purchaseTime) + 30 * 86400000).toISOString();
+      f.transaction.paymentDate = purchaseTime;
+      f.transaction.products = [
+        { id: 'service:group-training', count: 1, cost: 160000, discount: 80000 },
+        { id: RESIDENCY_PRODUCT_ID, count: 1, cost: 79000, discount: 0 }];
+      f.transaction.sum = 239000; f.transaction.discount = 80000; f.transaction.toPay = 159000;
+      return f;
+    };
+    const service = (read: () => any) => {
+      const identity: any = { authorizeResidencyRefresh: async () => actor };
+      const viva: any = { readResidencySubscriptionEvidence: async () => read() };
+      class TestService extends ResidencyProviderSyncService { protected now() { return new Date(); } }
+      return new TestService(identity, repo, viva);
+    };
+    const readAt = (fixture: any, at: string) => ({ ...fixture, instanceObservedAt: at, productObservedAt: at });
+    try {
+      process.env.SUBSCRIPTIONS_RESIDENCY_COMPOSITE_LINES_ENABLED = 'true';
+      b = await seed();
+      const composite = compositeFixture();
+      let at = stamp();
+      let sync = service(() => readAt(composite, at));
+      const firstContext = await sync.refresh('Bearer test', 'integration-token', { clientSubscriptionId: 'subscription:residency-test' });
+      const instanceId = firstContext.context.instance.subscriptionInstanceId;
+      assert.equal(firstContext.context.instance.state, 'ACTIVE');
+      assert.equal(await db.collection(RESIDENCY_OBSERVATION_COLLECTION).countDocuments(), 1); cases++;
+
+      at = stamp(); sync = service(() => readAt(composite, at));
+      const repeatedContext = await sync.refresh('Bearer test', 'integration-token', { clientSubscriptionId: 'subscription:residency-test' });
+      assert.equal(repeatedContext.context.instance.subscriptionInstanceId, instanceId);
+      assert.equal(repeatedContext.context.instance.state, 'ACTIVE');
+      assert.equal(await db.collection(RESIDENCY_OBSERVATION_COLLECTION).countDocuments(), 1); cases++;
+
+      await repo.onModuleDestroy(); repo = new ResidencyObservationRepository();
+      at = stamp(); sync = service(() => readAt(composite, at));
+      const restartedContext = await sync.refresh('Bearer test', 'integration-token', { clientSubscriptionId: 'subscription:residency-test' });
+      assert.equal(restartedContext.context.instance.subscriptionInstanceId, instanceId);
+      assert.equal(restartedContext.context.instance.state, 'ACTIVE');
+      assert.equal(await db.collection(RESIDENCY_OBSERVATION_COLLECTION).countDocuments(), 1); cases++;
+
+      const beforeDispute = await mappingRevision();
+      const disputed = compositeFixture(); disputed.transaction.toPay = 1;
+      at = stamp(); sync = service(() => readAt(disputed, at));
+      await assert.rejects(sync.refresh('Bearer test', 'integration-token', { clientSubscriptionId: 'subscription:residency-test' }),
+        (e: any) => e.getResponse?.().code === 'RESIDENCY_SYNC_PAYMENT_AMOUNTS');
+      assert.equal(await mappingRevision(), beforeDispute);
+      assert.equal(await db.collection(RESIDENCY_OBSERVATION_COLLECTION).countDocuments(), 1); cases++;
+
+      b = await seed();
+      const refunded = compositeFixture('subscription:refund-test');
+      refunded.transaction.products[0].refunded = true;
+      at = stamp(); sync = service(() => readAt(refunded, at));
+      await assert.rejects(sync.refresh('Bearer test', 'integration-token', { clientSubscriptionId: 'subscription:refund-test' }),
+        (e: any) => e.getResponse?.().code === 'RESIDENCY_SYNC_REFUND_OR_PENDING_REFUND');
+      const denied = await db.collection(RESIDENCY_OBSERVATION_COLLECTION).findOne({});
+      assert.equal(denied!.facts.eligible, false);
+      at = stamp(); sync = service(() => readAt(refunded, at));
+      await assert.rejects(sync.refresh('Bearer test', 'integration-token', { clientSubscriptionId: 'subscription:refund-test' }),
+        (e: any) => e.getResponse?.().code === 'RESIDENCY_SYNC_REFUND_OR_PENDING_REFUND');
+      assert.equal(await db.collection(RESIDENCY_OBSERVATION_COLLECTION).countDocuments(), 1);
+      assert.equal((await db.collection(RESIDENCY_OBSERVATION_COLLECTION).findOne({}))!.facts.eligible, false); cases++;
+
+      b = await seed();
+      process.env.SUBSCRIPTIONS_RESIDENCY_COMPOSITE_LINES_ENABLED = 'false';
+      const off = compositeFixture();
+      at = stamp(); sync = service(() => readAt(off, at));
+      await assert.rejects(sync.refresh('Bearer test', 'integration-token', { clientSubscriptionId: 'subscription:residency-test' }),
+        (e: any) => e.getResponse?.().code === 'RESIDENCY_SYNC_PAYMENT_LINES');
+      assert.equal(await db.collection(RESIDENCY_OBSERVATION_COLLECTION).countDocuments(), 0); cases++;
+    } finally {
+      if (oldComposite === undefined) delete process.env.SUBSCRIPTIONS_RESIDENCY_COMPOSITE_LINES_ENABLED;
+      else process.env.SUBSCRIPTIONS_RESIDENCY_COMPOSITE_LINES_ENABLED = oldComposite;
+      if (oldStudio === undefined) delete process.env.SUBSCRIPTIONS_RESIDENCY_SYNC_STUDIO_ID;
+      else process.env.SUBSCRIPTIONS_RESIDENCY_SYNC_STUDIO_ID = oldStudio;
+      if (oldTtl === undefined) delete process.env.SUBSCRIPTIONS_RUNTIME_CONTEXT_MAX_STALENESS_SECONDS;
+      else process.env.SUBSCRIPTIONS_RUNTIME_CONTEXT_MAX_STALENESS_SECONDS = oldTtl;
+    }
+
     console.log(`residency local MongoDB replica-set transaction/recovery: ${cases} cases PASS`);
   } finally {
     await repo.onModuleDestroy(); await db.dropDatabase(); await client.close();
