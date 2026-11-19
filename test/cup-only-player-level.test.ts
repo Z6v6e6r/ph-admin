@@ -18,7 +18,7 @@ async function main() {
     runAtomicInitialAssignment: async (input: any) => { if (outcome === 'ok') { written = input; events.push(input.event); } return outcome; },
     isDuplicateKey: () => false };
   const service = new PlayerRatingsService(repository);
-  const actor: any = { id: 'synthetic-admin', title: 'Synthetic Admin' };
+  const actor: any = { id: 'synthetic-admin', title: 'Synthetic Admin', authSource: 'token', permissions: ['*'], stationIds: [] };
   const dto = { clientId: 'synthetic-client', ratingNumeric: 3.12345, reason: 'Initial assessment by coach', idempotencyKey: 'synthetic-assignment-1' };
   const identity = { clientId: dto.clientId, displayName: 'Synthetic Player' };
   const assigned = await service.assign(dto, identity, actor);

@@ -22,7 +22,23 @@ export interface PlayerRatingActor {
 
 export interface PlayerRatingSource {
   domain: string;
+  kind?: 'GAME' | 'TOURNAMENT' | 'ADMIN_MANUAL';
+  eventId?: string;
+  resultRef?: { id: string; revision: string | number };
+  gameId?: string;
+  resultId?: string;
+  scoreRevision?: number;
+  resultRevision?: number;
+  correctionResultId?: string;
+  correctionScoreRevision?: number;
+  tournamentId?: string;
+  sourceRevision?: string;
+  fprProtocolId?: string;
+  compensationReason?: string;
+  applySemantics?: string;
+  tournamentRatingSnapshot?: { before: number; after: number; delta: number; position?: number; points?: number };
   reason?: string;
+  expectedLastEventId?: string;
   gradeAlignment?: { previousGrade: PlayerRatingGrade; previousEventId: string; clientId: string };
   sourceId?: string;
   legacyRowId?: string;
@@ -221,6 +237,30 @@ export interface PlayerRatingEventDto {
   source: PlayerRatingSource;
   actor: PlayerRatingActor;
   projectionStatus: PlayerRatingProjectionStatus;
+}
+
+export interface PlayerRatingAuditRow {
+  id: string;
+  occurredAt: string;
+  eventType: string;
+  actorId: string;
+  actorName: string;
+  playerKey: string;
+  playerName: string;
+  before: number | null;
+  gradeBefore: string | null;
+  after: number;
+  gradeAfter: string;
+  reason: string;
+}
+
+export interface PlayerRatingAuditQuery {
+  actorId?: string;
+  playerKey?: string;
+  eventType?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  cursor?: string;
 }
 
 export interface PlayerRatingSearchResult {

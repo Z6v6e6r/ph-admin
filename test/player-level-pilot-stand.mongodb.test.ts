@@ -1,7 +1,11 @@
 import * as assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { Readable } from 'node:stream';
+import { Role } from '../src/common/rbac/role.enum';
 import { validate } from 'class-validator';
 import { MongoClient } from 'mongodb';
+import { Workbook } from 'exceljs';
+import { exportPlayerRatingAudit } from '../src/player-ratings/player-rating-audit-export';
 import { ChangePlayerRatingDto } from '../src/player-ratings/dto/change-player-rating.dto';
 import { readPlayerLevelPilot } from '../src/player-ratings/player-level-projection-pilot';
 import { PlayerLevelProjectionService } from '../src/player-ratings/player-level-projection.service';
@@ -13,7 +17,7 @@ const fixtureOrigin = 'http://127.0.0.1:18078';
 const fixtureToken = 'synthetic-approved-pilot-projection-token';
 const mongoUri = 'mongodb://127.0.0.1:27079/?replicaSet=pilot374&directConnection=true&retryWrites=true&w=majority';
 const oldTime = '2026-11-18T00:00:00.000Z';
-const actor = { id: 'synthetic-rating-operator' } as Parameters<PlayerRatingsService['change']>[2];
+const actor = { id: 'synthetic-rating-operator', authSource: 'token', permissions: ['player-ratings:write'], stationIds: [], roles: [Role.MANAGER], connectorRoutes: [] } as Parameters<PlayerRatingsService['change']>[2];
 const past = new Date(0).toISOString();
 
 function canonical(clientId: string, ratingNumeric: number, rating: PlayerRatingGrade): PlayerRatingStateDocument {
@@ -135,8 +139,12 @@ async function main() {
     assert.ok((await validate(Object.assign(new ChangePlayerRatingDto(), dto, { expectedClientId: undefined }))).length > 0);
     await assert.rejects(service.change(mapped.playerKey, { ...dto, ratingNumeric: 2.5 }, actor), (e: any) => e.status === 409);
     await assert.rejects(service.change(mapped.playerKey, { ...dto, expectedClientId: 'synthetic-unrelated' }, actor), (e: any) => e.status === 409);
+    const scopedActor = { ...actor!, permissionStationScopes: { 'player-ratings:write': ['synthetic-station'] } };
+    await assert.rejects(service.change(mapped.playerKey, dto, scopedActor), (e: any) => e.status === 403);
+    await assert.rejects(service.change(mapped.playerKey, dto, { ...actor!, permissions: [] }), (e: any) => e.status === 403);
     const [one, two] = await Promise.all([service.change(mapped.playerKey, dto, actor), service.change(mapped.playerKey, dto, actor)]);
     assert.equal(one.event.id, two.event.id);
+    assert.equal(one.event.source.domain, 'ADMIN_MANUAL');
     assert.equal(one.event.gradeBefore, 'D');
     assert.equal(one.event.gradeAfter, 'D+');
     assert.equal(one.event.delta, 0);
@@ -191,6 +199,39 @@ async function main() {
     assert.equal(worker.metricsSnapshot().replayed, 1);
     assert.equal(pg('select count(*) from eligibility.cup_player_level_projection_events;'), '2');
     console.log('PASS restart restored revision from same durable event, replay added no receiver event');
+
+    const journalFilter = { actorId: actor!.id, playerKey: mapped.playerKey };
+    const shown = (await service.audit(journalFilter)).items;
+    assert.equal(shown.length, 1);
+    assert.equal(shown[0].id, one.event.id);
+    assert.equal(shown[0].actorId, actor!.id);
+    assert.equal(shown[0].reason, dto.reason);
+    const nextManual = { ratingNumeric: 4.70001, expectedLastEventId: one.event.id,
+      reason: '=Synthetic spreadsheet formula must remain text', idempotencyKey: 'synthetic-manual-numeric-projection' };
+    const changed = await service.change(mapped.playerKey, nextManual, actor);
+    assert.equal(changed.state.rating, 'B+');
+    assert.equal(changed.state.ratingNumeric, 4.70001);
+    const pinned = (await service.audit(journalFilter, { export: true, displayedIds: shown.map(row => row.id) })).items;
+    assert.deepEqual(pinned, shown, 'a new event cannot change the previously displayed export page');
+    const all = (await service.audit(journalFilter, { export: true })).items;
+    assert.equal(all.length, 2);
+    assert.equal(all[0].id, changed.event.id);
+    const csv = await exportPlayerRatingAudit(all, 'csv');
+    assert.ok(csv.toString().includes(`"'=Synthetic spreadsheet formula must remain text"`));
+    const book = new Workbook();
+    await book.xlsx.read(Readable.from([await exportPlayerRatingAudit(all, 'xlsx')]));
+    const sheet = book.worksheets[0];
+    assert.equal(sheet.getCell('A2').value, changed.event.id);
+    assert.equal(sheet.getCell('J2').value, 4.70001);
+    assert.equal(sheet.getCell('L2').value, nextManual.reason);
+    await worker.runCycle();
+    const numericUpdate = await rehearsal();
+    assert.equal(numericUpdate.currentLevel.numericValue, nextManual.ratingNumeric);
+    assert.equal(numericUpdate.currentLevel.code, 'B+');
+    assert.equal(numericUpdate.profileLevel.value, nextManual.ratingNumeric);
+    assert.equal(numericUpdate.summaryLevel, 'B+');
+    assert.equal(numericUpdate.events.length, 2);
+    console.log('PASS manual numeric change, scoped denial, exact CSV/XLSX page and LK2 profile readback');
 
     process.env.PADLHUB_PLAYER_LEVEL_PROJECTION_ENABLED = 'false';
     const correction = new PlayerRatingsService(repo);
