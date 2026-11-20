@@ -1,0 +1,930 @@
+{
+  "schemaVersion": "PHUB_CUP133_JOINT_RELEASE_MANIFEST_V3",
+  "bundle": "lk-primary-147 delivery: canonical level, tournament admission, CUP roster adapter, tournament copay (lk#473 reconciliation)",
+  "evidenceLevel": "LOCAL",
+  "updatedAt": "2026-11-20",
+  "status": {
+    "reconciliation": "PASS (LOCAL): every pinned hash reproduced independently from exact sources",
+    "production": "HOLD: 147 runtime bindings TOURNAMENT_OWNER_API_BASE and TOURNAMENT_OWNER_INTEGRATION_TOKEN are absent (kit evidence); install, import and deploy need separate approval"
+  },
+  "sources": {
+    "cup": {
+      "repository": "Z6v6e6r/ph-admin",
+      "pullRequest": "ph-admin#139",
+      "branch": "codex/cup-tournament-copay-settlement",
+      "commit": "15936d4f03334c099ce60bdf0b7499ef8c53535b",
+      "tree": "2044739348988f9686c699dc89ea646c9da50e8a",
+      "base": {
+        "commit": "3799c4a88b9b8d5933911223083e7b511c5a1693",
+        "meaning": "accepted canonical-rating CUP incl. #137 cold-start roles and #138 auth-store outage fixes"
+      },
+      "copayCommits": [
+        "540a7dd69797dee6c63c02f8791068a06983271f",
+        "ec863bb2235dc03af1a56567f4575faa33c79901",
+        "2c45771e0ca94ed746425ca930ec1639df6b2ed3",
+        "15936d4f03334c099ce60bdf0b7499ef8c53535b"
+      ],
+      "manifestOwnedPaths": [
+        "docs/release/cup133-joint-release-manifest.json",
+        "scripts/verify-cup133-joint-release-manifest.mjs",
+        "test/cup133-joint-release-manifest.test.mjs",
+        "docs/player-level-journal.md"
+      ],
+      "senderFiles": [
+        {
+          "path": "src/player-ratings/player-level-projection.service.ts",
+          "sha256": "24f2ff2df7787a9210b945bb29a3d105f38f5998e3d9473db5eb5ef83c6872d3"
+        },
+        {
+          "path": "src/player-ratings/player-level-projection-pilot.ts",
+          "sha256": "d19db800300d82d5f0fb346be447e7d81134170e920a0e4130951bb29cc56fb9"
+        },
+        {
+          "path": "src/player-ratings/player-ratings.repository.ts",
+          "sha256": "6825ce5ca2b34ca9316b89b394c7a5bf37cf2171f20799fba4ae6f351c97cab9"
+        },
+        {
+          "path": "src/player-ratings/player-ratings.service.ts",
+          "sha256": "081adb649cd1949dba1e37ba45c14683dfb3c842cfc679c1a5b6c3722d54a889"
+        },
+        {
+          "path": "src/player-ratings/player-ratings.types.ts",
+          "sha256": "72d799a063da9526ac52aae93aeb5c9e86a75eefb81edfb733e317f1c8fe4294"
+        }
+      ]
+    },
+    "lk1": {
+      "repository": "Z6v6e6r/lk",
+      "pullRequest": "lk#472",
+      "branch": "codex/lk1-147-full-graph-copay-20261120",
+      "commit": "09c83d4c7cc805813ef4ef863d6a546f9dacbd4e",
+      "tree": "d01e52ef3c73105be89dd1101b8050261e6b43f1",
+      "stackedOn": "lk#470 5a29c7a6eeac08f48d75dd8a1bd35940ec5e219a",
+      "supersedes": {
+        "commit": "6604dd1dea26efc8933fdd6557a5cb65ef7c9a9a",
+        "kitArchiveSha256": "ef4126d4f67351480c5852318f5b52f5a0fbf1a76c328787d67d51ccf35ebad1",
+        "graphSha256": "5df90b6cb41c883e73f490f5625c4fc01287cd11279930b09dcc5898a52450fd",
+        "cancelWorkerManifestSha256": "280983a2a8d8620393444904d66933e1e65ba9be3fc31e3441e202aad5d92884"
+      },
+      "changedSince6604dd1d": "paid-roster refresh after confirmed copay: new POST /lk/tournaments/participants/reconcile-payment (Node-RED fn_cup_reconcile_payment_v1 + nginx location/guard), widget TournamentSignupPage/tournamentSignupApi, cancellation-worker graph pin"
+    },
+    "lk2": {
+      "repository": "Z6v6e6r/lk2",
+      "branch": "codex/shared-cup-rating-tournament-candidate-20261118",
+      "pullRequest": "lk2#688",
+      "commit": "6ef89621b41e9d5adeab2f2e35ed0189fc3768ce",
+      "tree": "beb8c3c4115bf4dd294233d68e4b222d6bf30438",
+      "role": "CUP player-level projection ingress POST /internal/api/v1/{tenantKey}/player-level-projections",
+      "requiredMigrations": [
+        "0087_cup_player_level_projection.sql",
+        "0119_cup_calculated_player_levels.sql"
+      ],
+      "receiverFiles": [
+        {
+          "path": "apps/api/src/profile/cup-player-level-projection-routes.ts",
+          "sha256": "a7d017156339a8932ec1b4a368584c6a1417a102a996833b3c90ff7b0f122188"
+        },
+        {
+          "path": "packages/database/src/cup-player-level-projection-repository.ts",
+          "sha256": "154d3f3ac14b58eb9bca6546b28c6cfb1c4319bad7d376383479a52ec04e9979"
+        },
+        {
+          "path": "packages/database/migrations/0087_cup_player_level_projection.sql",
+          "sha256": "57569fb14ff9f95e53355f6d472b34c9f075d9643b2205ce3576ec5542da1db7"
+        },
+        {
+          "path": "packages/database/migrations/0119_cup_calculated_player_levels.sql",
+          "sha256": "f4b3b75576a67940fc5fb874cb5855675a6782e398803bee5316b4b75ac95b31"
+        },
+        {
+          "path": "contracts/openapi/internal/v1/player-levels.yaml",
+          "sha256": "0931621c629e6ac4170ec8d2212210246d6aa10fe64703bfc8d73e18352bdc64"
+        }
+      ]
+    }
+  },
+  "cupRuntime": {
+    "source": "15936d4f03334c099ce60bdf0b7499ef8c53535b",
+    "origin": "kit cup-runtime/ (no CI runtime artifact exists for the #139 head)",
+    "runtimeManifestSha256": "40c8191e97baecbf7897738bda91561d70a1513b888ed0245c080369983aa9f0",
+    "fileCount": 13918,
+    "nodeVersion": "v22.13.1",
+    "platform": "linux/amd64",
+    "dependencyOrigin": {
+      "artifactId": 14524326505,
+      "runId": 44511793373,
+      "sourceCommit": "ddc8af664ecbf58dcea9296cbcac6ca43984e7b8",
+      "zipSha256": "d1e558d5bb06642b7f59df5653ebd9f26959c54a40c13fd3371d22bb40e84a88",
+      "manifestSha256": "eeb85125c06a48e9aa05344b7059099b1fb56ddb17d0a2a2ab2b6c7fe8fbbd47",
+      "files": 13208,
+      "lockfileSha256": "a665a05cfdb4f9b121529461ae4ffff915f2a83b6d436c112a7374cf652ed179"
+    },
+    "independentCheck": {
+      "vsCiArtifact": {
+        "artifact": "cup-runtime-release sha256:c3aa642963629c2462cd64fa2ddda83c3e82ea656980a3abdb54239eb8d0d4ad (26aed3b, code-identical to 3799c4a)",
+        "identicalFiles": 13908,
+        "differingFiles": 10,
+        "differingAre": "dist .js/.d.ts of the 5 sources changed by the copay commits (viva-admin.service, tournament-checkout.service, tournaments-persistence.service, tournaments.controller, tournaments.service)"
+      },
+      "localRebuildOf15936d4f": {
+        "distAndClientSdkFiles": 708,
+        "equal": 707,
+        "differing": [
+          "dist/tournaments/tournaments.service.d.ts"
+        ],
+        "explanation": "declaration-only: import(\"bson\").Document vs import(\"mongodb\").Document from node_modules layout; not executed. All executable .js files equal."
+      },
+      "lockfile": "package-lock.json unchanged between 3799c4a and 15936d4f (a665a05c…)"
+    }
+  },
+  "nodeRedGraph": {
+    "target": "lk-primary-147 /root/.node-red/flows.json",
+    "source": {
+      "sha256": "a490eaa815ee3c3a28c727a92faa27971c4fb8defcfb3fb895ebf824069041dd",
+      "nodes": 5678,
+      "reads": [
+        "Codex 2026-11-20T08:03:14Z (kit evidence/147-source.json, Admin v2 readback matched)",
+        "Claude 2026-11-20T08:39:44Z read-only ssh cat, remote sha matched"
+      ],
+      "fileMtime": "2026-11-19T12:24:02Z"
+    },
+    "generators": [
+      {
+        "path": "scripts/patch_cup_only_player_level.mjs",
+        "sha256": "966da209a8ac58ec456b2d2d713e4a1247f0552c2589edb6445bd42bf99e30c7"
+      },
+      {
+        "path": "scripts/prepare_tournament_admission_candidate.mjs",
+        "sha256": "7c7e7b95b18dda48e55207523d328575759983e5a62809f22169bf5be521d89a"
+      },
+      {
+        "path": "scripts/patch_live_tournament_participants_cup_source.mjs",
+        "sha256": "a3e26f6b69268519d64c0084e0172bd9b23e98a1bfef53817403260515016394"
+      }
+    ],
+    "steps": [
+      {
+        "stage": "rating",
+        "sha256": "d0bca68bcabd9fa4fea32ce196b58888f625a5e561be45cb0a92d8c0dd6a5091",
+        "nodes": 5707
+      },
+      {
+        "stage": "tournamentAdmission",
+        "sha256": "b41bd43b68ea266f4a1a060d90f4b7eb7d2708f126041b0bf16a977c75147dad",
+        "nodes": 5707
+      },
+      {
+        "stage": "roster",
+        "sha256": "4823937c5b52ab0aca28aea249b28ce7deb169c705513c8ee06cac57c324327e",
+        "nodes": 5716
+      }
+    ],
+    "finalSha256": "4823937c5b52ab0aca28aea249b28ce7deb169c705513c8ee06cac57c324327e",
+    "integrity": {
+      "status": "PASS",
+      "nodes": 5716,
+      "rosterAdded": 9,
+      "rosterChanged": [
+        "4970937254c10761",
+        "efa2b09c651dac1f",
+        "fbbb248557014e63",
+        "lk_tournament_participants_terminal_20260719"
+      ],
+      "missingWireTargets": 0,
+      "routesBefore": 233,
+      "routesAfter": 236,
+      "newRoutes": [
+        "get /lk/games/ratings/me",
+        "options /lk/games/ratings/me",
+        "post /lk/tournaments/participants/reconcile-payment"
+      ],
+      "gatewayFunctionSha256": "a493d63f7950d7062f4fb6e6f4022b67b6598dbef00fa8ad81c79b056f08eb1b",
+      "preservedSourceNodeOrder": true
+    },
+    "reproduced": "byte-identical by Claude from 09c83d4c and the snapshot; equals Codex graph-reproduce.json for 09c83d4c",
+    "installGate": "Re-read 147 before import; if flows.json sha256 differs from source.sha256, regenerate and update this manifest."
+  },
+  "nginx": {
+    "required": "Install before the graph so POST /lk/tournaments/participants/reconcile-payment reaches Node-RED with its own limit and CORS preflight.",
+    "files": [
+      {
+        "path": "scripts/nginx/lk-tournament-participants-location.conf",
+        "sha256": "95e0db5dc1f916c28532ef72d792a097dc013e1f9f0879fdd7fbf68d15a50d5e"
+      },
+      {
+        "path": "scripts/nginx/lk-tournament-participants-guard.conf",
+        "sha256": "14cc67775cf805d5059af3f22b382a6e7df5d3612ba65d0982dba161f1506274"
+      }
+    ]
+  },
+  "workers": {
+    "cancellation": {
+      "name": "lk1-unpaid-cancel (ENFORCE_NEW)",
+      "builder": "scripts/lk1_unpaid_cancel_service/build_bundle.mjs",
+      "builderSha256": "c5120bd71eaa6b1e58d6db9078a70b3663f3247a69cf741b31145c6f25e5a29c",
+      "sourceCommit": "09c83d4c7cc805813ef4ef863d6a546f9dacbd4e",
+      "manifestSha256": "14ffe8e2b81639f1172e6dbb4946e49071b47ee152ef82d9a19988d9953b8f04",
+      "fileCount": 13,
+      "pinnedGraphSha256": "4823937c5b52ab0aca28aea249b28ce7deb169c705513c8ee06cac57c324327e",
+      "gatewayFunctionSha256": "a493d63f7950d7062f4fb6e6f4022b67b6598dbef00fa8ad81c79b056f08eb1b",
+      "changedFromKit": [
+        "lib/lk1LiveGatewayGuard.mjs",
+        "manifest.json"
+      ],
+      "guardSha256": "7b5833eddb3980ee4b44069c53d6d0e95e9443b30ef5a9d7a2abcefc60fed0fe",
+      "rehearsal": "Codex 09c83d4c: exact bytes exit 0, one-byte substitution before start and after attestation exit 78; Mongo writes 0, external calls 0"
+    },
+    "rating": {
+      "builder": "scripts/build_rating_worker_release.mjs",
+      "workerVersion": "rating-worker-v1.0.14",
+      "gameResultWorkerVersion": "game-result-rating-worker-v1.0.0",
+      "communityCalculationVersion": "community-rating-v1.3.0",
+      "versionNote": "Version strings equal the rejected 88b2e6c release; identify the release only by filesDigest.",
+      "filesDigestAlgorithm": "sha256 of sorted lines \"<sha256>  <releasePath>\\n\"",
+      "filesDigest": "c511b0e206fc048c1eed64df93b64575eba62fb620b36016e7790b7c19bdb1fc",
+      "fileCount": 64,
+      "files": [
+        {
+          "releasePath": "deploy/rating-worker/README.md",
+          "sourcePath": "deploy/rating-worker/README.md",
+          "sha256": "fda2d3e783e667ced065ef15c4907d956fef23faf2cce4b1ba536f7b76e7b67a"
+        },
+        {
+          "releasePath": "deploy/rating-worker/community-monthly-reports.service",
+          "sourcePath": "deploy/rating-worker/community-monthly-reports.service",
+          "sha256": "9faab3e5d7eebb3948ca5699b2813179c6e6005e1db50ab04b246d39e74b64ca"
+        },
+        {
+          "releasePath": "deploy/rating-worker/community-monthly-reports.timer",
+          "sourcePath": "deploy/rating-worker/community-monthly-reports.timer",
+          "sha256": "029318e5b56a4872dd60701c20827ec6d947d9be998da59507c910a88949ad55"
+        },
+        {
+          "releasePath": "deploy/rating-worker/community-monthly.service",
+          "sourcePath": "deploy/rating-worker/community-monthly.service",
+          "sha256": "82debb6ae6bb8c864294ecd316db12585d7597eb39ca2cb4f1d5068f7a6bda9c"
+        },
+        {
+          "releasePath": "deploy/rating-worker/community-monthly.timer",
+          "sourcePath": "deploy/rating-worker/community-monthly.timer",
+          "sha256": "ba44470563971e859716d5b36b08ca6a70125759863525726d14efca4ceb2c00"
+        },
+        {
+          "releasePath": "deploy/rating-worker/configure-runtime-env.mjs",
+          "sourcePath": "deploy/rating-worker/configure-runtime-env.mjs",
+          "sha256": "8c22ad092014fb003fc4b1dcfe08eb8ab7d1fa2a3e9056f08f11383d77879f9f"
+        },
+        {
+          "releasePath": "deploy/rating-worker/run-full.sh",
+          "sourcePath": "deploy/rating-worker/run-full.sh",
+          "sha256": "b6791bbc6ea81875d232647bf246a074ab34f64cb0829d7bfcc39120c3c33c09"
+        },
+        {
+          "releasePath": "deploy/rating-worker/run-game-results.sh",
+          "sourcePath": "deploy/rating-worker/run-game-results.sh",
+          "sha256": "29acc6d5801af441a1e08fdd31ae6f508fc9867a446f2d252fd633486a0a0f59"
+        },
+        {
+          "releasePath": "deploy/rating-worker/run-incremental.sh",
+          "sourcePath": "deploy/rating-worker/run-incremental.sh",
+          "sha256": "f621c9d96b695e69e82aab118b9e995007507cba99c96d03cc770f24cdaa0602"
+        },
+        {
+          "releasePath": "deploy/rating-worker/run-monthly-reports.sh",
+          "sourcePath": "deploy/rating-worker/run-monthly-reports.sh",
+          "sha256": "9cf2c49a2dd3f4498668e91778fd3e2e02c367bc7a4a7ab458309e60458d1804"
+        },
+        {
+          "releasePath": "deploy/rating-worker/run-monthly.sh",
+          "sourcePath": "deploy/rating-worker/run-monthly.sh",
+          "sha256": "b2bab34a50c918f7b6d69cd1bbed4100cb9ffe3d7d588b41941b3187e4b278e6"
+        },
+        {
+          "releasePath": "deploy/rating-worker/run-with-watchdog.sh",
+          "sourcePath": "deploy/rating-worker/run-with-watchdog.sh",
+          "sha256": "428db4e9ebf90a291fb3e5cc9cea132d9c86424d04140cc2f75fdf3ac3232426"
+        },
+        {
+          "releasePath": "package.json",
+          "sourcePath": "deploy/rating-worker/package.json",
+          "sha256": "c72917102f51c1e7a81fa6fe5ecf63a7840232d6da3d66f6960d44e9a2561fc5"
+        },
+        {
+          "releasePath": "scripts/community_monthly_reports.mjs",
+          "sourcePath": "scripts/community_monthly_reports.mjs",
+          "sha256": "0a259039ab2a1e2d506afcc06c93b20fde36e807c6ef6b68c76124d52ae01ced"
+        },
+        {
+          "releasePath": "scripts/community_monthly_worker.mjs",
+          "sourcePath": "scripts/community_monthly_worker.mjs",
+          "sha256": "164c9951dad140c97979e85b0c7b3ffa2f6cd7da8786eecae336826d9425f0a5"
+        },
+        {
+          "releasePath": "scripts/game_result_rating_worker.mjs",
+          "sourcePath": "scripts/game_result_rating_worker.mjs",
+          "sha256": "a111272358c88985f7e39fa2de523c5ac8b31bc79d0e3d93b6d14185ab5a68bf"
+        },
+        {
+          "releasePath": "scripts/lib/communityMonthlyFinalization.mjs",
+          "sourcePath": "scripts/lib/communityMonthlyFinalization.mjs",
+          "sha256": "11069883078371013cabe643f78a97ef8e048361f1f759d8bc481e3c25c0871a"
+        },
+        {
+          "releasePath": "scripts/lib/communityPolicyProjection.mjs",
+          "sourcePath": "scripts/lib/communityPolicyProjection.mjs",
+          "sha256": "114f97fbb31ac0d6261d5312945d748bd97df12a30f2d49e5565ca31f100ce2f"
+        },
+        {
+          "releasePath": "scripts/lib/communityRatingPostcheck.mjs",
+          "sourcePath": "scripts/lib/communityRatingPostcheck.mjs",
+          "sha256": "fdccf26c277d4419593dba4322749fcc15b056ed50eac2d816eb677270f3dbe5"
+        },
+        {
+          "releasePath": "scripts/lib/communitySchedule.mjs",
+          "sourcePath": "scripts/lib/communitySchedule.mjs",
+          "sha256": "8417797545ebccda28fe9a59187d9a60f133e03465ccd0caaceb9c51bed819d8"
+        },
+        {
+          "releasePath": "scripts/lib/fprLevelIdentity.mjs",
+          "sourcePath": "scripts/lib/fprLevelIdentity.mjs",
+          "sha256": "dbfca1bee7f4368876dad3e0f2712b4e2af440e2977520b559f6f0117a186f4e"
+        },
+        {
+          "releasePath": "scripts/lib/fprLevelLedger.mjs",
+          "sourcePath": "scripts/lib/fprLevelLedger.mjs",
+          "sha256": "7311fcc9eb593fc3d530e43236182a9aa308eb505bf626c6d0d5a7b5752d15cc"
+        },
+        {
+          "releasePath": "scripts/lib/gameResultRating.mjs",
+          "sourcePath": "scripts/lib/gameResultRating.mjs",
+          "sha256": "d21a72a3658cdf0268866b0b7e0a205ceab7089243a5d1564bd5499f38872b6b"
+        },
+        {
+          "releasePath": "scripts/lib/ratingDataLock.mjs",
+          "sourcePath": "scripts/lib/ratingDataLock.mjs",
+          "sha256": "789ca4762db56e042ab746f801ce6d1b2380fb5e3910f98b70456982a022affd"
+        },
+        {
+          "releasePath": "scripts/lib/ratingTransaction.mjs",
+          "sourcePath": "scripts/lib/ratingTransaction.mjs",
+          "sha256": "41bdf06589c665bac0507e9d7a173ff74d2f01d7ac4928e77aaa7d2e8341157e"
+        },
+        {
+          "releasePath": "scripts/lib/ratingWorkerChildProcess.mjs",
+          "sourcePath": "scripts/lib/ratingWorkerChildProcess.mjs",
+          "sha256": "554c8b702edb7ed5f342a1399cf26d696530e3b01df99599c61fcd6a7b0bd68b"
+        },
+        {
+          "releasePath": "scripts/lib/stationMembershipLifetime.mjs",
+          "sourcePath": "scripts/lib/stationMembershipLifetime.mjs",
+          "sha256": "a59c2eabbe832646689406db4ba1e6ebe6342a5f9721740fb62e5eec42d5fb5f"
+        },
+        {
+          "releasePath": "scripts/lib/stationMessageHistory.mjs",
+          "sourcePath": "scripts/lib/stationMessageHistory.mjs",
+          "sha256": "27dd2ad5fa32fae4544b079b45ec4a37ade3dd9bd61da4af41a952fc772b4b26"
+        },
+        {
+          "releasePath": "scripts/lib/stationMessageOwner.mjs",
+          "sourcePath": "scripts/lib/stationMessageOwner.mjs",
+          "sha256": "122c9352a9986ef8c09483dbebbac460fd2993dba5753eb57b27cc3723d8180b"
+        },
+        {
+          "releasePath": "scripts/lib/stationMessageProof.mjs",
+          "sourcePath": "scripts/lib/stationMessageProof.mjs",
+          "sha256": "caedff8d2e0eeb507ab5b5dfddf182fa678fd79f59e11ad90ec20e549fe3165f"
+        },
+        {
+          "releasePath": "scripts/lib/stationMessageRead.mjs",
+          "sourcePath": "scripts/lib/stationMessageRead.mjs",
+          "sha256": "9915eb92bc121398a4210f9508c60b7e5d29b0828580c52fd9e92bfea0d2ebc7"
+        },
+        {
+          "releasePath": "scripts/lib/stationMessageStream.mjs",
+          "sourcePath": "scripts/lib/stationMessageStream.mjs",
+          "sha256": "f14e80fd1f5d15ffdb1d12f67b3df9608b0bc5e3d74144219fa820bee2b2391c"
+        },
+        {
+          "releasePath": "scripts/lib/timeForFriendsCommunityBackfill.mjs",
+          "sourcePath": "scripts/lib/timeForFriendsCommunityBackfill.mjs",
+          "sha256": "435ba5ed9f8bae2a7c4404628ce8333a0ca7000cbbbf91f7a998a4f2827e2520"
+        },
+        {
+          "releasePath": "scripts/lib/timeForFriendsRuntimeRoster.mjs",
+          "sourcePath": "scripts/lib/timeForFriendsRuntimeRoster.mjs",
+          "sha256": "c9fe8585668c1d37e54a847a5a19a57261794f52034193bbef1356bc2757c074"
+        },
+        {
+          "releasePath": "scripts/lib/tournamentCommunityContext.mjs",
+          "sourcePath": "scripts/lib/tournamentCommunityContext.mjs",
+          "sha256": "383588029cdc36bf356fd48be186ae40c5a6e20ff6e8cdfabfbabd2dca8f3096"
+        },
+        {
+          "releasePath": "scripts/lib/tournamentFinalization.mjs",
+          "sourcePath": "scripts/lib/tournamentFinalization.mjs",
+          "sha256": "0f94139a860f1e935885e9f5a8da06d75bbcca4777bdee551f629ad6e7da62d5"
+        },
+        {
+          "releasePath": "scripts/lib/vivaUserAgent.mjs",
+          "sourcePath": "scripts/lib/vivaUserAgent.mjs",
+          "sha256": "d4c750db1ce065c049d10139e780953dd059daacef05f48946f76166ab330ae8"
+        },
+        {
+          "releasePath": "scripts/postcheck_community_rating_147.mjs",
+          "sourcePath": "scripts/postcheck_community_rating_147.mjs",
+          "sha256": "b3ca53096d339b7eb44e41282ac064aefe7d5cd2b78c67269512281f7c16a527"
+        },
+        {
+          "releasePath": "scripts/rating_worker.mjs",
+          "sourcePath": "scripts/rating_worker.mjs",
+          "sha256": "13f909c4abd8c6d9cffe4790b566bee110d7a24fcd24c661d4b078925881bfb3"
+        },
+        {
+          "releasePath": "scripts/recalculate_community_rating.mjs",
+          "sourcePath": "scripts/recalculate_community_rating.mjs",
+          "sha256": "497c998b2be2f4a4466139737496ca949c52ee0eed84684e7f7a36549948a7f3"
+        },
+        {
+          "releasePath": "scripts/recalculate_community_rating_all.mjs",
+          "sourcePath": "scripts/recalculate_community_rating_all.mjs",
+          "sha256": "a8dc383f1860cc7e0233c127b93b0d79b9493a22bcc95c7eaa4b173c0416a399"
+        },
+        {
+          "releasePath": "scripts/run_community_rating_recalc_147.mjs",
+          "sourcePath": "scripts/run_community_rating_recalc_147.mjs",
+          "sha256": "f64e0d6f134115142fd0e7271891b8371b52e60e73acdee8db9c20ea7bd978b6"
+        },
+        {
+          "releasePath": "scripts/run_rating_worker_147.mjs",
+          "sourcePath": "scripts/run_rating_worker_147.mjs",
+          "sha256": "7523fefff87d6570ca0a88d737b091df556f75e812fc924c548d559cfe8025ee"
+        },
+        {
+          "releasePath": "scripts/sync_training_visits_from_viva.mjs",
+          "sourcePath": "scripts/sync_training_visits_from_viva.mjs",
+          "sha256": "9b5bcb194aafb6267df4e43fc7e0f2a461d4eccf3f38211d8919b4230d367785"
+        },
+        {
+          "releasePath": "src/components/tournaments/fpr6x25.ts",
+          "sourcePath": "src/components/tournaments/fpr6x25.ts",
+          "sha256": "a5b5ad60a3d07fb5977f5b339c0c237d07dc0bbef54677eda048f177e2aa1ba9"
+        },
+        {
+          "releasePath": "src/services/community-policy.ts",
+          "sourcePath": "src/services/community-policy.ts",
+          "sha256": "5459571e3809c3e4658d9392a2a9b55765b07428afd34523081d3ea3da01e1d2"
+        },
+        {
+          "releasePath": "src/services/community-rating/aggregates.ts",
+          "sourcePath": "src/services/community-rating/aggregates.ts",
+          "sha256": "1d4b454067e6894d9613c76a4bb72e7e2fb7d992299a597531bac360099496f3"
+        },
+        {
+          "releasePath": "src/services/community-rating/calculations.ts",
+          "sourcePath": "src/services/community-rating/calculations.ts",
+          "sha256": "116468a380e79e5b66c2d8493b55943b28b5c41378486fdca90808913f28e25b"
+        },
+        {
+          "releasePath": "src/services/community-rating/contract.ts",
+          "sourcePath": "src/services/community-rating/contract.ts",
+          "sha256": "c37ae01ffa38a446835478cf81e54f80d3175c978f175a95ade5010538eff877"
+        },
+        {
+          "releasePath": "src/services/community-rating/facts.ts",
+          "sourcePath": "src/services/community-rating/facts.ts",
+          "sha256": "ff40c1e157c011778e0b30b0b85ddffa66789efc91da4d01a449e0fe35d2b80a"
+        },
+        {
+          "releasePath": "src/services/community-rating/fpr.ts",
+          "sourcePath": "src/services/community-rating/fpr.ts",
+          "sha256": "0f76dc1c8bc7348dd9c969c66daeea4e24a217853aa7f188f27e58071b38939e"
+        },
+        {
+          "releasePath": "src/services/community-rating/index.ts",
+          "sourcePath": "src/services/community-rating/index.ts",
+          "sha256": "78e2702871d7b887e728f2fcbb16fec43fb4cb77cc0a362aac7d5aca7c909267"
+        },
+        {
+          "releasePath": "src/services/community-rating/league.ts",
+          "sourcePath": "src/services/community-rating/league.ts",
+          "sha256": "4c22cdb3401f69ea203d5aea547c48ba82cf6a55985e618386201e6b2f61ae49"
+        },
+        {
+          "releasePath": "src/services/community-rating/monthly.ts",
+          "sourcePath": "src/services/community-rating/monthly.ts",
+          "sha256": "053fc6e458bc563f25bbef24e098d447fb6a4a9e15315d95ea6a90f8ad21ee53"
+        },
+        {
+          "releasePath": "src/services/community-rating/monthlyContract.ts",
+          "sourcePath": "src/services/community-rating/monthlyContract.ts",
+          "sha256": "7bc29bee2498b50d8d8d34d9d12919a0f051cd7b3ffef827b76b29398eee519b"
+        },
+        {
+          "releasePath": "src/services/community-rating/persistence.ts",
+          "sourcePath": "src/services/community-rating/persistence.ts",
+          "sha256": "5e42ae90fcc7e3079f05a73d1c0aba68e0acc1d57a22704bbad712fc97c798de"
+        },
+        {
+          "releasePath": "src/services/community-rating/recalculation.ts",
+          "sourcePath": "src/services/community-rating/recalculation.ts",
+          "sha256": "03cb59eeee1075c81238a1a6bb1fb5ed60277479a39e1fe33482f94b28c6b702"
+        },
+        {
+          "releasePath": "src/services/player-rating/fprLevelResults.ts",
+          "sourcePath": "src/services/player-rating/fprLevelResults.ts",
+          "sha256": "66ed3eefb5d91a292a6d22c797af55b848a1cf4928dac8198b8a9de58d61f936"
+        },
+        {
+          "releasePath": "src/services/player-rating/fprRatingReplay.ts",
+          "sourcePath": "src/services/player-rating/fprRatingReplay.ts",
+          "sha256": "a2c35dc9f58e2b90abb7d8ba3895471d8c338a438f170550d3d4f183516a25b9"
+        },
+        {
+          "releasePath": "src/services/player-rating/fprTournamentRating.ts",
+          "sourcePath": "src/services/player-rating/fprTournamentRating.ts",
+          "sha256": "51015fcc4ea1b2f8f47818ba8b849a4b15c0df2e9b19222b1b8718b9ad58e2f1"
+        },
+        {
+          "releasePath": "src/services/player-rating/ledger.ts",
+          "sourcePath": "src/services/player-rating/ledger.ts",
+          "sha256": "28dc3c8e139a61c7d5f3a25b1252f35d47bebc0d42e4cc44d12869c191a7f59e"
+        },
+        {
+          "releasePath": "src/services/player-rating/tournamentExclusionGuard.ts",
+          "sourcePath": "src/services/player-rating/tournamentExclusionGuard.ts",
+          "sha256": "67809d96227690f491f63ae803e76aeb98cb9b8ed586396e1646235c3befdf88"
+        },
+        {
+          "releasePath": "src/services/player-rating/tournamentExclusions.ts",
+          "sourcePath": "src/services/player-rating/tournamentExclusions.ts",
+          "sha256": "4430ec1552d5b64ea81cb83ff926acfe8285e144091297b7364019cdcde5ec97"
+        },
+        {
+          "releasePath": "src/utils/exerciseCategory.ts",
+          "sourcePath": "src/utils/exerciseCategory.ts",
+          "sha256": "0f6c4ecd80c90d8d9a8567082c08d70281399aaa77038a7d112e0e497050bf3a"
+        }
+      ],
+      "workers": [
+        {
+          "name": "rating-worker (canonical ledger projector)",
+          "entry": "scripts/rating_worker.mjs",
+          "sha256": "13f909c4abd8c6d9cffe4790b566bee110d7a24fcd24c661d4b078925881bfb3",
+          "version": "rating-worker-v1.0.14",
+          "schedule": [
+            "*/15 * * * * deploy/rating-worker/run-incremental.sh",
+            "17 3 * * * deploy/rating-worker/run-full.sh"
+          ],
+          "vivaDispatch": "disabled (vivaProjection CUP_ONLY)"
+        },
+        {
+          "name": "game-result-rating-worker",
+          "entry": "scripts/game_result_rating_worker.mjs",
+          "sha256": "a111272358c88985f7e39fa2de523c5ac8b31bc79d0e3d93b6d14185ab5a68bf",
+          "version": "game-result-rating-worker-v1.0.0",
+          "schedule": [
+            "* * * * * deploy/rating-worker/run-game-results.sh"
+          ],
+          "activation": "GAME_RESULT_RATING_WORKER_ENABLED=true only after the matching Node-RED result flow passes postchecks",
+          "vivaDispatch": "disabled"
+        }
+      ],
+      "rejectedRelease": {
+        "commit": "88b2e6c71c1171ac4109895810d3838d29210ee0",
+        "fileCount": 63,
+        "filesDigest": "ceaa09598cf7843203ac63d307b4f1169f348c39a7438fc0f42d78e92efff06f",
+        "reason": "Delta replay overrides a CUP ADMIN_MANUAL target after a late game result; LK2 diverges."
+      },
+      "sourceCommit": "09c83d4c7cc805813ef4ef863d6a546f9dacbd4e",
+      "unchangedSince": "1bc3219 (accepted rating release); rebuilt from 6604dd1d and 09c83d4c with the same 64 files"
+    },
+    "levelHelper": {
+      "builder": "scripts/build_cup_player_level.mjs",
+      "builderSha256": "ebeb13d431b703c259af8450bbaf1ad0ae8e01179e7b4828bf7ce7111a15bd4b",
+      "esbuild": "0.27.2 (LK1 package-lock)",
+      "output": "level.mjs",
+      "sha256": "22c56827e67da29a1c9b76830f828f8919a5da5a25194a6ddc6d0d5947b764ee",
+      "reproducible": "two builds from 1bc3219 produce identical bytes; equal to the helper installed on stand 24633",
+      "installPath": "/opt/padlhub-player-level/releases/<id>/level.mjs (root-owned, sourceDirty=false manifest checked at runtime)",
+      "sourceCommit": "09c83d4c7cc805813ef4ef863d6a546f9dacbd4e"
+    },
+    "fprHelper": {
+      "bootstrapSha256": "af01ec7aaa01b15a1b1e6cb5e8daabec49cefd15d134bc0aa60edac001e2383a",
+      "source": "kit rating/fpr-helper from 6604dd1d; FPR sources unchanged in 09c83d4c"
+    }
+  },
+  "widget": {
+    "sourceCommit": "09c83d4c7cc805813ef4ef863d6a546f9dacbd4e",
+    "release": {
+      "version": "20261120T120000Z",
+      "sourceDirty": false,
+      "generatedAt": "2026-11-20T09:38:18.738Z"
+    },
+    "build": "npm ci --include=optional && npm run build in public.ecr.aws/docker/library/node:22.13.1-bookworm-slim from a clean clone; LK_RELEASE_VERSION=20261120T120000Z; release preflight passed",
+    "files": [
+      {
+        "path": "LPD.png",
+        "sha256": "09585aba46b6d15602184a7fa7ed81659ec8c67285e29d27020e0983c18092a9"
+      },
+      {
+        "path": "atlanty-schedule-dev.js",
+        "sha256": "9e5b7f6c600e89bab18e83c98b0756c46915e28d2365d03217765edfdf85d954"
+      },
+      {
+        "path": "atlanty-schedule.js",
+        "sha256": "d325489d47b8378fc7ef7df999f6894a2f0e11377ee844b354250e99248aafe5"
+      },
+      {
+        "path": "bundle-dev.js",
+        "sha256": "6cd715b1e9c509eeddd032d9db43ca0409a8b24f224cd2ea55c8442857efc336"
+      },
+      {
+        "path": "bundle.js",
+        "sha256": "b15d388287f5b0101caaa991162c92c94daf57bba16570a392a6b0e3153bb0a4"
+      },
+      {
+        "path": "communities-dev.js",
+        "sha256": "bbe2da1de8f84fdac3da70978542d2da692bb803e72250ada10a22c644989eba"
+      },
+      {
+        "path": "communities.js",
+        "sha256": "20641dd207a564af358ea1b942c073635ee355497f7260c02f3c3728f2928f20"
+      },
+      {
+        "path": "ffc-academy-lk-dev.js",
+        "sha256": "59aa0e4c15453891dc2afc662972583179ab41d8d0e1c399e2cc8d805f5858b0"
+      },
+      {
+        "path": "ffc-academy-lk.js",
+        "sha256": "e00b5d2be64822e8a78bd489b7be0dda022d994d5b5322ebd2ed70878da81985"
+      },
+      {
+        "path": "games-dev.js",
+        "sha256": "f5423fdc8a8b51faa48d6cf492bf5858b0c29570aa6df26c1dd53b0fe32d6917"
+      },
+      {
+        "path": "games.js",
+        "sha256": "75f1365d3c97bdb1fa27ad45d229cfcee7ec915c9b88c3bfdc03bd39c7121496"
+      },
+      {
+        "path": "group-schedule-dev.js",
+        "sha256": "4514ea8ddd75f97b3e86e8f67d598d1e4490329ee340d6d0e0d0cf372e9b2e30"
+      },
+      {
+        "path": "group-schedule.js",
+        "sha256": "03bf2dd5375b9f596bf945f8999a6e2f3a14500dbc1d7adf369467307248b23d"
+      },
+      {
+        "path": "levels-info-dev.js",
+        "sha256": "88664187e88633b31323bad14788affe677dde358ec578232c756865d6f9fb9a"
+      },
+      {
+        "path": "levels-info.js",
+        "sha256": "56f452ed83cdc3dc307d8dae0206f6bca07fb9ed37468c60b852dbca4f5e224b"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "onboarding-dev.js",
+        "sha256": "3f21d007e60d8264d98e38005fba0a7b082cd9bf6e6df831a179418c1c4d1ae8"
+      },
+      {
+        "path": "onboarding.js",
+        "sha256": "8d4c07eca86320b7f49350829dadc4432c2a86ca51e96ecf7add3c39bde6a4f2"
+      },
+      {
+        "path": "padel-day-schedule-dev.js",
+        "sha256": "56084918feafc2ab58547b7ecb9836956be85af86ca7cd0525efa161aeb322b1"
+      },
+      {
+        "path": "padel-day-schedule.js",
+        "sha256": "07d9408d61234215d413e603587882a6d3dff40716f78b63b37a32a93ee308b9"
+      },
+      {
+        "path": "release-dev.json",
+        "sha256": "b3d5e58405976ceca3fac28479c061d1b58c309d0f8e6219b3fe85bcdd02618f"
+      },
+      {
+        "path": "release-ffc-academy-dev.json",
+        "sha256": "23a1e6c5cdcacba01c1de3c308ff0188c9e96db4319cdece2ab12cecf097d8c7"
+      },
+      {
+        "path": "release-ffc-academy.json",
+        "sha256": "7c2245b6090c831f240e317432f5d4a4cdc373e1011d4a4d014eb17f81a830d9"
+      },
+      {
+        "path": "release.json",
+        "sha256": "00954542fe4dfd4a19c66cde31737609663f05ad1ea5f978b09979a7c4c331c1"
+      },
+      {
+        "path": "tournament-signup-dev.js",
+        "sha256": "a810e9881dc074f47b89b43c2b076f8ce1c58418c34a1be378d795a1e43f8c31"
+      },
+      {
+        "path": "tournament-signup.js",
+        "sha256": "f064939f537f41a8f2c2699c8c2a08d493ebee5ac0ff0d1a2b4650ba339cffd8"
+      },
+      {
+        "path": "tournament-subscription-dev.js",
+        "sha256": "5124c5100c0699dc51412b4edaf82f1fcb10bfb5ba6ea9e752198963b81ac15d"
+      },
+      {
+        "path": "tournament-subscription-referral-dev.js",
+        "sha256": "f079f070428f0903d3b0c7b5d93dc5f3cd302786eb43340ff09b9a79409ef534"
+      },
+      {
+        "path": "tournament-subscription-referral.js",
+        "sha256": "a1822cadfb6e3917cb5d1a985a5c02e6437ca9be69fd33bc3d513de83119a523"
+      },
+      {
+        "path": "tournament-subscription.js",
+        "sha256": "9d7d03a6c45a8a2b8e7c45de9b887230e9e99bd636ba9db29eb06771c1d90cfa"
+      },
+      {
+        "path": "tournaments-dev.js",
+        "sha256": "7ccd70c6563b19f12714bf0b0e39ccd6054c10af1efc5ff3f6ba17701684c192"
+      },
+      {
+        "path": "tournaments.js",
+        "sha256": "bf2571939e078856e04b0acfc60b32d91eade29a5a23d2f58978525fb29ce968"
+      }
+    ],
+    "artifact": {
+      "file": "lk1-widget-09c83d4c/lk1-widget-09c83d4c-20261120T120000Z.tgz",
+      "sha256": "1692e9db4ce4398af98e4b700f983beeb080acfac9b7e9e93244cadda3d5ff0b"
+    },
+    "publicAddresses": {
+      "values": {
+        "VITE_API_BASE": "https://api.vivacrm.ru",
+        "VITE_KEYCLOAK_BASE": "https://kc.vivacrm.ru",
+        "VITE_TENANT_KEY": "iSkq6G",
+        "VITE_SERV2": "https://padlhub.su/seliger",
+        "VITE_SERV2_FALLBACK": "https://lk-reserve.89-108-64-209.sslip.io/seliger",
+        "VITE_SERV2_FALLBACK_TIMEOUT_MS": "2500",
+        "VITE_SUPPORT_API_BASE": "https://padlhub.su/lk",
+        "VITE_BOOKING_CANCEL_REFUND_TYPE": "TO_CARD",
+        "VITE_SUCCESS_URL": "https://padlhub.ru/lk_new",
+        "VITE_FAIL_URL": "https://padlhub.ru/lk_new",
+        "VITE_GAMES_BUNDLE_URL": "https://padlhub.su/lk/games.js",
+        "VITE_TOURNAMENTS_BUNDLE_URL": "https://padlhub.su/lk/tournaments.js",
+        "VITE_ONBOARDING_BUNDLE_URL": "https://padlhub.su/lk/onboarding.js",
+        "VITE_LEVELS_INFO_BUNDLE_URL": "https://padlhub.su/lk/levels-info.js",
+        "VITE_COMMUNITIES_BUNDLE_URL": "https://padlhub.su/lk/communities.js",
+        "VITE_LK_ASSET_FALLBACK_BASE_URLS": "https://lk-reserve.89-108-64-209.sslip.io/lk",
+        "VITE_PUBLIC_INVITE_ORIGIN": "https://padlhub.ru",
+        "VITE_PUBLIC_INVITE_PATH": "/game_join",
+        "VITE_CABINET_URL": "https://padlhub.ru/lk_new",
+        "VITE_ANALYTICS_ERRORS_ONLY": "true",
+        "VITE_PUSH_REGISTRATION_URL": "https://padlhub.su/lk/push/register",
+        "VITE_PUSH_UNREGISTRATION_URL": "https://padlhub.su/lk/push/unregister"
+      },
+      "envSha256": "1b5d72deda6a038f358ba6f4abec81d378deae1a13eac4adcff34199a38012fb",
+      "equalToServedProduction": {
+        "url": "https://padlhub.su/lk/bundle.js",
+        "release": "20261118T164240Z (27ea6a8c1665789786b8a6c6fc9c657dc48483ed)",
+        "etag": "\"6afdd89a-2cf6a8\"",
+        "bytes": 2946728,
+        "allValuesPresent": true,
+        "note": "Direct download through the system VPN truncates the bundle; verified through the local proxy with Content-Length."
+      },
+      "reachability": {
+        "https://api.vivacrm.ru": "401",
+        "https://kc.vivacrm.ru": "302",
+        "https://padlhub.su/seliger": "no response on bare path (no root handler); ?type=sub_for_sale 200, ?type=advertisement 200, OPTIONS /lk/games/ratings/me 204",
+        "https://lk-reserve.89-108-64-209.sslip.io/seliger": "bare path no response; ?type=sub_for_sale 200; OPTIONS /lk/games/ratings/me 204",
+        "https://padlhub.su/lk": "404 on bare path (directory); bundles 200",
+        "https://padlhub.ru/lk_new": "200",
+        "https://padlhub.ru": "200",
+        "https://padlhub.su/lk/games.js": "200",
+        "https://padlhub.su/lk/tournaments.js": "200",
+        "https://padlhub.su/lk/onboarding.js": "200",
+        "https://padlhub.su/lk/levels-info.js": "200",
+        "https://padlhub.su/lk/communities.js": "200",
+        "https://lk-reserve.89-108-64-209.sslip.io/lk": "301",
+        "https://padlhub.su/lk/push/register": "404 on GET (POST-only endpoint; not written to)",
+        "https://padlhub.su/lk/push/unregister": "404 on GET (POST-only endpoint; not written to)"
+      },
+      "checkedAt": "2026-11-20",
+      "method": "GET/HEAD/OPTIONS only; no writes"
+    },
+    "tournamentSignupAddresses": {
+      "usesSeligerPath": false,
+      "detail": "tournament-signup takes only the origin of VITE_SERV2/VITE_SERV2_FALLBACK (normalizeOrigin): https://padlhub.su and https://lk-reserve.89-108-64-209.sslip.io for /lk/tournaments/participants, /lk/tournaments/participants/reconcile-payment, /lk/subscription-bookings, /lk/subscriptions/game-price-preview, /lk/trial-group-bookings; CUP via https://padlhub.su/api (built-in PROD_PHAB_API_URL) with the SERV2 origins as host fallbacks; Viva via https://api.vivacrm.ru.",
+      "seligerPathUsers": [
+        "main LK bundle: ${SERV2}?type=sub_for_sale and ?type=advertisement",
+        "games dev module a3PayDevVivaBookingApi"
+      ],
+      "checks": {
+        "GET https://padlhub.su/lk/tournaments/participants?exerciseId=synthetic-check": "400",
+        "GET reserve /lk/tournaments/participants?exerciseId=synthetic-check": "400",
+        "OPTIONS https://padlhub.su/lk/tournaments/participants/reconcile-payment": "204",
+        "OPTIONS reserve /lk/tournaments/participants/reconcile-payment": "204",
+        "GET https://padlhub.su/api/health": "200"
+      }
+    }
+  },
+  "bindings147": {
+    "TOURNAMENT_OWNER_API_BASE": "absent in Node-RED PM2 env (kit evidence)",
+    "TOURNAMENT_OWNER_INTEGRATION_TOKEN": "absent",
+    "CUP_API_BASE_URL": "present (loopback)",
+    "cancellationService": "failed, exit 78 at read time",
+    "required": "configure and confirm before graph import"
+  },
+  "localArtifacts": {
+    "location": "~/Documents/PadlHub-release-artifacts/lk147-delivery-20261120 (0700, not in Git)",
+    "kitArchiveSha256": "ef4126d4f67351480c5852318f5b52f5a0fbf1a76c328787d67d51ccf35ebad1",
+    "kitSha256SumsSha256": "c60729e1907459212d8ce6c11eeb5dc70e8f4f522d5aee8e3054e5ee1b6a3901",
+    "widgetSha256Sums": "2257dc4cfbbab2730c8de9bb27dd8463fd5073c5d37999c1e2e8f9e4b2699aff",
+    "cancelWorkerSha256Sums": "0d2cf3b9f38b4ff94bd4d0d50a78f3cb258edf6c4e989c6e30b2b12c20777cfe",
+    "privateGraph": "private-graph-09c83d4c/complete.json (147 configuration; never in Git/CI/messages)"
+  },
+  "recovery": {
+    "beforeActivation": [
+      "Back up and test-restore into empty namespaces: MongoDB player_rating_state, rating_events, player_ratings, player_level_projection_outbox, rating_projection_outbox, lk_result_viva_sync_outbox, admin_roles, admin_users; LK2 PostgreSQL; Node-RED flows.json with its runtime revision; the current LK1 static release directory; the current /opt/padlhub-rating-worker/current target; the current CUP runtime digest.",
+      "Record unfinished tournament operations with their original idempotency keys."
+    ],
+    "activationOrder": [
+      "Configure TOURNAMENT_OWNER_API_BASE/TOKEN on 147 and confirm recovery-only state",
+      "CUP runtime 15936d4f (cupRuntime.runtimeManifestSha256) with PADLHUB_PLAYER_LEVEL_PROJECTION_ENABLED=false",
+      "LK1 rating worker (filesDigest), level helper, FPR helper; first run --dry-run",
+      "nginx location and guard (nginx.files)",
+      "Node-RED final graph (nodeRedGraph.finalSha256) after re-reading 147",
+      "Cancellation worker bundle (workers.cancellation.manifestSha256) pinned to the final graph",
+      "LK1 widget (widget.files)",
+      "LK2 ingress, then CUP projection sender"
+    ],
+    "rollbackOrder": [
+      "Pause new writes: set PLAYER_RATING_ADMIN_ENABLED=false in CUP (closes manual level changes) and keep tournament owner in recovery-only mode; never replay or delete rating_projection_outbox or lk_result_viva_sync_outbox.",
+      "Disable the CUP projection sender (PADLHUB_PLAYER_LEVEL_PROJECTION_ENABLED=false), then the LK2 ingress (CUP_PLAYER_LEVEL_PROJECTION_ENABLED=false). Accepted LK2 projections and the CUP ledger stay.",
+      "LK1 frontend: atomically switch the static directory back to the saved release and verify every served file by sha256 over HTTP.",
+      "nginx: restore the saved location/guard files",
+      "Cancellation worker: stop it before restoring the previous graph (its guard pins the final graph sha and exits 78 otherwise)",
+      "Node-RED: restore the saved flows.json by exact sha256 and verify the runtime revision and readback.",
+      "CUP: reinstall the previous runtime by exact digest; verify /api/health and the SDK bytes.",
+      "Recover each unfinished operation only through its original key with durable readback."
+    ],
+    "ratingBoundary": "Before the first ADMIN_MANUAL event: the rating worker may return to the saved release. After it: keep this worker release (lk#466 semantics) and the journal; rollback of rating code is forward-fix only, because the earlier release replays ADMIN_MANUAL as a delta and diverges (stand example: 5.01 vs 4.71).",
+    "verification": "Postchecks and stop conditions: https://github.com/Z6v6e6r/ph-admin/pull/133#issuecomment-7030806946"
+  },
+  "ratingAcceptance": {
+    "result": "GO",
+    "evidence": "https://github.com/Z6v6e6r/ph-admin/pull/133#issuecomment-7031346521",
+    "details": "https://github.com/Z6v6e6r/ph-admin/pull/133#issuecomment-7030806946",
+    "scenario": [
+      {
+        "step": "One CUP ADMIN_MANUAL event 3.35 C -> 3.62 C+",
+        "cup": "3.62 C+, padlHubProjectionRevision 1",
+        "lk1": "RATED 3.62 C+",
+        "lk2": "revision 1, 3.62 C+, source MANUAL"
+      },
+      {
+        "step": "LK1 worker incremental + full",
+        "cup": "unchanged, eventProjection.changed 0",
+        "lk1": "RATED 3.62 C+",
+        "vivaProjection": "enabled false, reason CUP_ONLY"
+      },
+      {
+        "step": "Replay: same CUP command + exact re-delivery to LK2",
+        "cup": "201 same event, events 2, ADMIN_MANUAL 1",
+        "lk2": "200 replayed, revisions 0/1 unchanged"
+      },
+      {
+        "step": "Restart CUP and LK2 + worker incremental",
+        "cup": "unchanged, outbox SYNCED, 1 attempt",
+        "lk1": "RATED 3.62 C+",
+        "lk2": "revision 1, 3.62 C+"
+      },
+      {
+        "step": "Late game result (occurredAt 1 min before the manual edit) + worker full",
+        "cup": "3.62 C+ (rejected 88b2e6c release: 3.72)",
+        "lk1": "RATED 3.62 C+",
+        "lk2": "revision 1, 3.62 C+"
+      }
+    ],
+    "workerReleaseComparison": {
+      "acceptedOn": "3402b270799b70b9111347f750a88abd2a147cb1",
+      "finalCommit": "1bc3219a05d5feece0e4663abb0eecb817a763f3",
+      "filesCompared": 64,
+      "filesEqual": 64,
+      "treeEqual": true
+    }
+  },
+  "excludedFromBundle": [
+    {
+      "pr": "lk2#689",
+      "reason": "open draft; not required by the projection scenario"
+    }
+  ],
+  "notAuthorized": [
+    "merge to main",
+    "widget publication",
+    "Node-RED import",
+    "nginx change",
+    "worker installation",
+    "deployment",
+    "147, 24636 or production writes",
+    "permission changes"
+  ]
+}
