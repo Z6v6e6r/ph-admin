@@ -192,7 +192,8 @@ async function main(): Promise<void> {
       json: async () => ({
         phone_number: '79123456789',
         tenantKey: 'iSkq6G',
-        sub: 'client-1'
+        sub: 'keycloak-subject',
+        clientId: 'client-1'
       })
     } as Response;
   }) as typeof fetch;
@@ -335,7 +336,8 @@ async function main(): Promise<void> {
       iss: 'https://kc.vivacrm.ru/realms/clients',
       phone_number: '79123456789',
       tenantKey: 'iSkq6G',
-      sub: 'client-1'
+      sub: 'keycloak-subject',
+      clientId: 'client-1'
     },
     privateKey,
     'lk-test-key'
@@ -389,7 +391,7 @@ async function main(): Promise<void> {
   // Unsigned fallback claims cannot override successful authenticated userinfo.
   const authService: any = createService(createTournament(), {});
   authService.verifyLkJwtToken = async () => null;
-  authService.fetchLkUserInfo = async () => ({ sub: 'client-1', phone_number: '79123456789', tenantKey: 'iSkq6G', name: 'Trusted' });
+  authService.fetchLkUserInfo = async () => ({ sub: 'keycloak-subject', clientId: 'client-1', phone_number: '79123456789', tenantKey: 'iSkq6G', name: 'Trusted' });
   const forgedToken = buildJwt({ exp: Math.floor(Date.now() / 1000) + 300,
     clientId: 'forged-client', phone_number: '79000009999', tenantKey: 'foreign', name: 'Forged' });
   const verifiedFallback = await authService.verifyLkCheckoutAuth({ authorizationHeader: `Bearer ${forgedToken}`, expectedPhone: '79123456789', tenantKey: 'iSkq6G' });
@@ -397,7 +399,7 @@ async function main(): Promise<void> {
   assert.equal(verifiedFallback.tenantKey, 'iSkq6G'); assert.equal(verifiedFallback.name, 'Trusted');
   authService.fetchLkUserInfo = async () => ({ phone_number: '79123456789', tenantKey: 'iSkq6G' });
   assert.equal((await authService.verifyLkCheckoutAuth({ authorizationHeader: `Bearer ${forgedToken}`, expectedPhone: '79123456789', tenantKey: 'iSkq6G' })).clientId, undefined);
-  const signedClaims = { sub: 'client-1', phone_number: '79123456789', tenantKey: 'iSkq6G', exp: Math.floor(Date.now() / 1000) + 300 };
+  const signedClaims = { sub: 'keycloak-subject', clientId: 'client-1', phone_number: '79123456789', tenantKey: 'iSkq6G', exp: Math.floor(Date.now() / 1000) + 300 };
   authService.verifyLkJwtToken = async () => signedClaims;
   for (const contradiction of [{ sub: 'other' }, { phone_number: '79000009999' }, { tenantKey: 'other' }]) {
     authService.fetchLkUserInfoSafe = async () => ({ ...signedClaims, ...contradiction });
@@ -405,6 +407,40 @@ async function main(): Promise<void> {
   }
   authService.fetchLkUserInfoSafe = async () => ({ ...signedClaims });
   assert.equal((await authService.verifyLkCheckoutAuth({ authorizationHeader: 'Bearer signed', expectedPhone: '79123456789', tenantKey: 'iSkq6G' })).clientId, 'client-1');
+
+  const fallbackService: any = createService(createTournament(), {
+    createTournamentEnergyCheckout: async (input: CapturedVivaInput) => {
+      vivaInput = input;
+      return { clientId: input.clientId, transactionId: 'transaction-viva-profile',
+        toPayMinor: 250000, paymentUrl: 'https://pay.example/verified-viva-profile' };
+    }
+  });
+  const { clientId: _clientId, ...claimsWithoutId } = signedClaims;
+  fallbackService.verifyLkJwtToken = async () => claimsWithoutId;
+  fallbackService.lkIdentityService = { verifyTrustedBearer: async (header: string) => {
+    assert.equal(header, 'Bearer verified-legacy');
+    return { actor: { verified: true, tenantKey: 'iSkq6G', phoneNorm: '79123456789', subject: claimsWithoutId.sub } };
+  } };
+  const fallbackCheckout = () => fallbackService.createCustomEnergyCheckout('exercise-energy-1', {
+    body: createPayload(), authorizationHeader: 'Bearer verified-legacy', authSourceHeader: 'lk-keycloak', tenantKeyHeader: 'iSkq6G'
+  });
+  globalThis.fetch = async (url, init) => {
+    assert.equal(String(url), 'https://api.vivacrm.ru/end-user/api/v1/iSkq6G/profile');
+    assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer verified-legacy');
+    return Response.json({ id: 'client-1', phone: '+7 912 345-67-89' });
+  };
+  try {
+    vivaInput = undefined;
+    fallbackService.fetchLkUserInfoSafe = async () => ({ ...claimsWithoutId, clientId: 'other-client' });
+    await assert.rejects(fallbackCheckout(), (error: any) => error.getResponse().code === 'TOURNAMENT_IDENTITY_MISMATCH');
+    assert.equal(vivaInput, undefined);
+    fallbackService.fetchLkUserInfoSafe = async () => claimsWithoutId;
+    const result = await fallbackCheckout();
+    assert.equal(result.clientId, 'client-1');
+    assert.equal(result.transactionId, 'transaction-viva-profile');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 
   console.log('Tournament custom energy checkout test passed');
 }

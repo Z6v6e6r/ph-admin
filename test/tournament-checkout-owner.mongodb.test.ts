@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import * as assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { MongoClient } from 'mongodb';
+import { VivaAdminService } from '../src/integrations/viva/viva-admin.service';
 import { TournamentCheckoutService } from '../src/tournaments/tournament-checkout.service';
 import { TournamentsService } from '../src/tournaments/tournaments.service';
 import { TournamentsPersistenceService } from '../src/tournaments/tournaments-persistence.service';
@@ -439,6 +440,77 @@ async function main() {
       assert.deepEqual(row.participants.map((p: Row) => p.phone), ['12025550999']);
       assert.equal(row.details.booking.pendingJoinPayments[0].state, 'OWNER_CANCELLED');
       assert.equal(row.details.booking.pendingJoinPayments[1].transactionId, successor.operationId);
+    });
+    await check('subscription copay holds the last seat until exact paid settlement and replays one participant', async () => {
+      const name = 'subscription-copay';
+      const exerciseId = 'exercise-' + name;
+      await seedLastSeat(name);
+      const f = owner(355);
+      const token = 'Bearer synthetic-token';
+      const integration = 'synthetic-owner-token';
+      const grant = await f.service.subscriptionAdmission(exerciseId, token, subscription('copay-key'));
+      const booking = { id: 'copay-booking', exerciseId, clientId: actor(355).clientId };
+      const transaction = { id: 'copay-transaction', status: 'PAID', toPayMinor: 50000,
+        bookingId: booking.id, clientId: booking.clientId };
+      const request = { ...subscription('copay-key'), ownerOperationId: grant.operationId, bookingId: booking.id,
+        payment: { transactionId: transaction.id, amountMinor: transaction.toPayMinor } };
+      const bound = await f.service.completeSubscription(exerciseId, token, integration, request, true);
+      assert.equal(bound.state, 'PAYMENT_PENDING');
+      await assert.rejects(f.service.completeSubscription(exerciseId, token, integration,
+        { ...request, payment: undefined }), (error: any) => error.getResponse().code === 'TOURNAMENT_PAYMENT_PENDING');
+      await assert.rejects(f.service.completeSubscription(exerciseId, token, integration,
+        { ...request, payment: { ...request.payment, transactionId: 'wrong-tx' } }, true));
+      await assert.rejects(instance(356).service.subscriptionAdmission(exerciseId, token, subscription('other-key')));
+      const before = (await collection.findOne({ id: name }))!;
+      const originalRoster = before.participants;
+      const staleViva = { source: 'VIVA', participantsCount: 2, participants: [
+        ...originalRoster, { name: 'Unpaid carrier', vivaBookingId: booking.id, status: 'REGISTERED', paymentStatus: 'UNPAID' }
+      ] };
+      assert.equal(originalRoster.length, 1);
+      assert.deepEqual(f.tournaments.buildDisplayTournamentParticipants(before), originalRoster);
+      const standalone = { ...before, participants: [], participantsCount: 0 };
+      const enriched = await f.tournaments.enrichTournamentVivaProfiles(standalone);
+      assert.deepEqual(f.tournaments.buildDisplayTournamentParticipants(enriched), []);
+      const beforeView = f.tournaments.mergeCustomWithSourceTournament(before, staleViva);
+      assert.equal(beforeView.participants.length, 1);
+      assert.equal(beforeView.participantsCount, 1);
+      assert.equal(beforeView.details.sourceTournamentSnapshot.participantsCount, 1);
+
+      let readback: Row = { ...transaction, status: 'WAITING' };
+      let activeBooking: Row | null = booking;
+      const viva = { readTournamentCopayTransaction: async (id: string) => {
+        assert.equal(id, transaction.id);
+        return readback;
+      } } as unknown as VivaAdminService;
+      const reconciler = new TournamentCheckoutService(f.tournaments, f.repo, viva);
+      (reconciler as any).http = async (url: string) => url.includes('/history?') || !activeBooking ? [] : [activeBooking];
+      const query = () => reconciler.reconcile(exerciseId, token);
+      assert.equal((await query()).state, 'PAYMENT_PENDING');
+      for (const invalid of [{ id: 'wrong-tx' }, { toPayMinor: 49999 }, { transactionStatus: 'WAITING' },
+        { cardPaymentInfo: { refundedAmountMinor: 50000 } },
+        { bookingIds: [{ id: booking.id, bookingId: 'wrong-booking' }] }]) {
+        readback = { ...transaction, ...invalid };
+        assert.equal((await query()).state, 'PAYMENT_PENDING');
+      }
+      readback = transaction;
+      activeBooking = { ...booking, isCancelled: true };
+      assert.equal((await query()).state, 'PAYMENT_PENDING');
+      activeBooking = booking;
+      for (const reply of await Promise.all([query(), query(), query()])) {
+        assert.deepEqual(reply, { state: 'COMPLETED', bookingId: booking.id, transactionId: transaction.id,
+          requestOperationId: request.operationId });
+      }
+      assert.equal((await f.service.completeSubscription(exerciseId, token, integration, request, true)).state, 'COMPLETED');
+      const after = (await collection.findOne({ id: name }))!;
+      assert.equal(after.details.booking.pendingJoinPayments[0].state, 'OWNER_COMPLETED');
+      assert.equal(after.details.booking.pendingJoinPayments[0].providerTransactionId, transaction.id);
+      assert.equal(after.participants.length, 2);
+      assert.equal(after.participants[1].paymentStatus, 'PAID');
+      assert.equal(after.participants[1].vivaBookingId, booking.id);
+      const storedView = await f.repo.findCustomTournamentBySlug(name);
+      const afterView = f.tournaments.mergeCustomWithSourceTournament(storedView, staleViva);
+      assert.equal(afterView.participants.length, 2);
+      assert.equal(afterView.participants.filter((player: Row) => player.paymentStatus === 'PAID').length, 1);
     });
     await check('exact cancelled booking with a pending payment releases its only held seat', async () => {
       const name = 'paid-cancelled-before-completion';

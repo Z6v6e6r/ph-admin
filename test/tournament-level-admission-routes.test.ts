@@ -111,10 +111,10 @@ function energyBody(overrides: Record<string, unknown> = {}): Record<string, unk
 async function energyCases(): Promise<void> {
   process.env.TOURNAMENTS_PUBLIC_TENANT_KEY = 'iSkq6G';
   process.env.TOURNAMENTS_PUBLIC_KEYCLOAK_REALM = 'prod';
-  const token = buildJwt({ exp: Math.floor(Date.now() / 1000) + 3600, phone_number: PHONE, tenantKey: 'iSkq6G', sub: 'client-1' });
+  const token = buildJwt({ exp: Math.floor(Date.now() / 1000) + 3600, phone_number: PHONE, tenantKey: 'iSkq6G', sub: 'keycloak-subject', clientId: 'client-1' });
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => ({ ok: true, status: 200,
-    json: async () => ({ phone_number: PHONE, tenantKey: 'iSkq6G', sub: 'client-1' }) })) as unknown as typeof fetch;
+    json: async () => ({ phone_number: PHONE, tenantKey: 'iSkq6G', sub: 'keycloak-subject', clientId: 'client-1' }) })) as unknown as typeof fetch;
   try {
     let current: Rating = 3.31;
     const rating = ratings(() => current);

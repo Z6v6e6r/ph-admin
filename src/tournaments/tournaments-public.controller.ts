@@ -290,6 +290,7 @@ export class TournamentsPublicController {
 
     if (this.parseBoolean(paymentSuccess)) {
       const outcome = await this.tournamentsService.confirmPublicJoinAfterPayment(slug, {
+        trustedIdentity: client[TRUSTED_TOURNAMENT_CLIENT],
         phone: client.phone,
         fallbackName: client.name ?? undefined,
         fallbackLevelLabel: client.levelLabel ?? undefined,

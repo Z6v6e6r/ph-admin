@@ -1655,6 +1655,21 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  async readTournamentCopayTransaction(transactionId: string): Promise<unknown> {
+    const { config } = await this.getResolvedSettings();
+    if (new URL(config.baseUrl).origin !== 'https://api.vivacrm.ru') {
+      throw new ServiceUnavailableException({ code: 'TOURNAMENT_PAYMENT_PROVIDER_UNAVAILABLE' });
+    }
+    const token = await this.requireAccessToken();
+    const response = await fetch(`https://api.vivacrm.ru/api/v1/transactions/${encodeURIComponent(transactionId)}`, {
+      redirect: 'error',
+      headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
+      signal: this.buildAbortSignal()
+    });
+    if (!response.ok) throw new ServiceUnavailableException({ code: 'TOURNAMENT_PAYMENT_PROVIDER_UNAVAILABLE' });
+    return response.json();
+  }
+
   private async fetchAdminJson(
     path: string,
     token: string,
