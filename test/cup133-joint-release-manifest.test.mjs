@@ -1,42 +1,40 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
-import { MANIFEST_PATH, pendingInputs, verifyManifestConsistency, workerFilesDigest } from '../scripts/verify-cup133-joint-release-manifest.mjs';
+import { MANIFEST_PATH, verifyManifestConsistency, workerFilesDigest } from '../scripts/verify-cup133-joint-release-manifest.mjs';
 
 const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8'));
 
-test('joint release manifest is internally consistent', () => {
+test('147 delivery manifest is internally consistent', () => {
   assert.deepEqual(verifyManifestConsistency(manifest), []);
-  assert.equal(manifest.components.lk1.ratingWorker.fileCount, 64);
-  assert.equal(manifest.components.lk1.ratingWorker.filesDigest, 'c511b0e206fc048c1eed64df93b64575eba62fb620b36016e7790b7c19bdb1fc');
-  assert.equal(manifest.components.cup.runtimeArtifact.runtimeManifest.sourceCommit, manifest.components.cup.commit);
+  assert.equal(manifest.sources.lk1.commit, '09c83d4c7cc805813ef4ef863d6a546f9dacbd4e');
+  assert.equal(manifest.sources.cup.commit, '15936d4f03334c099ce60bdf0b7499ef8c53535b');
+  assert.equal(manifest.nodeRedGraph.finalSha256, '4823937c5b52ab0aca28aea249b28ce7deb169c705513c8ee06cac57c324327e');
+  assert.equal(manifest.workers.cancellation.manifestSha256, '14ffe8e2b81639f1172e6dbb4946e49071b47ee152ef82d9a19988d9953b8f04');
+  assert.equal(manifest.workers.rating.filesDigest, 'c511b0e206fc048c1eed64df93b64575eba62fb620b36016e7790b7c19bdb1fc');
 });
 
-test('a changed worker file, count or worker entry is detected', () => {
+test('the superseded 6604dd1d graph or a worker pinned to it is rejected', () => {
+  const stale = structuredClone(manifest);
+  stale.workers.cancellation.pinnedGraphSha256 = manifest.sources.lk1.supersedes.graphSha256;
+  assert.ok(verifyManifestConsistency(stale).includes('cancellation worker'));
+  const graph = structuredClone(manifest);
+  graph.nodeRedGraph.finalSha256 = manifest.sources.lk1.supersedes.graphSha256;
+  assert.ok(verifyManifestConsistency(graph).includes('nodeRedGraph'));
+});
+
+test('a changed rating worker file is detected', () => {
   const tampered = structuredClone(manifest);
-  tampered.components.lk1.ratingWorker.workers[1].sha256 = '1'.repeat(64);
-  assert.ok(verifyManifestConsistency(tampered).includes('worker entry scripts/game_result_rating_worker.mjs'));
-  tampered.components.lk1.ratingWorker.files[0].sha256 = '0'.repeat(64);
-  assert.ok(verifyManifestConsistency(tampered).includes('worker filesDigest'));
-  tampered.components.lk1.ratingWorker.files.pop();
-  assert.ok(verifyManifestConsistency(tampered).includes('worker fileCount'));
+  tampered.workers.rating.files[0].sha256 = '0'.repeat(64);
+  assert.ok(verifyManifestConsistency(tampered).includes('rating worker filesDigest'));
+  assert.equal(workerFilesDigest(manifest.workers.rating.files), manifest.workers.rating.filesDigest);
 });
 
-test('the rejected 88b2e6c worker release cannot pass as the accepted digest', () => {
-  const worker = manifest.components.lk1.ratingWorker;
-  assert.notEqual(worker.rejectedRelease.filesDigest, worker.filesDigest);
-  assert.equal(workerFilesDigest(worker.files), worker.filesDigest);
-});
-
-test('frontend and graph are recorded; removing either reopens the release', () => {
-  assert.deepEqual(pendingInputs(manifest), []);
-  assert.equal(manifest.components.lk1.frontend.expected.files.length, 32);
-  assert.equal(manifest.components.lk1.frontend.release.sourceCommit, manifest.components.lk1.commit);
-  const reopened = structuredClone(manifest);
-  reopened.components.lk1.frontend.status = 'REQUIRED_INPUT';
-  reopened.nodeRedGraph.expected.finalSha256 = null;
-  assert.deepEqual(pendingInputs(reopened), ['lk1.frontend', 'nodeRedGraph']);
+test('the widget pins verified production addresses and keeps /seliger out of tournament signup', () => {
+  assert.equal(manifest.widget.files.length, 32);
+  assert.equal(manifest.widget.publicAddresses.equalToServedProduction.allValuesPresent, true);
+  assert.equal(Object.keys(manifest.widget.publicAddresses.values).length, 22);
   const tampered = structuredClone(manifest);
-  tampered.components.lk1.frontend.release.sourceDirty = true;
-  assert.ok(verifyManifestConsistency(tampered).includes('lk1 frontend'));
+  tampered.widget.tournamentSignupAddresses.usesSeligerPath = true;
+  assert.ok(verifyManifestConsistency(tampered).includes('widget'));
 });
