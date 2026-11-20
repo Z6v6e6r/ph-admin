@@ -1,0 +1,906 @@
+{
+  "schemaVersion": "PHUB_CUP133_JOINT_RELEASE_MANIFEST_V2",
+  "bundle": "ph-admin#133 joint candidate: CUP canonical player level, LK1 consumers and workers, LK2 projection",
+  "evidenceLevel": "LOCAL",
+  "acceptedAt": "2026-11-20",
+  "components": {
+    "cup": {
+      "repository": "Z6v6e6r/ph-admin",
+      "branch": "codex/shared-cup-rating-tournament-candidate-20261118",
+      "commit": "26aed3bc9e966a2c4b508a03190eda7d07993088",
+      "tree": "6a59c2e2b8083fea90e3190f2c975b04dd3b17b1",
+      "role": "Canonical rating owner and CUP -> LK2 projection sender (player_level_projection_outbox)",
+      "senderFiles": [
+        {
+          "path": "src/player-ratings/player-level-projection.service.ts",
+          "sha256": "24f2ff2df7787a9210b945bb29a3d105f38f5998e3d9473db5eb5ef83c6872d3"
+        },
+        {
+          "path": "src/player-ratings/player-level-projection-pilot.ts",
+          "sha256": "d19db800300d82d5f0fb346be447e7d81134170e920a0e4130951bb29cc56fb9"
+        },
+        {
+          "path": "src/player-ratings/player-ratings.repository.ts",
+          "sha256": "6825ce5ca2b34ca9316b89b394c7a5bf37cf2171f20799fba4ae6f351c97cab9"
+        },
+        {
+          "path": "src/player-ratings/player-ratings.service.ts",
+          "sha256": "081adb649cd1949dba1e37ba45c14683dfb3c842cfc679c1a5b6c3722d54a889"
+        },
+        {
+          "path": "src/player-ratings/player-ratings.types.ts",
+          "sha256": "72d799a063da9526ac52aae93aeb5c9e86a75eefb81edfb733e317f1c8fe4294"
+        }
+      ],
+      "acceptedSourceCommit": "3799c4a88b9b8d5933911223083e7b511c5a1693",
+      "sourceNote": "26aed3b differs from the accepted 3799c4a only by this manifest, its verifier/test and one documentation paragraph; CUP code is identical.",
+      "manifestOwnedPaths": [
+        "docs/release/cup133-joint-release-manifest.json",
+        "scripts/verify-cup133-joint-release-manifest.mjs",
+        "test/cup133-joint-release-manifest.test.mjs",
+        "docs/player-level-journal.md"
+      ],
+      "runtimeArtifact": {
+        "workflow": "CUP immutable runtime and recovery",
+        "runId": 44696531628,
+        "runUrl": "https://github.com/Z6v6e6r/ph-admin/actions/runs/44696531628",
+        "artifactId": 14611270523,
+        "artifactName": "cup-runtime-release",
+        "artifactDigest": "sha256:c3aa642963629c2462cd64fa2ddda83c3e82ea656980a3abdb54239eb8d0d4ad",
+        "runtimeManifest": {
+          "schema": "PHAB_CUP_RUNTIME_RELEASE_V1",
+          "sourceCommit": "26aed3bc9e966a2c4b508a03190eda7d07993088",
+          "sourceTree": "6a59c2e2b8083fea90e3190f2c975b04dd3b17b1",
+          "nodeVersion": "v22.13.1",
+          "fileCount": 13918
+        },
+        "files": [
+          {
+            "path": "cup-runtime.tgz",
+            "sha256": "b78d8616be1b9ee3ef7cea61a355a0d39188558c1d72f8e1bca69b776448842a"
+          },
+          {
+            "path": "legacy-max-recovery-manifest.json",
+            "sha256": "ba4f3f69e844b53ef5f182e36c836519ac1092d13a167e92ec3c29142129f814"
+          },
+          {
+            "path": "legacy-max-recovery-runtime-delta.tgz",
+            "sha256": "716358e2dae9ec936e2947459bf4b17620c389fc792f9ffa4ed28ccd280bfd91"
+          },
+          {
+            "path": "media-recovery-manifest.json",
+            "sha256": "7dea7176de0fecde36eba6fc2953d8e3fbb0c506570ab59581c1fd65bb782824"
+          },
+          {
+            "path": "media-recovery-runtime.tgz",
+            "sha256": "84567715013c93dccd9c6b3441526c994ee75e2fbdf3263a6433a86d39a714c3"
+          },
+          {
+            "path": "recovery-manifest.json",
+            "sha256": "6c5fc97d243ef132c24984808a0af3a0554038fad044584bf9e7f9bfdeebf651"
+          },
+          {
+            "path": "recovery-runtime-delta.tgz",
+            "sha256": "ae8c9113024a98a00c50e5e544bce2ad9c5b1488ea51071898498f9ac154e67f"
+          },
+          {
+            "path": "runtime-manifest.json",
+            "sha256": "9629819b9f689fb50a4d74838990ff159c83fca264f9d3eba70d50c28d5118e9"
+          }
+        ]
+      }
+    },
+    "lk1": {
+      "repository": "Z6v6e6r/lk",
+      "branch": "codex/shared-cup-rating-tournament-candidate-20261118",
+      "commit": "1bc3219a05d5feece0e4663abb0eecb817a763f3",
+      "tree": "566390c809304a1a4e4237dec88baf47e9a623fd",
+      "includes": {
+        "lk#454": "88b2e6c71c1171ac4109895810d3838d29210ee0",
+        "lk#466": "3402b270799b70b9111347f750a88abd2a147cb1"
+      },
+      "ratingWorker": {
+        "builder": "scripts/build_rating_worker_release.mjs",
+        "workerVersion": "rating-worker-v1.0.14",
+        "gameResultWorkerVersion": "game-result-rating-worker-v1.0.0",
+        "communityCalculationVersion": "community-rating-v1.3.0",
+        "versionNote": "Version strings equal the rejected 88b2e6c release; identify the release only by filesDigest.",
+        "filesDigestAlgorithm": "sha256 of sorted lines \"<sha256>  <releasePath>\\n\"",
+        "filesDigest": "c511b0e206fc048c1eed64df93b64575eba62fb620b36016e7790b7c19bdb1fc",
+        "fileCount": 64,
+        "files": [
+          {
+            "releasePath": "deploy/rating-worker/README.md",
+            "sourcePath": "deploy/rating-worker/README.md",
+            "sha256": "fda2d3e783e667ced065ef15c4907d956fef23faf2cce4b1ba536f7b76e7b67a"
+          },
+          {
+            "releasePath": "deploy/rating-worker/community-monthly-reports.service",
+            "sourcePath": "deploy/rating-worker/community-monthly-reports.service",
+            "sha256": "9faab3e5d7eebb3948ca5699b2813179c6e6005e1db50ab04b246d39e74b64ca"
+          },
+          {
+            "releasePath": "deploy/rating-worker/community-monthly-reports.timer",
+            "sourcePath": "deploy/rating-worker/community-monthly-reports.timer",
+            "sha256": "029318e5b56a4872dd60701c20827ec6d947d9be998da59507c910a88949ad55"
+          },
+          {
+            "releasePath": "deploy/rating-worker/community-monthly.service",
+            "sourcePath": "deploy/rating-worker/community-monthly.service",
+            "sha256": "82debb6ae6bb8c864294ecd316db12585d7597eb39ca2cb4f1d5068f7a6bda9c"
+          },
+          {
+            "releasePath": "deploy/rating-worker/community-monthly.timer",
+            "sourcePath": "deploy/rating-worker/community-monthly.timer",
+            "sha256": "ba44470563971e859716d5b36b08ca6a70125759863525726d14efca4ceb2c00"
+          },
+          {
+            "releasePath": "deploy/rating-worker/configure-runtime-env.mjs",
+            "sourcePath": "deploy/rating-worker/configure-runtime-env.mjs",
+            "sha256": "8c22ad092014fb003fc4b1dcfe08eb8ab7d1fa2a3e9056f08f11383d77879f9f"
+          },
+          {
+            "releasePath": "deploy/rating-worker/run-full.sh",
+            "sourcePath": "deploy/rating-worker/run-full.sh",
+            "sha256": "b6791bbc6ea81875d232647bf246a074ab34f64cb0829d7bfcc39120c3c33c09"
+          },
+          {
+            "releasePath": "deploy/rating-worker/run-game-results.sh",
+            "sourcePath": "deploy/rating-worker/run-game-results.sh",
+            "sha256": "29acc6d5801af441a1e08fdd31ae6f508fc9867a446f2d252fd633486a0a0f59"
+          },
+          {
+            "releasePath": "deploy/rating-worker/run-incremental.sh",
+            "sourcePath": "deploy/rating-worker/run-incremental.sh",
+            "sha256": "f621c9d96b695e69e82aab118b9e995007507cba99c96d03cc770f24cdaa0602"
+          },
+          {
+            "releasePath": "deploy/rating-worker/run-monthly-reports.sh",
+            "sourcePath": "deploy/rating-worker/run-monthly-reports.sh",
+            "sha256": "9cf2c49a2dd3f4498668e91778fd3e2e02c367bc7a4a7ab458309e60458d1804"
+          },
+          {
+            "releasePath": "deploy/rating-worker/run-monthly.sh",
+            "sourcePath": "deploy/rating-worker/run-monthly.sh",
+            "sha256": "b2bab34a50c918f7b6d69cd1bbed4100cb9ffe3d7d588b41941b3187e4b278e6"
+          },
+          {
+            "releasePath": "deploy/rating-worker/run-with-watchdog.sh",
+            "sourcePath": "deploy/rating-worker/run-with-watchdog.sh",
+            "sha256": "428db4e9ebf90a291fb3e5cc9cea132d9c86424d04140cc2f75fdf3ac3232426"
+          },
+          {
+            "releasePath": "package.json",
+            "sourcePath": "deploy/rating-worker/package.json",
+            "sha256": "c72917102f51c1e7a81fa6fe5ecf63a7840232d6da3d66f6960d44e9a2561fc5"
+          },
+          {
+            "releasePath": "scripts/community_monthly_reports.mjs",
+            "sourcePath": "scripts/community_monthly_reports.mjs",
+            "sha256": "0a259039ab2a1e2d506afcc06c93b20fde36e807c6ef6b68c76124d52ae01ced"
+          },
+          {
+            "releasePath": "scripts/community_monthly_worker.mjs",
+            "sourcePath": "scripts/community_monthly_worker.mjs",
+            "sha256": "164c9951dad140c97979e85b0c7b3ffa2f6cd7da8786eecae336826d9425f0a5"
+          },
+          {
+            "releasePath": "scripts/game_result_rating_worker.mjs",
+            "sourcePath": "scripts/game_result_rating_worker.mjs",
+            "sha256": "a111272358c88985f7e39fa2de523c5ac8b31bc79d0e3d93b6d14185ab5a68bf"
+          },
+          {
+            "releasePath": "scripts/lib/communityMonthlyFinalization.mjs",
+            "sourcePath": "scripts/lib/communityMonthlyFinalization.mjs",
+            "sha256": "11069883078371013cabe643f78a97ef8e048361f1f759d8bc481e3c25c0871a"
+          },
+          {
+            "releasePath": "scripts/lib/communityPolicyProjection.mjs",
+            "sourcePath": "scripts/lib/communityPolicyProjection.mjs",
+            "sha256": "114f97fbb31ac0d6261d5312945d748bd97df12a30f2d49e5565ca31f100ce2f"
+          },
+          {
+            "releasePath": "scripts/lib/communityRatingPostcheck.mjs",
+            "sourcePath": "scripts/lib/communityRatingPostcheck.mjs",
+            "sha256": "fdccf26c277d4419593dba4322749fcc15b056ed50eac2d816eb677270f3dbe5"
+          },
+          {
+            "releasePath": "scripts/lib/communitySchedule.mjs",
+            "sourcePath": "scripts/lib/communitySchedule.mjs",
+            "sha256": "8417797545ebccda28fe9a59187d9a60f133e03465ccd0caaceb9c51bed819d8"
+          },
+          {
+            "releasePath": "scripts/lib/fprLevelIdentity.mjs",
+            "sourcePath": "scripts/lib/fprLevelIdentity.mjs",
+            "sha256": "dbfca1bee7f4368876dad3e0f2712b4e2af440e2977520b559f6f0117a186f4e"
+          },
+          {
+            "releasePath": "scripts/lib/fprLevelLedger.mjs",
+            "sourcePath": "scripts/lib/fprLevelLedger.mjs",
+            "sha256": "7311fcc9eb593fc3d530e43236182a9aa308eb505bf626c6d0d5a7b5752d15cc"
+          },
+          {
+            "releasePath": "scripts/lib/gameResultRating.mjs",
+            "sourcePath": "scripts/lib/gameResultRating.mjs",
+            "sha256": "d21a72a3658cdf0268866b0b7e0a205ceab7089243a5d1564bd5499f38872b6b"
+          },
+          {
+            "releasePath": "scripts/lib/ratingDataLock.mjs",
+            "sourcePath": "scripts/lib/ratingDataLock.mjs",
+            "sha256": "789ca4762db56e042ab746f801ce6d1b2380fb5e3910f98b70456982a022affd"
+          },
+          {
+            "releasePath": "scripts/lib/ratingTransaction.mjs",
+            "sourcePath": "scripts/lib/ratingTransaction.mjs",
+            "sha256": "41bdf06589c665bac0507e9d7a173ff74d2f01d7ac4928e77aaa7d2e8341157e"
+          },
+          {
+            "releasePath": "scripts/lib/ratingWorkerChildProcess.mjs",
+            "sourcePath": "scripts/lib/ratingWorkerChildProcess.mjs",
+            "sha256": "554c8b702edb7ed5f342a1399cf26d696530e3b01df99599c61fcd6a7b0bd68b"
+          },
+          {
+            "releasePath": "scripts/lib/stationMembershipLifetime.mjs",
+            "sourcePath": "scripts/lib/stationMembershipLifetime.mjs",
+            "sha256": "a59c2eabbe832646689406db4ba1e6ebe6342a5f9721740fb62e5eec42d5fb5f"
+          },
+          {
+            "releasePath": "scripts/lib/stationMessageHistory.mjs",
+            "sourcePath": "scripts/lib/stationMessageHistory.mjs",
+            "sha256": "27dd2ad5fa32fae4544b079b45ec4a37ade3dd9bd61da4af41a952fc772b4b26"
+          },
+          {
+            "releasePath": "scripts/lib/stationMessageOwner.mjs",
+            "sourcePath": "scripts/lib/stationMessageOwner.mjs",
+            "sha256": "122c9352a9986ef8c09483dbebbac460fd2993dba5753eb57b27cc3723d8180b"
+          },
+          {
+            "releasePath": "scripts/lib/stationMessageProof.mjs",
+            "sourcePath": "scripts/lib/stationMessageProof.mjs",
+            "sha256": "caedff8d2e0eeb507ab5b5dfddf182fa678fd79f59e11ad90ec20e549fe3165f"
+          },
+          {
+            "releasePath": "scripts/lib/stationMessageRead.mjs",
+            "sourcePath": "scripts/lib/stationMessageRead.mjs",
+            "sha256": "9915eb92bc121398a4210f9508c60b7e5d29b0828580c52fd9e92bfea0d2ebc7"
+          },
+          {
+            "releasePath": "scripts/lib/stationMessageStream.mjs",
+            "sourcePath": "scripts/lib/stationMessageStream.mjs",
+            "sha256": "f14e80fd1f5d15ffdb1d12f67b3df9608b0bc5e3d74144219fa820bee2b2391c"
+          },
+          {
+            "releasePath": "scripts/lib/timeForFriendsCommunityBackfill.mjs",
+            "sourcePath": "scripts/lib/timeForFriendsCommunityBackfill.mjs",
+            "sha256": "435ba5ed9f8bae2a7c4404628ce8333a0ca7000cbbbf91f7a998a4f2827e2520"
+          },
+          {
+            "releasePath": "scripts/lib/timeForFriendsRuntimeRoster.mjs",
+            "sourcePath": "scripts/lib/timeForFriendsRuntimeRoster.mjs",
+            "sha256": "c9fe8585668c1d37e54a847a5a19a57261794f52034193bbef1356bc2757c074"
+          },
+          {
+            "releasePath": "scripts/lib/tournamentCommunityContext.mjs",
+            "sourcePath": "scripts/lib/tournamentCommunityContext.mjs",
+            "sha256": "383588029cdc36bf356fd48be186ae40c5a6e20ff6e8cdfabfbabd2dca8f3096"
+          },
+          {
+            "releasePath": "scripts/lib/tournamentFinalization.mjs",
+            "sourcePath": "scripts/lib/tournamentFinalization.mjs",
+            "sha256": "0f94139a860f1e935885e9f5a8da06d75bbcca4777bdee551f629ad6e7da62d5"
+          },
+          {
+            "releasePath": "scripts/lib/vivaUserAgent.mjs",
+            "sourcePath": "scripts/lib/vivaUserAgent.mjs",
+            "sha256": "d4c750db1ce065c049d10139e780953dd059daacef05f48946f76166ab330ae8"
+          },
+          {
+            "releasePath": "scripts/postcheck_community_rating_147.mjs",
+            "sourcePath": "scripts/postcheck_community_rating_147.mjs",
+            "sha256": "b3ca53096d339b7eb44e41282ac064aefe7d5cd2b78c67269512281f7c16a527"
+          },
+          {
+            "releasePath": "scripts/rating_worker.mjs",
+            "sourcePath": "scripts/rating_worker.mjs",
+            "sha256": "13f909c4abd8c6d9cffe4790b566bee110d7a24fcd24c661d4b078925881bfb3"
+          },
+          {
+            "releasePath": "scripts/recalculate_community_rating.mjs",
+            "sourcePath": "scripts/recalculate_community_rating.mjs",
+            "sha256": "497c998b2be2f4a4466139737496ca949c52ee0eed84684e7f7a36549948a7f3"
+          },
+          {
+            "releasePath": "scripts/recalculate_community_rating_all.mjs",
+            "sourcePath": "scripts/recalculate_community_rating_all.mjs",
+            "sha256": "a8dc383f1860cc7e0233c127b93b0d79b9493a22bcc95c7eaa4b173c0416a399"
+          },
+          {
+            "releasePath": "scripts/run_community_rating_recalc_147.mjs",
+            "sourcePath": "scripts/run_community_rating_recalc_147.mjs",
+            "sha256": "f64e0d6f134115142fd0e7271891b8371b52e60e73acdee8db9c20ea7bd978b6"
+          },
+          {
+            "releasePath": "scripts/run_rating_worker_147.mjs",
+            "sourcePath": "scripts/run_rating_worker_147.mjs",
+            "sha256": "7523fefff87d6570ca0a88d737b091df556f75e812fc924c548d559cfe8025ee"
+          },
+          {
+            "releasePath": "scripts/sync_training_visits_from_viva.mjs",
+            "sourcePath": "scripts/sync_training_visits_from_viva.mjs",
+            "sha256": "9b5bcb194aafb6267df4e43fc7e0f2a461d4eccf3f38211d8919b4230d367785"
+          },
+          {
+            "releasePath": "src/components/tournaments/fpr6x25.ts",
+            "sourcePath": "src/components/tournaments/fpr6x25.ts",
+            "sha256": "a5b5ad60a3d07fb5977f5b339c0c237d07dc0bbef54677eda048f177e2aa1ba9"
+          },
+          {
+            "releasePath": "src/services/community-policy.ts",
+            "sourcePath": "src/services/community-policy.ts",
+            "sha256": "5459571e3809c3e4658d9392a2a9b55765b07428afd34523081d3ea3da01e1d2"
+          },
+          {
+            "releasePath": "src/services/community-rating/aggregates.ts",
+            "sourcePath": "src/services/community-rating/aggregates.ts",
+            "sha256": "1d4b454067e6894d9613c76a4bb72e7e2fb7d992299a597531bac360099496f3"
+          },
+          {
+            "releasePath": "src/services/community-rating/calculations.ts",
+            "sourcePath": "src/services/community-rating/calculations.ts",
+            "sha256": "116468a380e79e5b66c2d8493b55943b28b5c41378486fdca90808913f28e25b"
+          },
+          {
+            "releasePath": "src/services/community-rating/contract.ts",
+            "sourcePath": "src/services/community-rating/contract.ts",
+            "sha256": "c37ae01ffa38a446835478cf81e54f80d3175c978f175a95ade5010538eff877"
+          },
+          {
+            "releasePath": "src/services/community-rating/facts.ts",
+            "sourcePath": "src/services/community-rating/facts.ts",
+            "sha256": "ff40c1e157c011778e0b30b0b85ddffa66789efc91da4d01a449e0fe35d2b80a"
+          },
+          {
+            "releasePath": "src/services/community-rating/fpr.ts",
+            "sourcePath": "src/services/community-rating/fpr.ts",
+            "sha256": "0f76dc1c8bc7348dd9c969c66daeea4e24a217853aa7f188f27e58071b38939e"
+          },
+          {
+            "releasePath": "src/services/community-rating/index.ts",
+            "sourcePath": "src/services/community-rating/index.ts",
+            "sha256": "78e2702871d7b887e728f2fcbb16fec43fb4cb77cc0a362aac7d5aca7c909267"
+          },
+          {
+            "releasePath": "src/services/community-rating/league.ts",
+            "sourcePath": "src/services/community-rating/league.ts",
+            "sha256": "4c22cdb3401f69ea203d5aea547c48ba82cf6a55985e618386201e6b2f61ae49"
+          },
+          {
+            "releasePath": "src/services/community-rating/monthly.ts",
+            "sourcePath": "src/services/community-rating/monthly.ts",
+            "sha256": "053fc6e458bc563f25bbef24e098d447fb6a4a9e15315d95ea6a90f8ad21ee53"
+          },
+          {
+            "releasePath": "src/services/community-rating/monthlyContract.ts",
+            "sourcePath": "src/services/community-rating/monthlyContract.ts",
+            "sha256": "7bc29bee2498b50d8d8d34d9d12919a0f051cd7b3ffef827b76b29398eee519b"
+          },
+          {
+            "releasePath": "src/services/community-rating/persistence.ts",
+            "sourcePath": "src/services/community-rating/persistence.ts",
+            "sha256": "5e42ae90fcc7e3079f05a73d1c0aba68e0acc1d57a22704bbad712fc97c798de"
+          },
+          {
+            "releasePath": "src/services/community-rating/recalculation.ts",
+            "sourcePath": "src/services/community-rating/recalculation.ts",
+            "sha256": "03cb59eeee1075c81238a1a6bb1fb5ed60277479a39e1fe33482f94b28c6b702"
+          },
+          {
+            "releasePath": "src/services/player-rating/fprLevelResults.ts",
+            "sourcePath": "src/services/player-rating/fprLevelResults.ts",
+            "sha256": "66ed3eefb5d91a292a6d22c797af55b848a1cf4928dac8198b8a9de58d61f936"
+          },
+          {
+            "releasePath": "src/services/player-rating/fprRatingReplay.ts",
+            "sourcePath": "src/services/player-rating/fprRatingReplay.ts",
+            "sha256": "a2c35dc9f58e2b90abb7d8ba3895471d8c338a438f170550d3d4f183516a25b9"
+          },
+          {
+            "releasePath": "src/services/player-rating/fprTournamentRating.ts",
+            "sourcePath": "src/services/player-rating/fprTournamentRating.ts",
+            "sha256": "51015fcc4ea1b2f8f47818ba8b849a4b15c0df2e9b19222b1b8718b9ad58e2f1"
+          },
+          {
+            "releasePath": "src/services/player-rating/ledger.ts",
+            "sourcePath": "src/services/player-rating/ledger.ts",
+            "sha256": "28dc3c8e139a61c7d5f3a25b1252f35d47bebc0d42e4cc44d12869c191a7f59e"
+          },
+          {
+            "releasePath": "src/services/player-rating/tournamentExclusionGuard.ts",
+            "sourcePath": "src/services/player-rating/tournamentExclusionGuard.ts",
+            "sha256": "67809d96227690f491f63ae803e76aeb98cb9b8ed586396e1646235c3befdf88"
+          },
+          {
+            "releasePath": "src/services/player-rating/tournamentExclusions.ts",
+            "sourcePath": "src/services/player-rating/tournamentExclusions.ts",
+            "sha256": "4430ec1552d5b64ea81cb83ff926acfe8285e144091297b7364019cdcde5ec97"
+          },
+          {
+            "releasePath": "src/utils/exerciseCategory.ts",
+            "sourcePath": "src/utils/exerciseCategory.ts",
+            "sha256": "0f6c4ecd80c90d8d9a8567082c08d70281399aaa77038a7d112e0e497050bf3a"
+          }
+        ],
+        "rejectedRelease": {
+          "commit": "88b2e6c71c1171ac4109895810d3838d29210ee0",
+          "fileCount": 63,
+          "filesDigest": "ceaa09598cf7843203ac63d307b4f1169f348c39a7438fc0f42d78e92efff06f",
+          "reason": "Delta replay overrides a CUP ADMIN_MANUAL target after a late game result; LK2 diverges."
+        },
+        "workers": [
+          {
+            "name": "rating-worker (canonical ledger projector)",
+            "entry": "scripts/rating_worker.mjs",
+            "sha256": "13f909c4abd8c6d9cffe4790b566bee110d7a24fcd24c661d4b078925881bfb3",
+            "version": "rating-worker-v1.0.14",
+            "schedule": [
+              "*/15 * * * * deploy/rating-worker/run-incremental.sh",
+              "17 3 * * * deploy/rating-worker/run-full.sh"
+            ],
+            "vivaDispatch": "disabled (vivaProjection CUP_ONLY)"
+          },
+          {
+            "name": "game-result-rating-worker",
+            "entry": "scripts/game_result_rating_worker.mjs",
+            "sha256": "a111272358c88985f7e39fa2de523c5ac8b31bc79d0e3d93b6d14185ab5a68bf",
+            "version": "game-result-rating-worker-v1.0.0",
+            "schedule": [
+              "* * * * * deploy/rating-worker/run-game-results.sh"
+            ],
+            "activation": "GAME_RESULT_RATING_WORKER_ENABLED=true only after the matching Node-RED result flow passes postchecks",
+            "vivaDispatch": "disabled"
+          }
+        ],
+        "releaseArtifact": {
+          "file": "lk1-rating-worker/padlhub-rating-worker-1bc3219.tgz",
+          "sha256": "f2bed57670101988f6886d5349bba8029268483803276b8f4b227e514093da83",
+          "releaseManifestSha256": "2fb2df394f5c513cd25305ad0bdb6d87a5bdcbd11f90a58baa33a6702a6d30ed",
+          "note": "Built once from the clean 1bc3219 checkout; the release-manifest.json bytes include generatedAt, so identity is the filesDigest."
+        }
+      },
+      "levelReader": [
+        {
+          "path": "scripts/lib/cupPlayerLevel.mjs",
+          "sha256": "e63f515d5e1f32cd347768b0220c0473bfa071d767dadaaffd5420aa6b856a21"
+        },
+        {
+          "path": "scripts/cup_player_level_cli.mjs",
+          "sha256": "e189285089b39504b71d8e0e5c911fd1eeb26f69a866f6d3c5f47310715d3381"
+        },
+        {
+          "path": "scripts/audit_cup_player_level_cutover.mjs",
+          "sha256": "70976e152f83696bcbf92cca2b8c544079a92a83c3f31228142714386f87f0b2"
+        }
+      ],
+      "vivaQueues": {
+        "rating_projection_outbox": "retired: no enqueue, no dispatch (vivaProjection CUP_ONLY); historical rows kept",
+        "lk_result_viva_sync_outbox": "retired; historical rows kept"
+      },
+      "levelHelper": {
+        "builder": "scripts/build_cup_player_level.mjs",
+        "builderSha256": "ebeb13d431b703c259af8450bbaf1ad0ae8e01179e7b4828bf7ce7111a15bd4b",
+        "esbuild": "0.27.2 (LK1 package-lock)",
+        "output": "level.mjs",
+        "sha256": "22c56827e67da29a1c9b76830f828f8919a5da5a25194a6ddc6d0d5947b764ee",
+        "reproducible": "two builds from 1bc3219 produce identical bytes; equal to the helper installed on stand 24633",
+        "installPath": "/opt/padlhub-player-level/releases/<id>/level.mjs (root-owned, sourceDirty=false manifest checked at runtime)"
+      },
+      "frontend": {
+        "status": "RECORDED",
+        "sourceCommit": "1bc3219a05d5feece0e4663abb0eecb817a763f3",
+        "build": "npm ci --include=optional && npm run build in public.ecr.aws/docker/library/node:22.13.1-bookworm-slim (linux/amd64 rollup) from a clean clone of 1bc3219; LK_RELEASE_VERSION=20261120T090000Z",
+        "requiredPublicEnvKeys": [
+          "VITE_API_BASE",
+          "VITE_KEYCLOAK_BASE",
+          "VITE_TENANT_KEY",
+          "VITE_SERV2",
+          "VITE_SERV2_FALLBACK",
+          "VITE_SUPPORT_API_BASE",
+          "VITE_SUCCESS_URL",
+          "VITE_FAIL_URL",
+          "VITE_GAMES_BUNDLE_URL",
+          "VITE_TOURNAMENTS_BUNDLE_URL",
+          "VITE_ONBOARDING_BUNDLE_URL",
+          "VITE_LEVELS_INFO_BUNDLE_URL",
+          "VITE_COMMUNITIES_BUNDLE_URL",
+          "VITE_CABINET_URL",
+          "VITE_LK_ASSET_FALLBACK_BASE_URLS",
+          "VITE_PUSH_REGISTRATION_URL",
+          "VITE_PUSH_UNREGISTRATION_URL"
+        ],
+        "servedFiles": [
+          "LPD.png",
+          "atlanty-schedule-dev.js",
+          "atlanty-schedule.js",
+          "bundle-dev.js",
+          "bundle.js",
+          "communities-dev.js",
+          "communities.js",
+          "ffc-academy-lk-dev.js",
+          "ffc-academy-lk.js",
+          "games-dev.js",
+          "games.js",
+          "group-schedule-dev.js",
+          "group-schedule.js",
+          "levels-info-dev.js",
+          "levels-info.js",
+          "manifest.json",
+          "onboarding-dev.js",
+          "onboarding.js",
+          "padel-day-schedule-dev.js",
+          "padel-day-schedule.js",
+          "release-dev.json",
+          "release-ffc-academy-dev.json",
+          "release-ffc-academy.json",
+          "release.json",
+          "tournament-signup-dev.js",
+          "tournament-signup.js",
+          "tournament-subscription-dev.js",
+          "tournament-subscription-referral-dev.js",
+          "tournament-subscription-referral.js",
+          "tournament-subscription.js",
+          "tournaments-dev.js",
+          "tournaments.js"
+        ],
+        "blocker": null,
+        "expected": {
+          "releaseVersion": "20261120T090000Z",
+          "files": [
+            {
+              "path": "LPD.png",
+              "sha256": "09585aba46b6d15602184a7fa7ed81659ec8c67285e29d27020e0983c18092a9"
+            },
+            {
+              "path": "atlanty-schedule-dev.js",
+              "sha256": "9e5b7f6c600e89bab18e83c98b0756c46915e28d2365d03217765edfdf85d954"
+            },
+            {
+              "path": "atlanty-schedule.js",
+              "sha256": "d325489d47b8378fc7ef7df999f6894a2f0e11377ee844b354250e99248aafe5"
+            },
+            {
+              "path": "bundle-dev.js",
+              "sha256": "1d95e45a4800afdbdf6b0dc149d151a3045ac8a06c93a83f1f217cc9f31a54a9"
+            },
+            {
+              "path": "bundle.js",
+              "sha256": "ef2ef5be2e078bf03721e3b652ad874755cbb15710012a42bb54137748300a34"
+            },
+            {
+              "path": "communities-dev.js",
+              "sha256": "5da7bf39a941927b826d2fb38920b7f04631400521754bc777a0427b504abe58"
+            },
+            {
+              "path": "communities.js",
+              "sha256": "a5e7e2596b4f9147d0dbba4ff65b785a829e668f58a6bc30071a862b7cc1321e"
+            },
+            {
+              "path": "ffc-academy-lk-dev.js",
+              "sha256": "59aa0e4c15453891dc2afc662972583179ab41d8d0e1c399e2cc8d805f5858b0"
+            },
+            {
+              "path": "ffc-academy-lk.js",
+              "sha256": "e00b5d2be64822e8a78bd489b7be0dda022d994d5b5322ebd2ed70878da81985"
+            },
+            {
+              "path": "games-dev.js",
+              "sha256": "d5575fa0e556e1c777f247dc58de1c064e722a89b5e3e24898256884b384d01d"
+            },
+            {
+              "path": "games.js",
+              "sha256": "8b2cdbd50d06641b32874e3d022ca3afec648840dc9245763bf5bf924c70ddf1"
+            },
+            {
+              "path": "group-schedule-dev.js",
+              "sha256": "8bf07feae4daa639f1a73e2684e1c6b5e664935b0395611893fd4d0e78788bfd"
+            },
+            {
+              "path": "group-schedule.js",
+              "sha256": "7bc8b80b76350bff7b819c4713b4c074ca4695e3eab5494bd252641720227dca"
+            },
+            {
+              "path": "levels-info-dev.js",
+              "sha256": "88664187e88633b31323bad14788affe677dde358ec578232c756865d6f9fb9a"
+            },
+            {
+              "path": "levels-info.js",
+              "sha256": "56f452ed83cdc3dc307d8dae0206f6bca07fb9ed37468c60b852dbca4f5e224b"
+            },
+            {
+              "path": "manifest.json",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            {
+              "path": "onboarding-dev.js",
+              "sha256": "3f21d007e60d8264d98e38005fba0a7b082cd9bf6e6df831a179418c1c4d1ae8"
+            },
+            {
+              "path": "onboarding.js",
+              "sha256": "8d4c07eca86320b7f49350829dadc4432c2a86ca51e96ecf7add3c39bde6a4f2"
+            },
+            {
+              "path": "padel-day-schedule-dev.js",
+              "sha256": "2e2cccfbe2b6a31c1e6eb7563f9216c64cdb74ab0e885fba4c2df3fac4d71959"
+            },
+            {
+              "path": "padel-day-schedule.js",
+              "sha256": "0ae69d3e3b89617e4827f6e50763b4fe50eafab3744322e5ae4f6444e527a30e"
+            },
+            {
+              "path": "release-dev.json",
+              "sha256": "174a1c29b30eb61ea829f660431859742c4eaca8122192ed11a9808b187b6b90"
+            },
+            {
+              "path": "release-ffc-academy-dev.json",
+              "sha256": "495812e5bb73a77effb59021c5ce8eaab58d6e10c4964e2be543ade81dcfc66a"
+            },
+            {
+              "path": "release-ffc-academy.json",
+              "sha256": "7d0ac186ef17d76313aaf438c3e39353a10db119cdc94d85692f24a50d7d0226"
+            },
+            {
+              "path": "release.json",
+              "sha256": "eff3bca4b3a129c17a8913903ce6d3f76f9510a13044999c2b6a6c6fd102d852"
+            },
+            {
+              "path": "tournament-signup-dev.js",
+              "sha256": "aceb416cca7970dea2de315cd743e673f62ab87a25dbf07c54f37be2d4f6115b"
+            },
+            {
+              "path": "tournament-signup.js",
+              "sha256": "9b8e4da87bafa8fb4432cbb5cee530f575b4e92a9fb9d2b1dc2a4a36af3b5812"
+            },
+            {
+              "path": "tournament-subscription-dev.js",
+              "sha256": "5124c5100c0699dc51412b4edaf82f1fcb10bfb5ba6ea9e752198963b81ac15d"
+            },
+            {
+              "path": "tournament-subscription-referral-dev.js",
+              "sha256": "f079f070428f0903d3b0c7b5d93dc5f3cd302786eb43340ff09b9a79409ef534"
+            },
+            {
+              "path": "tournament-subscription-referral.js",
+              "sha256": "a1822cadfb6e3917cb5d1a985a5c02e6437ca9be69fd33bc3d513de83119a523"
+            },
+            {
+              "path": "tournament-subscription.js",
+              "sha256": "9d7d03a6c45a8a2b8e7c45de9b887230e9e99bd636ba9db29eb06771c1d90cfa"
+            },
+            {
+              "path": "tournaments-dev.js",
+              "sha256": "7ccd70c6563b19f12714bf0b0e39ccd6054c10af1efc5ff3f6ba17701684c192"
+            },
+            {
+              "path": "tournaments.js",
+              "sha256": "bf2571939e078856e04b0acfc60b32d91eade29a5a23d2f58978525fb29ce968"
+            }
+          ]
+        },
+        "publicEnv": {
+          "source": "ignored .env / .env.dev of the owner LK1 checkout (owner-approved 2026-11-20); validated by scripts/assert-build-env.mjs; values are public and not recorded here",
+          "envSha256": "1b5d72deda6a038f358ba6f4abec81d378deae1a13eac4adcff34199a38012fb",
+          "envDevSha256": "18ead24f7a8cf2d603c24331bf1a921f23f59f7c31896dba06b94d9d686b75ed",
+          "note": "Both files are dated 2026-06-08; confirm the public endpoints are current before publication."
+        },
+        "preflight": "node scripts/assert-clean-deploy.mjs dist/release.json dist/release-dev.json: source 1bc3219 verified, working tree clean",
+        "release": {
+          "version": "20261120T090000Z",
+          "sourceCommit": "1bc3219a05d5feece0e4663abb0eecb817a763f3",
+          "sourceDirty": false,
+          "generatedAt": "2026-11-20T08:42:38.682Z"
+        },
+        "artifact": {
+          "file": "lk1-frontend/lk1-frontend-1bc3219-20261120T090000Z.tgz",
+          "sha256": "eca172a2195f24a135d9475a09576e80da55bc021d02d6f17759c2f4e4e25d0b",
+          "note": "Build once, publish these bytes. release*.json include generatedAt, so a rebuild is a different release."
+        }
+      }
+    },
+    "lk2": {
+      "repository": "Z6v6e6r/lk2",
+      "branch": "codex/shared-cup-rating-tournament-candidate-20261118",
+      "pullRequest": "lk2#688",
+      "commit": "6ef89621b41e9d5adeab2f2e35ed0189fc3768ce",
+      "tree": "beb8c3c4115bf4dd294233d68e4b222d6bf30438",
+      "role": "CUP player-level projection ingress POST /internal/api/v1/{tenantKey}/player-level-projections",
+      "requiredMigrations": [
+        "0087_cup_player_level_projection.sql",
+        "0119_cup_calculated_player_levels.sql"
+      ],
+      "receiverFiles": [
+        {
+          "path": "apps/api/src/profile/cup-player-level-projection-routes.ts",
+          "sha256": "a7d017156339a8932ec1b4a368584c6a1417a102a996833b3c90ff7b0f122188"
+        },
+        {
+          "path": "packages/database/src/cup-player-level-projection-repository.ts",
+          "sha256": "154d3f3ac14b58eb9bca6546b28c6cfb1c4319bad7d376383479a52ec04e9979"
+        },
+        {
+          "path": "packages/database/migrations/0087_cup_player_level_projection.sql",
+          "sha256": "57569fb14ff9f95e53355f6d472b34c9f075d9643b2205ce3576ec5542da1db7"
+        },
+        {
+          "path": "packages/database/migrations/0119_cup_calculated_player_levels.sql",
+          "sha256": "f4b3b75576a67940fc5fb874cb5855675a6782e398803bee5316b4b75ac95b31"
+        },
+        {
+          "path": "contracts/openapi/internal/v1/player-levels.yaml",
+          "sha256": "0931621c629e6ac4170ec8d2212210246d6aa10fe64703bfc8d73e18352bdc64"
+        }
+      ]
+    }
+  },
+  "acceptance": {
+    "result": "GO",
+    "evidence": "https://github.com/Z6v6e6r/ph-admin/pull/133#issuecomment-7031346521",
+    "details": "https://github.com/Z6v6e6r/ph-admin/pull/133#issuecomment-7030806946",
+    "environment": "Disposable copy: MongoDB 7 replica set (shared CUP/LK1 games db), CUP dist at the cup commit with the sender enabled, LK2 PostgreSQL 16 migrated through 0119 with the real ingress and forced-RLS role, LK1 worker release in node:22.13.1-bookworm-slim with --experimental-strip-types and flock. Synthetic data only.",
+    "scenario": [
+      {
+        "step": "One CUP ADMIN_MANUAL event 3.35 C -> 3.62 C+",
+        "cup": "3.62 C+, padlHubProjectionRevision 1",
+        "lk1": "RATED 3.62 C+",
+        "lk2": "revision 1, 3.62 C+, source MANUAL"
+      },
+      {
+        "step": "LK1 worker incremental + full",
+        "cup": "unchanged, eventProjection.changed 0",
+        "lk1": "RATED 3.62 C+",
+        "vivaProjection": "enabled false, reason CUP_ONLY"
+      },
+      {
+        "step": "Replay: same CUP command + exact re-delivery to LK2",
+        "cup": "201 same event, events 2, ADMIN_MANUAL 1",
+        "lk2": "200 replayed, revisions 0/1 unchanged"
+      },
+      {
+        "step": "Restart CUP and LK2 + worker incremental",
+        "cup": "unchanged, outbox SYNCED, 1 attempt",
+        "lk1": "RATED 3.62 C+",
+        "lk2": "revision 1, 3.62 C+"
+      },
+      {
+        "step": "Late game result (occurredAt 1 min before the manual edit) + worker full",
+        "cup": "3.62 C+ (rejected 88b2e6c release: 3.72)",
+        "lk1": "RATED 3.62 C+",
+        "lk2": "revision 1, 3.62 C+"
+      }
+    ],
+    "vivaQueuesUnchanged": true,
+    "workerReleaseComparison": {
+      "acceptedOn": "3402b270799b70b9111347f750a88abd2a147cb1",
+      "finalCommit": "1bc3219a05d5feece0e4663abb0eecb817a763f3",
+      "filesCompared": 64,
+      "filesEqual": 64,
+      "treeEqual": true
+    }
+  },
+  "notAuthorized": [
+    "merge to main",
+    "image or frontend publication",
+    "Node-RED import",
+    "deployment",
+    "147, 24636 or production changes",
+    "permission changes on any deployed target"
+  ],
+  "status": {
+    "ratingTransition": "GO (LOCAL)",
+    "jointRelease": "COMPLETE (LOCAL): every component, artifact and input is recorded; publication, import and deployment remain separate approvals",
+    "updatedAt": "2026-11-20"
+  },
+  "nodeRedGraph": {
+    "status": "RECORDED",
+    "target": "lk-primary-147 /root/.node-red/flows.json",
+    "generators": [
+      {
+        "path": "scripts/patch_cup_only_player_level.mjs",
+        "sha256": "966da209a8ac58ec456b2d2d713e4a1247f0552c2589edb6445bd42bf99e30c7",
+        "args": "<source.flow.json> <EXACT-SOURCE-SHA256> <NEW-candidate.flow.json> <NEW-report.json>"
+      },
+      {
+        "path": "scripts/prepare_tournament_admission_candidate.mjs",
+        "sha256": "7c7e7b95b18dda48e55207523d328575759983e5a62809f22169bf5be521d89a",
+        "args": "<candidate.flow.json> <INTERMEDIATE-SHA256> <NEW-final.flow.json>"
+      }
+    ],
+    "procedure": [
+      "Read a fresh /root/.node-red/flows.json from 147 read-only into a new private 0700 directory outside Git (files 0600); record its sha256 and the Node-RED runtime revision.",
+      "Run patch_cup_only_player_level.mjs from the exact LK1 commit offline; record the intermediate sha256 and the report.",
+      "Run prepare_tournament_admission_candidate.mjs on the intermediate graph; record the final sha256.",
+      "Never commit or publish the raw or generated graph: it contains runtime configuration. Only hashes go into this manifest.",
+      "If 147 drifts before installation, repeat from step 1; an older snapshot is not release authority."
+    ],
+    "blocker": null,
+    "expected": {
+      "sourceSha256": "a490eaa815ee3c3a28c727a92faa27971c4fb8defcfb3fb895ebf824069041dd",
+      "sourceRuntimeRevision": null,
+      "intermediateSha256": "d0bca68bcabd9fa4fea32ce196b58888f625a5e561be45cb0a92d8c0dd6a5091",
+      "finalSha256": "56525c24d01764e8de9d34d1358258d35de203c7d383dcabc7f5a5cb59955e81"
+    },
+    "snapshot": {
+      "readAt": "2026-11-20T08:39:44Z",
+      "method": "ssh lk-primary-147 cat /root/.node-red/flows.json into a private 0700 directory (read-only)",
+      "fileMtime": "2026-11-19T12:24:02Z",
+      "bytes": 17814451,
+      "nodes": 5678,
+      "remoteSha256Matched": true,
+      "runtimeRevision": "not read: Node-RED admin API returned 401 and no credentials were used"
+    },
+    "result": {
+      "patchReport": {
+        "changed": 196,
+        "added": 29,
+        "providerLevelFieldReferences": 0,
+        "preservedOtherTenantReaders": [
+          "c94761527a2905c6"
+        ]
+      },
+      "reportSha256": "d226277d8b3017105b64017cbc2585b096d683e3b7deaa8f69889e95f7dd7f3c",
+      "finalNodes": 5707,
+      "reproducible": "a second offline run produced identical intermediate, report and final bytes"
+    },
+    "installGate": "Before import, re-read 147: if its flows.json sha256 is not sourceSha256, regenerate from the new snapshot and update this manifest."
+  },
+  "excludedFromBundle": [
+    {
+      "pr": "lk#465",
+      "head": "ccfbc1ea911d73d82758867ad0ec2e0c2ded45c7",
+      "reason": "open draft (tournament payment via CUP); not merged into the LK1 candidate"
+    },
+    {
+      "pr": "lk#469",
+      "head": "0da60162cb712053666c9b4836f70f529ac573e6",
+      "reason": "stand-only integration of #454+#465+#466"
+    },
+    {
+      "pr": "lk#470",
+      "head": "606768a7e95561a46c0b6a924cda43cae0d9fbb7",
+      "reason": "open draft (tournament copay settlement)"
+    },
+    {
+      "pr": "lk2#689",
+      "reason": "open draft; not required by the accepted projection scenario"
+    }
+  ],
+  "localArtifacts": {
+    "location": "~/Documents/PadlHub-release-artifacts/cup133-joint-20261120 (owner Mac, private 0700, not in Git)",
+    "cupRuntimeSha256Sums": "a6e97cdec90f77e0f177a13053503a5aae9cc614f19575f67ad7adfe7d810e31",
+    "lk1Sha256Sums": "e9a235f41a07e75ae6200b70b07c868eb09aa49317c816c7a4ce8096ca8d879c",
+    "lk1FrontendSha256Sums": "d05035e08c4863dbc27e1a2d6efb554c23320260eb4c830ad3cf53a6817f1304",
+    "privateGraphSha256Sums": "a7199b183021c7699ae43813e6df6015e5fc69a97bac71eaea8580a7d19e35ee",
+    "privateGraphNote": "private-graph/ holds the 147 snapshot and generated graphs (runtime configuration); never copy into Git, CI or messages."
+  },
+  "recovery": {
+    "beforeActivation": [
+      "Back up and test-restore into empty namespaces: MongoDB player_rating_state, rating_events, player_ratings, player_level_projection_outbox, rating_projection_outbox, lk_result_viva_sync_outbox, admin_roles, admin_users; LK2 PostgreSQL; Node-RED flows.json with its runtime revision; the current LK1 static release directory; the current /opt/padlhub-rating-worker/current target; the current CUP runtime digest.",
+      "Record unfinished tournament operations with their original idempotency keys."
+    ],
+    "activationOrder": [
+      "CUP runtime (artifactDigest above) with PADLHUB_PLAYER_LEVEL_PROJECTION_ENABLED=false",
+      "LK1 rating worker release (filesDigest) and level helper (sha256); first worker run --dry-run",
+      "Node-RED final graph (nodeRedGraph.finalSha256)",
+      "LK1 frontend (lk1.frontend files)",
+      "LK2 ingress enable, then CUP projection sender enable (pilot binding first)"
+    ],
+    "rollbackOrder": [
+      "Pause new writes: set PLAYER_RATING_ADMIN_ENABLED=false in CUP (closes manual level changes) and keep tournament owner in recovery-only mode; never replay or delete rating_projection_outbox or lk_result_viva_sync_outbox.",
+      "Disable the CUP projection sender (PADLHUB_PLAYER_LEVEL_PROJECTION_ENABLED=false), then the LK2 ingress (CUP_PLAYER_LEVEL_PROJECTION_ENABLED=false). Accepted LK2 projections and the CUP ledger stay.",
+      "LK1 frontend: atomically switch the static directory back to the saved release and verify every served file by sha256 over HTTP.",
+      "Node-RED: restore the saved flows.json by exact sha256 and verify the runtime revision and readback.",
+      "CUP: reinstall the previous runtime by exact digest; verify /api/health and the SDK bytes.",
+      "Recover each unfinished operation only through its original key with durable readback."
+    ],
+    "ratingBoundary": "Before the first ADMIN_MANUAL event: the rating worker may return to the saved release. After it: keep this worker release (lk#466 semantics) and the journal; rollback of rating code is forward-fix only, because the earlier release replays ADMIN_MANUAL as a delta and diverges (stand example: 5.01 vs 4.71).",
+    "verification": "Postchecks and stop conditions: https://github.com/Z6v6e6r/ph-admin/pull/133#issuecomment-7030806946"
+  }
+}

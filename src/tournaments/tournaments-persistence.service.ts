@@ -3,6 +3,14 @@ import { ORGANIZER_CAS_BUDGET_MS, OrganizerState } from './tournament-organizer.
 import { publicTournamentId, LocalOperation } from './tournament-local-operation.contract';
 import { TournamentAdmissionRule } from './tournaments.types';
 import {
+  LEVEL_TOLERANCE_NEW_TOURNAMENT_DEFAULT,
+  describeTournamentLevelRule,
+  formatTournamentLevelRange,
+  normalizeLevelToleranceInput,
+  readStoredLevelTolerance
+} from './tournament-level-admission';
+import {
+  BadRequestException,
   ConflictException,
   ServiceUnavailableException,
   Injectable,
@@ -57,6 +65,25 @@ const DEFAULT_TOURNAMENT_MECHANICS_WEIGHTS: AmericanoPenaltyWeights = {
 
 const MAX_TOURNAMENT_CHANGE_LOG_ENTRIES = 40;
 
+const CHECKOUT_EXERCISE_PATHS = [
+  'exerciseId', 'sourceTournamentId',
+  'details.booking.vivaExerciseId', 'details.booking.exerciseId', 'details.booking.viva.exerciseId',
+  'details.joinFlow.vivaExerciseId', 'details.joinFlow.exerciseId', 'details.joinFlow.viva.exerciseId',
+  'details.sourceTournamentSnapshot.exerciseId', 'details.sourceTournamentSnapshot.id',
+  'sourceTournamentSnapshot.exerciseId', 'sourceTournamentSnapshot.id'
+];
+const CHECKOUT_MAPPING_PATHS = [
+  ...CHECKOUT_EXERCISE_PATHS, 'studioId', 'details.sourceTournamentSnapshot.studioId',
+  'sourceTournamentSnapshot.studioId',
+  ...['booking', 'joinFlow'].flatMap(group =>
+    ['vivaStudioId', 'studioId', 'viva.studioId', 'vivaWidgetId', 'widgetId', 'viva.widgetId']
+      .map(field => `details.${group}.${field}`))
+];
+const CHECKOUT_MAPPING_CONTAINERS = [
+  'details', 'details.booking', 'details.booking.viva', 'details.joinFlow', 'details.joinFlow.viva',
+  'details.sourceTournamentSnapshot', 'sourceTournamentSnapshot'
+];
+
 export interface CreateCustomTournamentMutation {
   sourceTournamentId?: string;
   sourceTournamentSnapshot?: Record<string, unknown>;
@@ -71,6 +98,8 @@ export interface CreateCustomTournamentMutation {
   tournamentType: string;
   isPublic?: boolean;
   accessLevels: string[];
+  /** Absent on create means the new-tournament default (0.2); 0 is preserved. */
+  levelTolerance?: number;
   gender: TournamentGender;
   maxPlayers: number;
   participants: TournamentParticipant[];
@@ -110,6 +139,7 @@ export interface UpdateCustomTournamentMutation {
   tournamentType?: string;
   isPublic?: boolean;
   accessLevels?: string[];
+  levelTolerance?: number;
   gender?: TournamentGender;
   maxPlayers?: number;
   participants?: TournamentParticipant[];
@@ -244,6 +274,31 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     return document ? this.toCustomTournament(document) : null;
   }
 
+  async findCheckoutTournamentByExerciseId(exerciseId: string) {
+    const collection = await this.collection(false);
+    const documents = await collection.find({
+      archived: { $ne: true },
+      $or: CHECKOUT_EXERCISE_PATHS.map(path => ({ [path]: exerciseId }))
+    }, { readPreference: 'primary', readConcern: { level: 'majority' }, maxTimeMS: 5000 })
+      .limit(2).toArray();
+    if (documents.length > 1) throw new ConflictException({ code: 'TOURNAMENT_TARGET_AMBIGUOUS' });
+    const document = documents[0];
+    if (!document) return null;
+    const readPath = (path: string) =>
+      path.split('.').reduce<unknown>((parent, segment) => this.toRecord(parent)?.[segment], document);
+    const mappingChecks = CHECKOUT_MAPPING_PATHS.map<Document>(path => {
+      const value = readPath(path);
+      return value === undefined ? { $eq: [{ $type: `$${path}` }, 'missing'] }
+        : { $eq: [`$${path}`, { $literal: value }] };
+    });
+    for (const path of CHECKOUT_MAPPING_CONTAINERS) {
+      // The presence of a booking object controls priority over legacy joinFlow.
+      mappingChecks.push({ $eq: [{ $eq: [{ $type: `$${path}` }, 'object'] }, Boolean(this.toRecord(readPath(path)))] });
+    }
+    const tournament = this.toCustomTournament(document);
+    return tournament ? { tournament, mappingChecks } : null;
+  }
+
   async createCustomTournament(
     mutation: CreateCustomTournamentMutation
   ): Promise<CustomTournament> {
@@ -285,7 +340,8 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
 
   async updateCustomTournament(
     id: string,
-    mutation: UpdateCustomTournamentMutation
+    mutation: UpdateCustomTournamentMutation,
+    admissionPreimage?: CustomTournament
   ): Promise<CustomTournament | null> {
     const collection = await this.collection();
     const existing = (await collection.findOne(this.buildIdFilter(id))) as MongoCustomTournamentDocument | null;
@@ -293,6 +349,13 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       return null;
     }
 
+    if (admissionPreimage) {
+      const observed = this.toCustomTournament(existing);
+      const keys = ['updatedAt', 'accessLevels', 'levelTolerance', 'participants', 'waitlist', 'maxPlayers', 'details'] as const;
+      if (!observed || keys.some(key => JSON.stringify(observed[key]) !== JSON.stringify(admissionPreimage[key]))) {
+        throw new ConflictException({ code: 'TOURNAMENT_RULE_CHANGED' });
+      }
+    }
     const now = new Date().toISOString();
     const setPayload: Record<string, unknown> = {
       updatedAt: now
@@ -321,6 +384,9 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     }
     if (mutation.accessLevels !== undefined) {
       setPayload.accessLevels = this.normalizeLevels(mutation.accessLevels);
+    }
+    if (mutation.levelTolerance !== undefined) {
+      setPayload.levelTolerance = this.validateLevelTolerance(mutation.levelTolerance);
     }
     if (mutation.gender !== undefined) {
       setPayload.gender = this.normalizeGender(mutation.gender);
@@ -484,7 +550,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     const organizerAdopted = Object.prototype.hasOwnProperty.call(existing, 'tournamentOrganizerV1')
       || (Object.prototype.hasOwnProperty.call(existing, 'tournamentChatV1') || Object.prototype.hasOwnProperty.call(existing, 'tournamentChatReadV1'));
     const changed = await collection.updateOne({ ...this.buildIdFilter(id), localParticipationOperations: { $exists: false },
-      ...(organizerAdopted ? { $expr: { $eq: ['$$ROOT', { $literal: existing }] } }
+      ...(organizerAdopted || admissionPreimage ? { $expr: { $eq: ['$$ROOT', { $literal: existing }] } }
         : { tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false }, tournamentChatReadV1: { $exists: false } })
     }, { $set: setPayload });
     if (changed.matchedCount !== 1) throw new ConflictException({ code: 'TOURNAMENT_LOCAL_OWNER_REQUIRED' });
@@ -511,6 +577,12 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     }, { $set: { tournamentOrganizerV1: state, ...(readNext ? { tournamentChatReadV1: readNext } : {}) } }, {
       returnDocument: 'after', maxTimeMS: ORGANIZER_CAS_BUDGET_MS, writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 }
     });
+  }
+
+  /** Server-owned booking attempts (disabled by default); `_id` uniqueness is the concurrency boundary. */
+  async serverBookingAttemptsCollection() {
+    await this.collection(false);
+    return this.requireDb().collection<any>('tournament_server_booking_attempts_v1');
   }
 
   /** Chat reuses the established Mongo client. This path NEVER calls index provisioning. */
@@ -546,16 +618,173 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
   }
 
   /** Raw admission rule: no presentation fallback and no index creation. */
+  async readTournamentCheckoutOperation(id: string, phone: string, selector?: { requestKey?: string; transactionId?: string }): Promise<Record<string, any> | null> {
+    const collection = await this.collection(false);
+    const row = await collection.findOne(this.buildIdFilter(id), {
+      projection: { 'details.booking.pendingJoinPayments': 1 }, readPreference: 'primary',
+      readConcern: { level: 'majority' }, maxTimeMS: 5000 });
+    const rows = (row?.details?.booking?.pendingJoinPayments ?? []).filter((p: Record<string, unknown>) => p.phone === phone);
+    if (selector) return rows.find((p: Record<string, any>) =>
+      (selector.requestKey === undefined || p.ownerCommand?.requestKey === selector.requestKey)
+      && (selector.transactionId === undefined || p.transactionId === selector.transactionId)) ?? null;
+    return rows.find((p: Record<string, unknown>) => !['EXPIRED', 'FAILED', 'OWNER_COMPLETED', 'OWNER_CANCELLED'].includes(String(p.state)))
+      ?? rows.at(-1) ?? null;
+  }
+
+  async rejectTournamentCheckoutPreparation(id: string, operation: Record<string, any>, code: string): Promise<void> {
+    const collection = await this.collection(false);
+    await collection.updateOne({ ...this.buildIdFilter(id), 'details.booking.pendingJoinPayments': { $elemMatch: {
+      transactionId: operation.transactionId, clientId: operation.clientId, phone: operation.phone,
+      state: 'PROVIDER_CREATE_PENDING', ownerCommand: operation.ownerCommand,
+      providerCreateAttemptedAt: { $exists: false }, providerTransactionId: { $exists: false }, ownerReceipt: { $exists: false }
+    } } }, { $set: { 'details.booking.pendingJoinPayments.$.state': 'FAILED',
+      'details.booking.pendingJoinPayments.$.ownerRefusal': code,
+      'details.booking.pendingJoinPayments.$.ownerNoDispatch': true } },
+      { writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } });
+  }
+
+  async abortTournamentSubscription(id: string, operation: Record<string, any>, code: string): Promise<void> {
+    const collection = await this.collection(false);
+    await collection.updateOne({ ...this.buildIdFilter(id), 'details.booking.pendingJoinPayments': { $elemMatch: {
+      transactionId: operation.transactionId, phone: operation.phone, clientId: operation.clientId,
+      ownerCommand: operation.ownerCommand, state: 'PROVIDER_CREATE_PENDING',
+      providerCreateAttemptedAt: { $exists: false }, providerTransactionId: { $exists: false },
+      providerBookingId: { $exists: false }, ownerReceipt: { $exists: false }
+    } } }, { $set: { 'details.booking.pendingJoinPayments.$.state': 'FAILED',
+      'details.booking.pendingJoinPayments.$.ownerNoDispatch': true,
+      'details.booking.pendingJoinPayments.$.ownerRefusal': code } },
+      { writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } });
+  }
+
+  async recordFreeTournamentBookingReceipt(id: string, operation: Record<string, any>, bookingId: string): Promise<boolean> {
+    const collection = await this.collection(false);
+    const saved = await collection.updateOne({ ...this.buildIdFilter(id),
+      'details.booking.pendingJoinPayments': { $elemMatch: {
+        transactionId: operation.transactionId, phone: operation.phone, clientId: operation.clientId,
+        ownerCommand: operation.ownerCommand, state: 'PROVIDER_RESULT_UNKNOWN', ownerReceipt: { $exists: false }
+      } }
+    }, { $set: { 'details.booking.pendingJoinPayments.$.ownerReceipt': { bookingId } } },
+    { writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } });
+    return saved.acknowledged && saved.matchedCount === 1;
+  }
+
+  /** Provider cancellation proof has already bound this exact booking to the original operation. */
+  async cancelTournamentCheckout(id: string, operation: Record<string, any>, bookingId: string): Promise<boolean> {
+    const collection = await this.collection(false);
+    const original = {
+      transactionId: operation.transactionId, phone: operation.phone, clientId: operation.clientId,
+      exerciseId: operation.exerciseId, studioId: operation.studioId, widgetId: operation.widgetId,
+      ownerCommand: operation.ownerCommand,
+      ownerReceipt: operation.ownerReceipt ?? { $exists: false }
+    };
+    const result = await collection.updateOne({
+      ...this.buildIdFilter(id),
+      'details.booking.pendingJoinPayments': { $elemMatch: { ...original,
+        $or: [
+          { state: 'OWNER_COMPLETED', providerBookingId: bookingId },
+          ...(operation.ownerCommand?.kind === 'CHECKOUT' && operation.ownerReceipt?.transactionId
+            ? [{ state: 'PROVIDER_RESULT_UNKNOWN', providerBookingId: { $exists: false },
+              providerTransactionId: operation.ownerReceipt.transactionId }] : [])
+        ]
+      } }
+    }, [{ $set: {
+      participants: { $filter: { input: { $ifNull: ['$participants', []] }, as: 'participant', cond: { $not: [
+        { $and: [
+          { $eq: ['$$participant.id', { $literal: `owner:${operation.transactionId}` }] },
+          { $eq: ['$$participant.phone', { $literal: operation.phone }] },
+          { $eq: [{ $ifNull: ['$$participant.vivaBookingId', { $literal: bookingId }] }, { $literal: bookingId }] }
+        ] }
+      ] } } },
+      'details.booking.pendingJoinPayments': { $map: { input: '$details.booking.pendingJoinPayments', as: 'op',
+        in: { $cond: [{ $eq: ['$$op.transactionId', { $literal: operation.transactionId }] },
+          { $mergeObjects: ['$$op', { $literal: { state: 'OWNER_CANCELLED', providerBookingId: bookingId } }] }, '$$op'] } } },
+      updatedAt: new Date().toISOString()
+    } }], { writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } });
+    if (result.acknowledged && result.matchedCount === 1) return true;
+    const current = await this.readTournamentCheckoutOperation(id, operation.phone, { transactionId: operation.transactionId });
+    return current?.state === 'OWNER_CANCELLED' && current.clientId === operation.clientId
+      && current.exerciseId === operation.exerciseId && current.widgetId === operation.widgetId
+      && current.providerBookingId === bookingId;
+  }
+
+  async completeTournamentCheckout(id: string, operation: Record<string, any>, bookingId: string, paid: boolean, display?: TournamentParticipant): Promise<boolean> {
+    const collection = await this.collection(false);
+    const participant = { name: 'Player', ...display, id: `owner:${operation.transactionId}`, phone: operation.phone,
+      status: 'REGISTERED', paymentStatus: paid ? 'PAID' : 'UNPAID', registeredAt: new Date().toISOString(),
+      vivaBookingId: bookingId };
+    const result = await collection.updateOne({ ...this.buildIdFilter(id),
+      $nor: [{ participants: { $elemMatch: { phone: operation.phone, vivaBookingId: { $ne: bookingId } } } }],
+      'details.booking.pendingJoinPayments': { $elemMatch: {
+      transactionId: operation.transactionId, phone: operation.phone, clientId: operation.clientId,
+      ownerCommand: operation.ownerCommand,
+      state: { $in: ['PROVIDER_CREATE_PENDING', 'PROVIDER_RESULT_UNKNOWN'] },
+      providerBookingId: { $exists: false }
+    } } }, [{ $set: {
+      participants: { $cond: [{ $in: [operation.phone, { $ifNull: ['$participants.phone', []] }] }, '$participants',
+        { $concatArrays: [{ $ifNull: ['$participants', []] }, { $literal: [participant] }] }] },
+      'details.booking.pendingJoinPayments': { $map: { input: '$details.booking.pendingJoinPayments', as: 'op',
+        in: { $cond: [{ $eq: ['$$op.transactionId', operation.transactionId] },
+          { $mergeObjects: ['$$op', { state: 'OWNER_COMPLETED', providerBookingId: bookingId }] }, '$$op'] } } },
+      updatedAt: new Date().toISOString()
+    } }], { writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } });
+    if (result.acknowledged && result.matchedCount === 1) return true;
+    // A completed receipt is immutable on replay. Its participant may since
+    // have been cancelled or removed by a different writer.
+    const current = await this.readTournamentCheckoutOperation(id, operation.phone, {
+      transactionId: operation.transactionId, requestKey: operation.ownerCommand?.requestKey
+    });
+    return current?.state === 'OWNER_COMPLETED' && current.clientId === operation.clientId
+      && current.providerBookingId === bookingId;
+  }
+
+  async claimTournamentCheckout(id: string, operation: Record<string, any>, rule: TournamentAdmissionRule,
+    mappingChecks: Document[]): Promise<boolean> {
+    const collection = await this.collection(false);
+    const match = { transactionId: operation.transactionId, phone: operation.phone, clientId: operation.clientId,
+      state: 'PROVIDER_CREATE_PENDING', ownerCommand: operation.ownerCommand, providerCreateAttemptedAt: { $exists: false } };
+    const result = await collection.updateOne({ ...this.buildIdFilter(id),
+      archived: { $ne: true }, $expr: { $and: mappingChecks },
+      status: { $nin: ['FINISHED', 'CANCELED', 'CANCELLED'] },
+      gender: rule.gender, updatedAt: rule.updatedAt, accessLevels: rule.accessLevels,
+      levelTolerance: rule.levelTolerance ?? { $in: [null, 0] },
+      'details.booking.pendingJoinPayments': { $elemMatch: match } }, { $set: {
+        'details.booking.pendingJoinPayments.$.state': 'PROVIDER_RESULT_UNKNOWN',
+        'details.booking.pendingJoinPayments.$.providerCreateAttemptedAt': new Date().toISOString() } },
+      { writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } });
+    return result.acknowledged && result.modifiedCount === 1;
+  }
+
+  async recordTournamentCheckoutReceipt(id: string, operation: Record<string, any>, receipt: Record<string, unknown>): Promise<void> {
+    const collection = await this.collection(false);
+    const result = await collection.updateOne({ ...this.buildIdFilter(id),
+      'details.booking.pendingJoinPayments': { $elemMatch: { transactionId: operation.transactionId,
+        phone: operation.phone, clientId: operation.clientId, ownerCommand: operation.ownerCommand,
+        state: 'PROVIDER_RESULT_UNKNOWN', ownerReceipt: { $exists: false } } } },
+      { $set: { 'details.booking.pendingJoinPayments.$.ownerReceipt': receipt,
+        'details.booking.pendingJoinPayments.$.providerTransactionId': receipt.transactionId } },
+      { writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } });
+    if (!result.acknowledged || result.matchedCount !== 1) {
+      const current = await this.readTournamentCheckoutOperation(id, operation.phone);
+      if (current?.transactionId !== operation.transactionId
+        || current?.ownerReceipt?.transactionId !== receipt.transactionId) {
+        throw new ServiceUnavailableException({ code: 'TOURNAMENT_CHECKOUT_RECEIPT_UNRESOLVED' });
+      }
+    }
+  }
+
   async readPublicAdmissionRule(id: string): Promise<TournamentAdmissionRule | null> {
     const collection = await this.collection(false);
     const row = await collection.findOne(this.buildIdFilter(id), {
-      projection: { _id: 0, gender: 1, updatedAt: 1 }, readPreference: 'primary',
+      projection: { _id: 0, gender: 1, updatedAt: 1, accessLevels: 1, levelTolerance: 1 }, readPreference: 'primary',
       readConcern: { level: 'majority' }, maxTimeMS: 5000
     });
     if (!row || !['MALE', 'FEMALE', 'MIXED'].includes(String(row.gender))
       || typeof row.gender !== 'string' || typeof row.updatedAt !== 'string'
       || !Number.isFinite(Date.parse(row.updatedAt))) return null;
-    return { gender: row.gender as TournamentAdmissionRule['gender'], updatedAt: row.updatedAt };
+    if (!Array.isArray(row.accessLevels) || row.accessLevels.some(x => typeof x !== 'string')
+      || (row.levelTolerance != null && (typeof row.levelTolerance !== 'number' || !Number.isFinite(row.levelTolerance)))) return null;
+    return { gender: row.gender as TournamentAdmissionRule['gender'], updatedAt: row.updatedAt,
+      accessLevels: row.accessLevels, ...(row.levelTolerance != null ? { levelTolerance: row.levelTolerance as number } : {}) };
   }
 
   async appendPublicWaitlistWithAdmission(
@@ -563,7 +792,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
   ): Promise<CustomTournament | null> {
     const collection = await this.collection();
     const row = await collection.findOneAndUpdate({
-      ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false }, tournamentChatReadV1: { $exists: false }, gender: rule.gender, updatedAt: rule.updatedAt,
+      ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false }, tournamentChatReadV1: { $exists: false }, gender: rule.gender, updatedAt: rule.updatedAt, ...(rule.accessLevels ? { accessLevels: rule.accessLevels, levelTolerance: rule.levelTolerance ?? { $in: [null, 0] } } : {}),
       status: { $nin: [TournamentStatus.FINISHED, TournamentStatus.CANCELED, 'CANCELLED'] },
       participants: { $not: { $elemMatch: { phone } } },
       waitlist: { $not: { $elemMatch: { phone } } },
@@ -589,7 +818,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     const document = await collection.findOneAndUpdate(
       {
         ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false }, tournamentChatReadV1: { $exists: false },
-        ...(admissionRule ? { gender: admissionRule.gender, updatedAt: admissionRule.updatedAt } : {}),
+        ...(admissionRule ? { gender: admissionRule.gender, updatedAt: admissionRule.updatedAt, ...(admissionRule.accessLevels ? { accessLevels: admissionRule.accessLevels, levelTolerance: admissionRule.levelTolerance ?? { $in: [null, 0] } } : {}) } : {}),
         status: { $nin: [TournamentStatus.FINISHED, TournamentStatus.CANCELED, 'CANCELLED'] },
         participants: { $not: { $elemMatch: { phone } } },
         waitlist: { $not: { $elemMatch: { phone } } },
@@ -598,6 +827,9 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
             $elemMatch: {
               $or: [
                 { transactionId },
+                ...(pending.ownerCommand && typeof pending.ownerCommand === 'object'
+                  ? [{ phone, 'ownerCommand.requestKey': (pending.ownerCommand as Record<string, unknown>).requestKey }]
+                  : []),
                 {
                   phone,
                   $or: [
@@ -659,7 +891,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
         $push: { 'details.booking.pendingJoinPayments': pending },
         $set: { updatedAt }
       } as Document,
-      { returnDocument: 'after' }
+      { returnDocument: 'after', writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } }
     );
     return document ? this.toCustomTournament(document) : null;
   }
@@ -668,12 +900,16 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     id: string,
     attemptId: string,
     phone: string,
-    attemptedAt: string
+    attemptedAt: string,
+    admissionRule?: TournamentAdmissionRule
   ): Promise<CustomTournament | null> {
     const collection = await this.collection();
     const document = await collection.findOneAndUpdate(
       {
         ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false }, tournamentChatReadV1: { $exists: false },
+        ...(admissionRule ? { gender: admissionRule.gender, updatedAt: admissionRule.updatedAt,
+          accessLevels: admissionRule.accessLevels, levelTolerance: admissionRule.levelTolerance ?? { $in: [null, 0] } } : {}),
+        status: { $nin: [TournamentStatus.FINISHED, TournamentStatus.CANCELED, 'CANCELLED'] },
         'details.booking.pendingJoinPayments': {
           $elemMatch: {
             transactionId: attemptId,
@@ -700,6 +936,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
           'payment.state': 'PROVIDER_CREATE_PENDING',
           'payment.providerCreateAttemptedAt': { $exists: false }
         }],
+        writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 },
         returnDocument: 'after'
       }
     );
@@ -981,7 +1218,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     const document = await collection.findOneAndUpdate(
       {
         ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false }, tournamentChatReadV1: { $exists: false },
-        ...(admissionRule ? { gender: admissionRule.gender, updatedAt: admissionRule.updatedAt } : {}),
+        ...(admissionRule ? { gender: admissionRule.gender, updatedAt: admissionRule.updatedAt, ...(admissionRule.accessLevels ? { accessLevels: admissionRule.accessLevels, levelTolerance: admissionRule.levelTolerance ?? { $in: [null, 0] } } : {}) } : {}),
         status: { $nin: [TournamentStatus.FINISHED, TournamentStatus.CANCELED, 'CANCELLED'] },
         participants: { $not: { $elemMatch: { phone } } },
         waitlist: { $not: { $elemMatch: { phone } } },
@@ -1195,6 +1432,8 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       tournamentType: this.pickString(document.tournamentType) ?? 'AMERICANO',
       isPublic: this.normalizeIsPublic(document.isPublic),
       accessLevels: this.normalizeLevels(document.accessLevels),
+      // Raw stored value: the admission rule treats absent as 0 and anything invalid as closed.
+      ...(document.levelTolerance !== undefined ? { levelTolerance: document.levelTolerance } : {}),
       gender: this.normalizeGender(document.gender),
       maxPlayers: this.pickPositiveInteger(document.maxPlayers) ?? 8,
       participants,
@@ -1291,6 +1530,9 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       tournamentType: this.pickString(mutation.tournamentType) ?? 'AMERICANO',
       isPublic: this.normalizeIsPublic(mutation.isPublic),
       accessLevels: this.normalizeLevels(mutation.accessLevels),
+      levelTolerance: mutation.levelTolerance === undefined
+        ? LEVEL_TOLERANCE_NEW_TOURNAMENT_DEFAULT
+        : this.validateLevelTolerance(mutation.levelTolerance),
       gender: this.normalizeGender(mutation.gender),
       maxPlayers: this.pickPositiveInteger(mutation.maxPlayers) ?? 8,
       participants: this.normalizeParticipants(mutation.participants, 'REGISTERED'),
@@ -1349,7 +1591,12 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       createdAt: this.pickString(existing.createdAt)
     });
 
-    const changed = await collection.updateOne({ ...this.buildDocumentFilter(existing), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false }, tournamentChatReadV1: { $exists: false } }, {
+    // Only an empty, unrestricted shell can be restored automatically. A malformed existing
+    // tournament must not lose its saved rule or roster through a repeated import.
+    const changed = await collection.updateOne({ ...this.buildDocumentFilter(existing),
+      accessLevels: { $eq: [] }, participants: { $eq: [] }, waitlist: { $eq: [] },
+      $expr: { $eq: ['$$ROOT', { $literal: existing }] },
+      localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false }, tournamentChatReadV1: { $exists: false } }, {
       $set: payload
     });
     if (changed.matchedCount !== 1) throw new ConflictException({ code: 'TOURNAMENT_LOCAL_OWNER_REQUIRED' });
@@ -2062,6 +2309,18 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       this.formatAuditList(beforeTournament.accessLevels),
       this.formatAuditList(afterTournament.accessLevels)
     );
+    pushChange(
+      'levelTolerance',
+      'Допуск по уровню ±',
+      this.formatAuditLevelTolerance(beforeTournament.levelTolerance),
+      this.formatAuditLevelTolerance(afterTournament.levelTolerance)
+    );
+    pushChange(
+      'levelEffectiveRange',
+      'Фактический диапазон записи',
+      this.formatAuditLevelRange(beforeTournament),
+      this.formatAuditLevelRange(afterTournament)
+    );
     pushChange('gender', 'Пол', beforeTournament.gender, afterTournament.gender);
     pushChange(
       'maxPlayers',
@@ -2383,6 +2642,29 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     return value
       .map((item) => this.pickString(item))
       .filter((item): item is string => Boolean(item));
+  }
+
+  private validateLevelTolerance(value: unknown): number {
+    try {
+      return normalizeLevelToleranceInput(value);
+    } catch (error) {
+      throw new BadRequestException({ code: 'TOURNAMENT_LEVEL_TOLERANCE_INVALID',
+        message: error instanceof Error ? error.message : 'levelTolerance is invalid' });
+    }
+  }
+
+  private formatAuditLevelTolerance(value: unknown): string {
+    const tolerance = readStoredLevelTolerance(value);
+    return tolerance === 'INVALID' ? 'некорректно' : `±${tolerance.toFixed(2).replace('.', ',')}`;
+  }
+
+  private formatAuditLevelRange(tournament: { id?: unknown; accessLevels?: unknown; levelTolerance?: unknown }): string {
+    const view = describeTournamentLevelRule({ id: String(tournament.id ?? ''), accessLevels: tournament.accessLevels,
+      levelTolerance: tournament.levelTolerance }, 'ENFORCE');
+    if (view.ruleKind === 'NONE') return 'без ограничения';
+    if (view.ruleKind === 'INVALID') return 'некорректно';
+    if (view.ruleKind === 'CATEGORIES') return (view.allowedGrades ?? []).join(', ');
+    return view.effectiveRange ? formatTournamentLevelRange(view.effectiveRange) : '—';
   }
 
   private normalizeLevels(value: unknown): string[] {

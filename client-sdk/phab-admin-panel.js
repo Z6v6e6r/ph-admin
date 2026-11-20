@@ -8799,6 +8799,10 @@
         var suffix = params.toString() ? '?' + params.toString() : '';
         return request('/games' + suffix, 'GET');
       },
+      searchPlayerRatingAssignmentCandidates: function (query) {
+        return request('/admin/player-ratings/assignment-candidates?q=' + encodeURIComponent(query), 'GET');
+      },
+      assignPlayerRating: function (payload) { return request('/admin/player-ratings/assignments', 'POST', payload); },
       searchPlayerRatings: function (query, requestOptions) {
         var params = new URLSearchParams();
         if (query && query.q) {
@@ -8812,6 +8816,16 @@
         }
         var suffix = params.toString() ? '?' + params.toString() : '';
         return request('/admin/player-ratings/search' + suffix, 'GET', undefined, requestOptions);
+      },
+      getPlayerRatingResult: function (playerKey, eventId) {
+        return request('/admin/player-ratings/' + encodeURIComponent(playerKey) +
+          '/events/' + encodeURIComponent(eventId) + '/result', 'GET');
+      },
+      getPlayerRatingJournal: function (query, format) {
+        var params = new URLSearchParams();
+        Object.keys(query).forEach(function (key) { if (query[key]) params.set(key, query[key]); });
+        return request('/admin/player-ratings/journal' + (format ? '.' + format : '') + '?' + params, 'GET',
+          undefined, format ? { responseType: 'blob', fallbackFileName: 'player-rating-journal.' + format } : {});
       },
       getPlayerRating: function (playerKey, requestOptions) {
         return request(
@@ -9939,7 +9953,7 @@
 
   function normalizePlayerRatingProjectionStatus(value) {
     var normalized = String(value || '').trim().toUpperCase();
-    if (normalized === 'SYNCED' || normalized === 'PENDING' || normalized === 'FAILED_RETRYABLE') {
+    if (normalized === 'NOT_REQUIRED' || normalized === 'SYNCED' || normalized === 'PENDING' || normalized === 'FAILED_RETRYABLE') {
       return normalized;
     }
     return 'PENDING';
@@ -10514,6 +10528,15 @@
     var playerRatingsToolbar = document.createElement('div');
     playerRatingsToolbar.className = 'phab-admin-player-ratings-toolbar';
     playerRatingsShell.appendChild(playerRatingsToolbar);
+
+    var playerRatingJournal = document.createElement('details');
+    playerRatingJournal.className = 'phab-admin-player-ratings-pane phab-admin-hidden';
+    var playerRatingJournalTitle = document.createElement('summary');
+    playerRatingJournalTitle.textContent = 'Журнал изменений уровней сотрудниками';
+    playerRatingJournal.appendChild(playerRatingJournalTitle);
+    var playerRatingJournalBody = document.createElement('div');
+    playerRatingJournal.appendChild(playerRatingJournalBody);
+    playerRatingsShell.appendChild(playerRatingJournal);
 
     var playerRatingsSearch = document.createElement('div');
     playerRatingsSearch.className = 'phab-admin-player-ratings-search';
@@ -14108,6 +14131,15 @@
     playerRatingEditReasonInput.placeholder = 'Минимум 10 символов';
     playerRatingEditReasonLabel.appendChild(playerRatingEditReasonInput);
 
+    var playerRatingEditStationLabel = document.createElement('label');
+    playerRatingEditStationLabel.className = 'phab-admin-player-rating-form-label phab-admin-hidden';
+    playerRatingEditStationLabel.appendChild(document.createTextNode('Станция, от имени которой меняется уровень'));
+    playerRatingEditForm.appendChild(playerRatingEditStationLabel);
+
+    var playerRatingEditStationSelect = document.createElement('select');
+    playerRatingEditStationSelect.className = 'phab-admin-settings-input';
+    playerRatingEditStationLabel.appendChild(playerRatingEditStationSelect);
+
     var playerRatingEditConfirm = document.createElement('div');
     playerRatingEditConfirm.className = 'phab-admin-player-rating-form-confirm';
     playerRatingEditConfirm.textContent = 'Укажите новое значение';
@@ -14426,6 +14458,8 @@
       tournamentEditorBody: tournamentEditorBody,
       tournamentEditorSaveBtn: tournamentEditorSaveBtn,
       tournamentEditorCloseBtn: tournamentEditorCloseBtn,
+      playerRatingJournal: playerRatingJournal,
+      playerRatingJournalBody: playerRatingJournalBody,
       playerRatingEditModal: playerRatingEditModal,
       playerRatingEditCloseBtn: playerRatingEditCloseBtn,
       playerRatingEditForm: playerRatingEditForm,
@@ -14433,6 +14467,8 @@
       playerRatingEditNumericInput: playerRatingEditNumericInput,
       playerRatingEditGrade: playerRatingEditGrade,
       playerRatingEditReasonInput: playerRatingEditReasonInput,
+      playerRatingEditStationLabel: playerRatingEditStationLabel,
+      playerRatingEditStationSelect: playerRatingEditStationSelect,
       playerRatingEditConfirm: playerRatingEditConfirm,
       playerRatingEditError: playerRatingEditError,
       playerRatingEditCancelBtn: playerRatingEditCancelBtn,
@@ -14857,7 +14893,7 @@
       'access:manage': ['SUPER_ADMIN'],
       'audit:read': ['SUPER_ADMIN', 'MANAGER'],
       'player-ratings:read': ['SUPER_ADMIN', 'MANAGER', 'SUPPORT', 'GAME_MANAGER', 'TOURNAMENT_MANAGER', 'STATION_ADMIN'],
-      'player-ratings:write': ['SUPER_ADMIN'],
+      'player-ratings:write': ['SUPER_ADMIN', 'MANAGER', 'STATION_ADMIN'],
       'advertising:read': ['SUPER_ADMIN', 'MANAGER'],
       'advertising:write': ['SUPER_ADMIN', 'MANAGER'],
       'subscriptions:read': ['SUPER_ADMIN'],
@@ -14893,7 +14929,7 @@
       '<details><summary>История изменений</summary><div data-traffic-audit></div></details></div>';
     var q = function (name) { return root.querySelector('[data-traffic-' + name + ']'); };
     var active = false, timer = null, revision = 0, sequence = 0, saving = false;
-    var write = canAccessTraffic(cfg) && hasGlobalTrafficPermission(cfg, 'traffic:write');
+    var write = canAccessTraffic(cfg) && hasGlobalPermission(cfg, 'traffic:write');
     var date = new Date(Date.now() + 3 * 3600000 - 86400000).toISOString().slice(0, 10);
     q('day').value = date;
     q('form').hidden = !write;
@@ -15019,10 +15055,10 @@
   }
 
   function canAccessTraffic(cfg) {
-    return hasGlobalTrafficPermission(cfg, 'traffic:read');
+    return hasGlobalPermission(cfg, 'traffic:read');
   }
 
-  function hasGlobalTrafficPermission(cfg, permission) {
+  function hasGlobalPermission(cfg, permission) {
     var scopes = cfg.permissionStationScopes || {};
     var globalScope = Object.prototype.hasOwnProperty.call(scopes, permission)
       ? scopes[permission] === null : !(cfg.stationIds || []).length;
@@ -15096,12 +15132,34 @@
     return hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']);
   }
 
+  // Effective station scope of a rating grant: null for all stations, a list for station-scoped
+  // grants, undefined without the grant. The canonical level itself is shared by all stations.
+  function playerRatingPermissionScope(cfg, permission) {
+    if (!cfg || cfg.permissionsAuthoritative !== true || !hasPermission(cfg, permission)) return undefined;
+    var scopes = cfg.permissionStationScopes || {};
+    if (Object.prototype.hasOwnProperty.call(scopes, permission)) {
+      return scopes[permission] === null ? null : (Array.isArray(scopes[permission]) ? scopes[permission].slice() : []);
+    }
+    return (cfg.stationIds || []).length ? cfg.stationIds.slice() : null;
+  }
+
+  function hasPlayerRatingPermission(cfg, permission) {
+    var scope = playerRatingPermissionScope(cfg, permission);
+    return scope === null || (Array.isArray(scope) && scope.length > 0);
+  }
+
   function canAccessPlayerRatings(cfg) {
-    return Boolean(cfg && cfg.playerRatingAdminEnabled) && hasPermission(cfg, 'player-ratings:read');
+    return Boolean(cfg && cfg.playerRatingAdminEnabled) && hasPlayerRatingPermission(cfg, 'player-ratings:read');
   }
 
   function canManagePlayerRatings(cfg) {
-    return Boolean(cfg && cfg.playerRatingAdminEnabled) && hasPermission(cfg, 'player-ratings:write');
+    return Boolean(cfg && cfg.playerRatingAdminEnabled) &&
+      hasPlayerRatingPermission(cfg, 'player-ratings:write');
+  }
+
+  function playerRatingWriteStations(cfg) {
+    var scope = playerRatingPermissionScope(cfg, 'player-ratings:write');
+    return Array.isArray(scope) ? scope : [];
   }
 
   function canManageQuickReplySettings(cfg) {
@@ -17973,6 +18031,8 @@
       var hideCommunitiesTab = !canAccessCommunities(cfg);
       var hideLaboratoryTab = !canAccessLaboratory(cfg);
       var hidePlayerRatingsTab = !canAccessPlayerRatings(cfg);
+      dom.playerRatingJournal.classList.toggle('phab-admin-hidden', hidePlayerRatingsTab ||
+        !hasPlayerRatingPermission(cfg, 'audit:read') || !hasPlayerRatingPermission(cfg, 'player-ratings:read'));
       [
         { value: 'messages', label: 'Диалоги', hidden: !canAccessDialogs(cfg) },
         { value: 'games', label: 'Игры', hidden: !canAccessGames(cfg) },
@@ -35669,6 +35729,18 @@
       title.className = 'phab-admin-settings-label';
       title.textContent = state.staffAuditFilter.actorId ? 'История действий сотрудника' : 'Журнал действий';
       dom.staffAuditList.appendChild(title);
+      if (!dom.playerRatingJournal.classList.contains('phab-admin-hidden')) {
+        var levelJournal = document.createElement('button');
+        levelJournal.type = 'button';
+        levelJournal.className = 'phab-admin-btn-secondary';
+        levelJournal.textContent = 'Журнал изменений уровней';
+        levelJournal.addEventListener('click', function () {
+          switchTab('playerRatings');
+          dom.playerRatingJournal.open = true;
+          dom.playerRatingJournal.querySelector('summary').focus();
+        });
+        dom.staffAuditList.appendChild(levelJournal);
+      }
       if (state.staffAuditLoading) {
         var loading = document.createElement('div');
         loading.className = 'phab-admin-empty';
@@ -38375,13 +38447,11 @@
       }
     }
 
-    function playerRatingStatusLabel(value) {
-      var status = normalizePlayerRatingProjectionStatus(value);
-      return status === 'SYNCED' ? 'Viva: синхронизировано' : status === 'FAILED_RETRYABLE' ? 'Viva: ошибка, можно повторить' : 'Viva: ожидает синхронизации';
-    }
+    function playerRatingStatusLabel() { return 'Уровень в ЦУП'; }
 
     function playerRatingStatusClass(value) {
       var status = normalizePlayerRatingProjectionStatus(value);
+      if (status === 'NOT_REQUIRED') return 'phab-admin-player-rating-badge--canonical';
       return status === 'SYNCED' ? 'phab-admin-player-rating-badge--synced' : status === 'FAILED_RETRYABLE' ? 'phab-admin-player-rating-badge--failed' : 'phab-admin-player-rating-badge--pending';
     }
 
@@ -38392,9 +38462,36 @@
       dom.playerRatingsTableWrap.classList.toggle('phab-admin-hidden', items.length === 0);
       dom.playerRatingCards.classList.toggle('phab-admin-hidden', items.length === 0);
       dom.playerRatingsLoadMoreBtn.classList.toggle('phab-admin-hidden', !state.playerRatingsCursor);
+      if (canManagePlayerRatings(cfg) && !dom.playerRatingAssignmentEntry) {
+        var assign = document.createElement('button'); assign.type = 'button'; assign.className = 'phab-admin-btn-secondary';
+        assign.textContent = 'Назначить первый уровень'; dom.playerRatingAssignmentEntry = assign;
+        dom.playerRatingsSearchState.parentNode.insertBefore(assign, dom.playerRatingsSearchState.nextSibling);
+        assign.addEventListener('click', async function () {
+          var query = String(dom.playerRatingsSearchInput.value || '').trim();
+          if (query.length < 3) { dom.playerRatingsSearchState.textContent = 'Введите телефон, имя или clientId игрока — не менее 3 символов.'; return; }
+          assign.disabled = true; clearNode(dom.playerRatingAssignmentCandidates || document.createElement('div'));
+          if (!dom.playerRatingAssignmentCandidates) { dom.playerRatingAssignmentCandidates = document.createElement('div'); assign.parentNode.insertBefore(dom.playerRatingAssignmentCandidates, assign.nextSibling); }
+          dom.playerRatingsSearchState.textContent = 'Ищем клиента для первоначального назначения…';
+          try {
+            var response = await api.searchPlayerRatingAssignmentCandidates(query), candidates = response && response.items || [];
+            dom.playerRatingsSearchState.textContent = candidates.length ? 'Выберите клиента. Уровень появится только после сохранения.' : 'Клиент не найден.';
+            candidates.forEach(function (candidate) {
+              var choose = document.createElement('button'); choose.type = 'button'; choose.className = 'phab-admin-btn-secondary';
+              choose.textContent = candidate.name + ' · ' + candidate.clientId;
+              choose.addEventListener('click', function () {
+                state.playerRatingAssignmentPrevious = state.selectedPlayerRating;
+                state.selectedPlayerRating = { playerKey: 'client:' + candidate.clientId, clientId: candidate.clientId, name: candidate.name,
+                  ratingNumeric: null, rating: null, initialAssignment: true };
+                openPlayerRatingEdit(choose);
+              }); dom.playerRatingAssignmentCandidates.appendChild(choose);
+            });
+          } catch (error) { dom.playerRatingsSearchState.textContent = error && error.message || 'Не удалось найти клиента.'; }
+          finally { assign.disabled = false; }
+        });
+      }
       if (!items.length) return;
       var header = document.createElement('tr');
-      ['Игрок', 'Уровень', 'Последнее изменение', 'Источник', 'Viva'].forEach(function (label) { var th = document.createElement('th'); th.textContent = label; header.appendChild(th); });
+      ['Игрок', 'Уровень', 'Последнее изменение', 'Источник', 'Состояние'].forEach(function (label) { var th = document.createElement('th'); th.textContent = label; header.appendChild(th); });
       var thead = document.createElement('thead'); thead.appendChild(header); dom.playerRatingsTable.appendChild(thead);
       var tbody = document.createElement('tbody'); dom.playerRatingsTable.appendChild(tbody);
       items.forEach(function (item) {
@@ -38411,10 +38508,84 @@
       if (!player) { dom.playerRatingDetail.textContent = 'Выберите игрока, чтобы посмотреть уровень и историю изменений.'; return; }
       var head = document.createElement('div'); head.className = 'phab-admin-player-rating-detail-head'; var title = document.createElement('div'); title.className = 'phab-admin-player-rating-detail-title'; title.textContent = player.name || 'Без имени'; head.appendChild(title); var badges = document.createElement('div'); badges.className = 'phab-admin-player-rating-badges'; [['CUP canonical', 'phab-admin-player-rating-badge--canonical'], [playerRatingStatusLabel(player.projectionStatus), playerRatingStatusClass(player.projectionStatus)]].forEach(function (entry) { var badge = document.createElement('span'); badge.className = 'phab-admin-player-rating-badge ' + entry[1]; badge.textContent = entry[0]; badges.appendChild(badge); }); head.appendChild(badges); dom.playerRatingDetail.appendChild(head);
       var subtitle = document.createElement('div'); subtitle.className = 'phab-admin-player-rating-detail-subtitle'; subtitle.textContent = [player.phoneNorm, player.clientId, player.playerKey].filter(Boolean).join(' · '); dom.playerRatingDetail.appendChild(subtitle);
-      var hero = document.createElement('div'); hero.className = 'phab-admin-player-rating-hero'; [['Текущий рейтинг', formatPlayerRatingNumeric(player.ratingNumeric)], ['Grade', player.rating || '-']].forEach(function (entry) { var item = document.createElement('div'); item.className = 'phab-admin-player-rating-hero-item'; var label = document.createElement('span'); label.textContent = entry[0]; var value = document.createElement('strong'); value.textContent = entry[1]; item.appendChild(label); item.appendChild(value); hero.appendChild(item); }); dom.playerRatingDetail.appendChild(hero);
-      var meta = document.createElement('div'); meta.className = 'phab-admin-player-rating-meta-grid'; [['Последнее изменение', formatTime(player.lastEventAt)], ['Основание', player.lastSource || player.lastEventType || '-'], ['Actor', (player.lastActor && (player.lastActor.name || player.lastActor.id)) || '-']].forEach(function (entry) { var item = document.createElement('div'); item.className = 'phab-admin-player-rating-meta-item'; var label = document.createElement('span'); label.textContent = entry[0]; var value = document.createElement('strong'); value.textContent = entry[1]; item.appendChild(label); item.appendChild(value); meta.appendChild(item); }); if (player.vivaCabinetUrl) { var viva = document.createElement('a'); viva.href = player.vivaCabinetUrl; viva.target = '_blank'; viva.rel = 'noopener noreferrer'; viva.textContent = 'Открыть в Viva'; meta.appendChild(viva); } dom.playerRatingDetail.appendChild(meta);
-      var actions = document.createElement('div'); actions.className = 'phab-admin-player-rating-actions'; if (canManagePlayerRatings(cfg)) { var change = document.createElement('button'); change.type = 'button'; change.className = 'phab-admin-btn'; change.textContent = 'Изменить уровень'; change.addEventListener('click', function () { openPlayerRatingEdit(change); }); actions.appendChild(change); if (normalizePlayerRatingProjectionStatus(player.projectionStatus) === 'FAILED_RETRYABLE') { var retry = document.createElement('button'); retry.type = 'button'; retry.className = 'phab-admin-btn-secondary'; retry.textContent = 'Повторить синхронизацию Viva'; retry.addEventListener('click', function () { retryPlayerRatingProjection().catch(handleError); }); actions.appendChild(retry); } } dom.playerRatingDetail.appendChild(actions);
-      var history = document.createElement('div'); history.className = 'phab-admin-player-rating-history'; var historyHead = document.createElement('div'); historyHead.className = 'phab-admin-player-rating-history-head'; var historyTitle = document.createElement('div'); historyTitle.className = 'phab-admin-player-rating-history-title'; historyTitle.textContent = 'История изменений'; historyHead.appendChild(historyTitle); var filters = document.createElement('div'); ['eventType', 'dateFrom', 'dateTo'].forEach(function (key) { var input = document.createElement(key === 'eventType' ? 'select' : 'input'); if (key === 'eventType') { [['', 'Все типы'], ['RATING_MANUALLY_CHANGED', 'Ручные'], ['RATING_INITIAL_IMPORTED', 'Импорт'], ['RATING_BOOTSTRAPPED_FROM_VIVA', 'Bootstrap']].forEach(function (option) { var node = document.createElement('option'); node.value = option[0]; node.textContent = option[1]; input.appendChild(node); }); } else input.type = 'date'; input.value = state.playerRatingEventsFilter[key] || ''; input.addEventListener('change', function () { state.playerRatingEventsFilter[key] = input.value; loadPlayerRatingEvents().catch(handleError); }); filters.appendChild(input); }); historyHead.appendChild(filters); history.appendChild(historyHead); var timeline = document.createElement('div'); timeline.className = 'phab-admin-player-rating-timeline'; if (!state.selectedPlayerRatingEvents.length) { timeline.textContent = 'История пока пуста.'; } else state.selectedPlayerRatingEvents.forEach(function (event) { var row = document.createElement('div'); row.className = 'phab-admin-player-rating-event'; var values = document.createElement('div'); values.className = 'phab-admin-player-rating-event-values'; values.textContent = (event.before == null ? '—' : formatPlayerRatingNumeric(event.before)) + ' → ' + formatPlayerRatingNumeric(event.after) + (event.delta == null ? '' : ' (Δ ' + (event.delta > 0 ? '+' : '') + formatPlayerRatingNumeric(event.delta) + ')'); row.appendChild(values); var eventMeta = document.createElement('div'); eventMeta.className = 'phab-admin-player-rating-event-meta'; eventMeta.textContent = [event.eventType, formatTime(event.occurredAt), event.actor && (event.actor.name || event.actor.id)].filter(Boolean).join(' · '); row.appendChild(eventMeta); var reason = event.source && event.source.reason; if (reason) { var reasonNode = document.createElement('div'); reasonNode.className = 'phab-admin-player-rating-event-reason'; reasonNode.textContent = reason; row.appendChild(reasonNode); } timeline.appendChild(row); }); history.appendChild(timeline); dom.playerRatingDetail.appendChild(history);
+      var hero = document.createElement('div'); hero.className = 'phab-admin-player-rating-hero'; [['Текущий рейтинг', formatPlayerRatingNumeric(player.ratingNumeric)], ['Буквенный уровень', player.rating || '-']].forEach(function (entry) { var item = document.createElement('div'); item.className = 'phab-admin-player-rating-hero-item'; var label = document.createElement('span'); label.textContent = entry[0]; var value = document.createElement('strong'); value.textContent = entry[1]; item.appendChild(label); item.appendChild(value); hero.appendChild(item); }); dom.playerRatingDetail.appendChild(hero);
+      var meta = document.createElement('div'); meta.className = 'phab-admin-player-rating-meta-grid'; [['Последнее изменение', formatTime(player.lastEventAt)], ['Основание', player.lastSource || player.lastEventType || '-'], ['Автор', (player.lastActor && (player.lastActor.name || player.lastActor.id)) || '-']].forEach(function (entry) { var item = document.createElement('div'); item.className = 'phab-admin-player-rating-meta-item'; var label = document.createElement('span'); label.textContent = entry[0]; var value = document.createElement('strong'); value.textContent = entry[1]; item.appendChild(label); item.appendChild(value); meta.appendChild(item); }); if (player.vivaCabinetUrl) { var viva = document.createElement('a'); viva.href = player.vivaCabinetUrl; viva.target = '_blank'; viva.rel = 'noopener noreferrer'; viva.textContent = 'Открыть в Viva'; meta.appendChild(viva); } dom.playerRatingDetail.appendChild(meta);
+      var actions = document.createElement('div'); actions.className = 'phab-admin-player-rating-actions'; if (canManagePlayerRatings(cfg)) { var change = document.createElement('button'); change.type = 'button'; change.className = 'phab-admin-btn'; change.textContent = 'Изменить уровень'; change.addEventListener('click', function () { openPlayerRatingEdit(change); }); actions.appendChild(change); if (false) /* Retired Viva projection has no retry action. */ { var retry = document.createElement('button'); retry.type = 'button'; retry.className = 'phab-admin-btn-secondary'; retry.textContent = 'Повторить синхронизацию Viva'; retry.addEventListener('click', function () { retryPlayerRatingProjection().catch(handleError); }); actions.appendChild(retry); } } dom.playerRatingDetail.appendChild(actions);
+      var history = document.createElement('div');
+      history.className = 'phab-admin-player-rating-history';
+      var historyTitle = document.createElement('h3');
+      historyTitle.textContent = 'История изменений';
+      history.appendChild(historyTitle);
+      var filters = document.createElement('div');
+      filters.className = 'phab-admin-player-rating-history-head';
+      [['eventType', 'Тип события'], ['dateFrom', 'С даты'], ['dateTo', 'По дату']].forEach(function (entry) {
+        var label = document.createElement('label');
+        label.textContent = entry[1] + ' ';
+        var input = document.createElement(entry[0] === 'eventType' ? 'select' : 'input');
+        if (entry[0] === 'eventType') {
+          [['', 'Все типы'], ['RATING_MANUALLY_CHANGED', 'Ручные изменения'],
+            ['RATING_INITIAL_ASSIGNED', 'Первое назначение'], ['RATING_INITIAL_IMPORTED', 'Импорт'],
+            ['RATING_BOOTSTRAPPED_FROM_VIVA', 'Историческое значение Viva']].forEach(function (item) {
+            var option = document.createElement('option');
+            option.value = item[0];
+            option.textContent = item[1];
+            input.appendChild(option);
+          });
+        } else input.type = 'date';
+        input.value = state.playerRatingEventsFilter[entry[0]] || '';
+        input.addEventListener('change', function () {
+          state.playerRatingEventsFilter = Object.assign({}, state.playerRatingEventsFilter, { [entry[0]]: input.value });
+          loadPlayerRatingEvents().catch(handleError);
+        });
+        label.appendChild(input);
+        filters.appendChild(label);
+      });
+      history.appendChild(filters);
+      var timeline = document.createElement('div');
+      timeline.className = 'phab-admin-player-rating-timeline';
+      if (!state.selectedPlayerRatingEvents.length) timeline.textContent = 'История пока пуста.';
+      state.selectedPlayerRatingEvents.forEach(function (event) {
+        var row = document.createElement('div');
+        row.className = 'phab-admin-player-rating-event';
+        var values = document.createElement('strong');
+        values.textContent = ratingAuditTransition(event);
+        row.appendChild(values);
+        var source = event.source || {};
+        var meta = document.createElement('div');
+        meta.className = 'phab-admin-player-rating-event-meta';
+        meta.textContent = [formatDateTimeFull(event.occurredAt), source.kind || source.domain || event.eventType,
+          source.eventId, event.actor && (event.actor.name || event.actor.id)].filter(Boolean).join(' · ');
+        row.appendChild(meta);
+        if (source.reason) {
+          var reason = document.createElement('div');
+          reason.className = 'phab-admin-player-rating-event-reason';
+          reason.textContent = source.reason;
+          row.appendChild(reason);
+        }
+        if (source.resultRef && hasPlayerRatingPermission(cfg, 'player-ratings:read')) {
+          var link = document.createElement('a');
+          var url = new URL(window.location.pathname, window.location.origin);
+          url.searchParams.set('ratingPlayer', player.playerKey);
+          url.searchParams.set('ratingResult', event.id);
+          link.href = url.href;
+          link.textContent = 'Результат ' + source.resultRef.id + ' · версия ' + source.resultRef.revision;
+          row.appendChild(link);
+        }
+        timeline.appendChild(row);
+      });
+      history.appendChild(timeline);
+      if (state.playerRatingEventsCursor) {
+        var more = document.createElement('button');
+        more.type = 'button';
+        more.className = 'phab-admin-btn-secondary';
+        more.textContent = 'Загрузить ещё';
+        more.addEventListener('click', function () {
+          more.disabled = true;
+          loadPlayerRatingEvents(true).catch(function (error) { more.disabled = false; handleError(error); });
+        });
+        history.appendChild(more);
+      }
+      dom.playerRatingDetail.appendChild(history);
     }
 
     async function searchPlayerRatings(append) {
@@ -38432,15 +38603,197 @@
       var player = await api.getPlayerRating(playerKey); if (state.selectedPlayerRatingKey !== playerKey) return; state.selectedPlayerRating = player; state.playerRatingEventsCursor = null; renderPlayerRatingsList(); await loadPlayerRatingEvents();
     }
 
-    async function loadPlayerRatingEvents() {
-      var player = state.selectedPlayerRating; if (!player) return; var result = await api.getPlayerRatingEvents(player.playerKey, Object.assign({ limit: 50 }, state.playerRatingEventsFilter)); if (state.selectedPlayerRatingKey !== player.playerKey) return; state.selectedPlayerRatingEvents = Array.isArray(result && result.items) ? result.items : []; state.playerRatingEventsCursor = result && result.nextCursor ? result.nextCursor : null; renderPlayerRatingDetail();
+    async function loadPlayerRatingEvents(append) {
+      var player = state.selectedPlayerRating;
+      if (!player) return;
+      var filter = state.playerRatingEventsFilter;
+      var result = await api.getPlayerRatingEvents(player.playerKey, {
+        limit: 50, cursor: append ? state.playerRatingEventsCursor : undefined,
+        eventType: filter.eventType,
+        dateFrom: filter.dateFrom ? filter.dateFrom + 'T00:00:00+03:00' : undefined,
+        dateTo: filter.dateTo ? filter.dateTo + 'T23:59:59.999+03:00' : undefined
+      });
+      if (state.selectedPlayerRating !== player || state.playerRatingEventsFilter !== filter) return;
+      var items = Array.isArray(result && result.items) ? result.items : [];
+      state.selectedPlayerRatingEvents = append ? state.selectedPlayerRatingEvents.concat(items) : items;
+      state.playerRatingEventsCursor = result && result.nextCursor ? result.nextCursor : null;
+      renderPlayerRatingDetail();
     }
 
-    function closePlayerRatingEdit() { dom.playerRatingEditModal.classList.add('phab-admin-hidden'); dom.playerRatingEditError.classList.add('phab-admin-hidden'); if (state.playerRatingEditReturnFocus && state.playerRatingEditReturnFocus.focus) state.playerRatingEditReturnFocus.focus(); state.playerRatingEditReturnFocus = null; }
-    function openPlayerRatingEdit(trigger) { var player = state.selectedPlayerRating; if (!player || !canManagePlayerRatings(cfg)) return; state.playerRatingEditReturnFocus = trigger || document.activeElement; dom.playerRatingEditCurrent.textContent = 'Сейчас: ' + formatPlayerRatingNumeric(player.ratingNumeric) + ' · ' + player.rating; dom.playerRatingEditNumericInput.value = String(player.ratingNumeric); dom.playerRatingEditReasonInput.value = ''; dom.playerRatingEditGrade.textContent = 'Grade: ' + player.rating; dom.playerRatingEditConfirm.textContent = 'Будет: ' + formatPlayerRatingNumeric(player.ratingNumeric) + ' · ' + player.rating; dom.playerRatingEditModal.classList.remove('phab-admin-hidden'); dom.playerRatingEditNumericInput.focus(); }
-    function updatePlayerRatingEditPreview() { var player = state.selectedPlayerRating; var value = Number(dom.playerRatingEditNumericInput.value); var grade = mapPlayerRatingGradeV1(value); dom.playerRatingEditGrade.textContent = 'Grade: ' + grade; dom.playerRatingEditConfirm.textContent = player && grade !== '-' ? 'Подтвердите: ' + formatPlayerRatingNumeric(player.ratingNumeric) + ' → ' + formatPlayerRatingNumeric(value) : 'Укажите значение от 1 до 7'; }
-    function replacePlayerRatingInList(player) { state.playerRatings = state.playerRatings.map(function (item) { return item.playerKey === player.playerKey ? Object.assign({}, item, player) : item; }); renderPlayerRatingsList(); }
-    async function savePlayerRatingEdit() { var player = state.selectedPlayerRating; var ratingNumeric = Number(dom.playerRatingEditNumericInput.value); var reason = String(dom.playerRatingEditReasonInput.value || '').trim(); if (!player || mapPlayerRatingGradeV1(ratingNumeric) === '-' || reason.length < 10) { dom.playerRatingEditError.textContent = 'Укажите рейтинг от 1 до 7 и причину не короче 10 символов.'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); return; } state.playerRatingEditSubmitting = true; dom.playerRatingEditSaveBtn.disabled = true; try { var key = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + '-' + Math.random(); var result = await api.changePlayerRating(player.playerKey, { ratingNumeric: ratingNumeric, reason: reason, expectedLastEventId: player.lastEventId, idempotencyKey: key }); state.selectedPlayerRating = result.state; replacePlayerRatingInList(result.state); closePlayerRatingEdit(); await loadPlayerRatingEvents(); setStatus('Уровень сохранён в ЦУП. Статус синхронизации с Viva: ' + playerRatingStatusLabel(result.projection && result.projection.status), false); } catch (error) { if (error && error.status === 409) { dom.playerRatingEditError.textContent = 'Карточка устарела. Актуальное изменение загружено — повторите корректировку.'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); await selectPlayerRating(player.playerKey); } else { dom.playerRatingEditError.textContent = error && error.message ? error.message : 'Не удалось сохранить уровень'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); } } finally { state.playerRatingEditSubmitting = false; dom.playerRatingEditSaveBtn.disabled = false; } }
+    function ratingAuditTransition(event) {
+      function level(numeric, grade) {
+        return numeric == null ? '—' : formatPlayerRatingNumeric(numeric) + (grade ? ' (' + grade + ')' : '');
+      }
+      return level(event.before, event.gradeBefore) + ' → ' + level(event.after, event.gradeAfter);
+    }
+
+    async function showRatingResult(playerKey, eventId) {
+      var resultBox = document.createElement('div');
+      resultBox.className = 'phab-admin-player-rating-event';
+      resultBox.setAttribute('role', 'status');
+      resultBox.textContent = 'Загружаем источник результата…';
+      dom.playerRatingDetail.prepend(resultBox);
+      try {
+        var result = await api.getPlayerRatingResult(playerKey, eventId);
+        var parts = ['Результат ' + result.kind, result.eventId,
+          result.resultRef.id, 'Версия ' + result.resultRef.revision];
+        if (result.score) parts.push('Счёт ' + result.score.teamA + ':' + result.score.teamB);
+        if (result.tournamentRating) {
+          var rating = result.tournamentRating;
+          if (rating.position != null) parts.push('Место ' + rating.position);
+          if (rating.points != null) parts.push('Очки ' + rating.points);
+          parts.push('Результат расчёта ' + ratingAuditTransition(rating));
+        }
+        resultBox.textContent = parts.join(' · ');
+      } catch (error) {
+        resultBox.textContent = error.message || 'Не удалось открыть источник результата.';
+      }
+    }
+
+    function bindPlayerRatingJournal() {
+      var root = dom.playerRatingJournalBody;
+      var form = document.createElement('form');
+      form.className = 'phab-admin-player-ratings-search';
+      var fields = {};
+      [['actorId', 'ID сотрудника'], ['playerKey', 'ID игрока'], ['eventType', 'Действие'],
+        ['dateFrom', 'С даты (МСК)'], ['dateTo', 'По дату (МСК)']].forEach(function (entry) {
+        var label = document.createElement('label');
+        label.className = 'phab-admin-player-ratings-search-label';
+        label.textContent = entry[1];
+        var input = document.createElement(entry[0] === 'eventType' ? 'select' : 'input');
+        input.className = 'phab-admin-input';
+        if (entry[0] === 'eventType') {
+          [['', 'Все'], ['RATING_MANUALLY_CHANGED', 'Изменение'],
+            ['RATING_INITIAL_ASSIGNED', 'Первое назначение']].forEach(function (option) {
+            var item = document.createElement('option');
+            item.value = option[0];
+            item.textContent = option[1];
+            input.appendChild(item);
+          });
+        } else {
+          input.type = entry[0].indexOf('date') === 0 ? 'date' : 'text';
+          if (input.type === 'text') input.maxLength = 200;
+        }
+        fields[entry[0]] = input;
+        label.appendChild(input);
+        form.appendChild(label);
+      });
+      var submit = document.createElement('button');
+      submit.type = 'submit';
+      submit.className = 'phab-admin-btn';
+      submit.textContent = 'Применить фильтры';
+      form.appendChild(submit);
+      root.appendChild(form);
+      var status = document.createElement('div');
+      status.setAttribute('role', 'status');
+      root.appendChild(status);
+      var actions = document.createElement('div');
+      actions.className = 'phab-admin-player-rating-actions';
+      root.appendChild(actions);
+      var list = document.createElement('div');
+      list.className = 'phab-admin-player-rating-timeline';
+      root.appendChild(list);
+      var requestNumber = 0;
+      var activeQuery = {};
+      var pageStack = [];
+
+      function button(label, handler) {
+        var node = document.createElement('button');
+        node.type = 'button';
+        node.className = 'phab-admin-btn-secondary';
+        node.textContent = label;
+        node.addEventListener('click', handler);
+        actions.appendChild(node);
+      }
+
+      async function load(query) {
+        var number = ++requestNumber;
+        clearNode(list);
+        clearNode(actions);
+        status.textContent = 'Загружаем журнал…';
+        try {
+          var page = await api.getPlayerRatingJournal(query);
+          if (number !== requestNumber) return;
+          var items = normalizeArray(page.items);
+          status.textContent = items.length ? 'Страница ' + (pageStack.length + 1) + ' · Записей ' + items.length : 'Записей нет.';
+          items.forEach(function (entry) {
+            var row = document.createElement('div');
+            row.className = 'phab-admin-player-rating-event';
+            var change = document.createElement('strong');
+            change.textContent = entry.playerName + ' · ' + ratingAuditTransition(entry);
+            row.appendChild(change);
+            var meta = document.createElement('div');
+            meta.textContent = [formatDateTimeFull(entry.occurredAt), entry.actorName, entry.actorId,
+              entry.stationId ? 'Станция ' + entry.stationId : 'Все станции', entry.playerKey, entry.eventType === 'RATING_INITIAL_ASSIGNED' ? 'Первое назначение' : 'Изменение'].join(' · ');
+            row.appendChild(meta);
+            var reason = document.createElement('div');
+            reason.textContent = entry.reason;
+            row.appendChild(reason);
+            list.appendChild(row);
+          });
+          if (pageStack.length) button('Предыдущая', function () { load(pageStack.pop()); });
+          if (page.nextCursor) button('Следующая', function () {
+            pageStack.push(query);
+            load(Object.assign({}, query, { cursor: page.nextCursor }));
+          });
+          function download(format, exportQuery, label) {
+            button(label + ' ' + format.toUpperCase(), async function (event) {
+              var trigger = event.currentTarget;
+              trigger.disabled = true;
+              try {
+                var file = await api.getPlayerRatingJournal(exportQuery, format);
+                var href = window.URL.createObjectURL(file.blob);
+                var link = document.createElement('a');
+                link.href = href;
+                link.download = file.fileName;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                window.setTimeout(function () { window.URL.revokeObjectURL(href); }, 1000);
+              } catch (error) {
+                handleError(error);
+              } finally {
+                trigger.disabled = false;
+              }
+            });
+          }
+          if (items.length) ['csv', 'xlsx'].forEach(function (format) {
+            var pageQuery = Object.assign({}, query, { ids: items.map(function (item) { return item.id; }).join(',') });
+            var allQuery = Object.assign({}, query);
+            delete allQuery.cursor;
+            download(format, pageQuery, 'Скачать страницу');
+            download(format, allQuery, 'Скачать по фильтрам');
+          });
+        } catch (error) {
+          if (number === requestNumber) status.textContent = error.message || 'Не удалось загрузить журнал.';
+        }
+      }
+
+      form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        var query = { actorId: fields.actorId.value.trim(), playerKey: fields.playerKey.value.trim(),
+          eventType: fields.eventType.value };
+        if (fields.dateFrom.value) query.dateFrom = fields.dateFrom.value + 'T00:00:00+03:00';
+        if (fields.dateTo.value) {
+          var end = new Date(fields.dateTo.value + 'T00:00:00+03:00');
+          query.dateTo = new Date(end.getTime() + 86400000).toISOString();
+        }
+        pageStack = [];
+        activeQuery = query;
+        load(query);
+      });
+      function refreshJournal() {
+        if (dom.playerRatingJournal.open) { pageStack = []; load(activeQuery); }
+      }
+      dom.playerRatingJournal.addEventListener('toggle', refreshJournal);
+      dom.playerRatingJournal.addEventListener('rating-updated', refreshJournal);
+    }
+
+    function closePlayerRatingEdit() { if (state.playerRatingEditSubmitting) return; state.playerRatingEditRequest = null; dom.playerRatingEditModal.classList.add('phab-admin-hidden'); if (state.selectedPlayerRating && state.selectedPlayerRating.initialAssignment) { state.selectedPlayerRating = state.playerRatingAssignmentPrevious || null; renderPlayerRatingDetail(); } state.playerRatingAssignmentPrevious = null; dom.playerRatingEditError.classList.add('phab-admin-hidden'); if (state.playerRatingEditReturnFocus && state.playerRatingEditReturnFocus.focus) state.playerRatingEditReturnFocus.focus(); state.playerRatingEditReturnFocus = null; }
+    function openPlayerRatingEdit(trigger) { var player = state.selectedPlayerRating; if (!player || !canManagePlayerRatings(cfg)) return; state.playerRatingEditReturnFocus = trigger || document.activeElement; dom.playerRatingEditCurrent.textContent = player.initialAssignment ? player.name + ' · Уровень не определён' : 'Сейчас: ' + formatPlayerRatingNumeric(player.ratingNumeric) + ' · ' + player.rating; dom.playerRatingEditNumericInput.value = player.initialAssignment ? '' : String(player.ratingNumeric); dom.playerRatingEditReasonInput.value = ''; var writeStations = playerRatingWriteStations(cfg); clearNode(dom.playerRatingEditStationSelect); writeStations.forEach(function (stationId) { var option = document.createElement('option'); option.value = stationId; option.textContent = stationId; dom.playerRatingEditStationSelect.appendChild(option); }); dom.playerRatingEditStationSelect.required = writeStations.length > 1; dom.playerRatingEditStationLabel.classList.toggle('phab-admin-hidden', writeStations.length < 2); dom.playerRatingEditGrade.textContent = player.initialAssignment ? 'Выберите уровень от 1 до 7' : 'Уровень: ' + player.rating; dom.playerRatingEditConfirm.textContent = player.initialAssignment ? '' : 'Будет: ' + formatPlayerRatingNumeric(player.ratingNumeric) + ' · ' + player.rating; dom.playerRatingEditModal.classList.remove('phab-admin-hidden'); dom.playerRatingEditNumericInput.focus(); }
+    function updatePlayerRatingEditPreview() { var player = state.selectedPlayerRating; var value = Number(dom.playerRatingEditNumericInput.value); var grade = mapPlayerRatingGradeV1(value); dom.playerRatingEditGrade.textContent = 'Grade: ' + grade; dom.playerRatingEditConfirm.textContent = player && grade !== '-' ? (player.initialAssignment ? 'Первый уровень: ' : 'Подтвердите: ' + formatPlayerRatingNumeric(player.ratingNumeric) + ' → ') + formatPlayerRatingNumeric(value) : 'Укажите значение от 1 до 7'; }
+    function replacePlayerRatingInList(player) { if (!state.playerRatings.some(function (item) { return item.playerKey === player.playerKey; })) state.playerRatings.push(player); state.playerRatings = state.playerRatings.map(function (item) { return item.playerKey === player.playerKey ? Object.assign({}, item, player) : item; }); renderPlayerRatingsList(); }
+    async function savePlayerRatingEdit() { if (state.playerRatingEditSubmitting) return; var player = state.selectedPlayerRating; var ratingNumeric = Number(dom.playerRatingEditNumericInput.value); var reason = String(dom.playerRatingEditReasonInput.value || '').trim(); if (!player || mapPlayerRatingGradeV1(ratingNumeric) === '-' || reason.length < 10) { dom.playerRatingEditError.textContent = 'Укажите рейтинг от 1 до 7 и причину не короче 10 символов.'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); return; } state.playerRatingEditSubmitting = true; dom.playerRatingEditSaveBtn.disabled = true; try { var writeStations = playerRatingWriteStations(cfg); var stationId = writeStations.length > 1 ? String(dom.playerRatingEditStationSelect.value || '') : writeStations[0]; var signature = JSON.stringify([player.playerKey, player.clientId, player.lastEventId, ratingNumeric, reason, stationId || null]); var pending = state.playerRatingEditRequest; if (!pending || pending.signature !== signature) { pending = { signature: signature, key: window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + '-' + Math.random() }; state.playerRatingEditRequest = pending; } var key = pending.key; var result = player.initialAssignment ? await api.assignPlayerRating(Object.assign({ clientId: player.clientId, ratingNumeric: ratingNumeric, reason: reason, idempotencyKey: key }, stationId ? { stationId: stationId } : {})) : await api.changePlayerRating(player.playerKey, Object.assign({ ratingNumeric: ratingNumeric, reason: reason, expectedLastEventId: player.lastEventId, idempotencyKey: key }, stationId ? { stationId: stationId } : {})); state.selectedPlayerRatingKey = result.state.playerKey; state.selectedPlayerRating = result.state; replacePlayerRatingInList(result.state); state.playerRatingEditSubmitting = false; closePlayerRatingEdit(); dom.playerRatingJournal.dispatchEvent(new Event('rating-updated')); await loadPlayerRatingEvents(); setStatus('Уровень сохранён в ЦУП.', false); } catch (error) { if (error && error.status === 409 && !player.initialAssignment) { dom.playerRatingEditError.textContent = 'Карточка устарела. Актуальное изменение загружено — повторите корректировку.'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); await selectPlayerRating(player.playerKey); } else { dom.playerRatingEditError.textContent = error && error.message ? error.message : 'Не удалось сохранить уровень'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); } } finally { state.playerRatingEditSubmitting = false; dom.playerRatingEditSaveBtn.disabled = false; } }
     async function retryPlayerRatingProjection() { var player = state.selectedPlayerRating; if (!player) return; var result = await api.retryPlayerRatingProjection(player.playerKey); state.selectedPlayerRating = result.state; replacePlayerRatingInList(result.state); renderPlayerRatingDetail(); setStatus('Задача синхронизации Viva переведена в ожидание.', false); }
 
     var NOTIFICATION_USER_ID_PATTERN =
@@ -42088,6 +42441,7 @@
       });
       dom.playerRatingsSearchBtn.addEventListener('click', function () { searchPlayerRatings(false).catch(handleError); });
       dom.playerRatingsLoadMoreBtn.addEventListener('click', function () { searchPlayerRatings(true).catch(handleError); });
+      bindPlayerRatingJournal();
       dom.playerRatingEditCloseBtn.addEventListener('click', closePlayerRatingEdit);
       dom.playerRatingEditCancelBtn.addEventListener('click', closePlayerRatingEdit);
       dom.playerRatingEditModal.addEventListener('click', function (event) { if (event.target === dom.playerRatingEditModal) closePlayerRatingEdit(); });
@@ -43252,11 +43606,18 @@
       bindEvents();
       var initialGameId = '';
       try { initialGameId = String(new URLSearchParams(window.location.search).get('gameId') || ''); } catch (_error) {}
-      if (initialGameId) state.activeTab = 'games';
+      var ratingParams = new URLSearchParams(window.location.search);
+      var ratingPlayer = ratingParams.get('ratingPlayer');
+      var ratingResult = ratingParams.get('ratingResult');
+      if (ratingPlayer && canAccessPlayerRatings(cfg)) state.activeTab = 'playerRatings';
+      else if (initialGameId) state.activeTab = 'games';
       switchTab(state.activeTab);
       setAnalyticsSubtab(state.analyticsSubtab);
       await loadSettings();
-      if (initialGameId) {
+      if (ratingPlayer && state.activeTab === 'playerRatings') {
+        await selectPlayerRating(ratingPlayer);
+        if (ratingResult) await showRatingResult(ratingPlayer, ratingResult);
+      } else if (initialGameId) {
         await loadGames();
         var initialGame = normalizeArray(state.games).find(function (game) { return String(game && game.id || '') === initialGameId; }) || { id: initialGameId, name: 'Игра ' + initialGameId };
         await openGameDetails(initialGame);

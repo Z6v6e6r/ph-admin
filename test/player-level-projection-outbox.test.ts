@@ -70,7 +70,7 @@ async function main(): Promise<void> {
   const actor: PlayerRatingActor = { id: 'admin-1', name: 'Admin', type: 'ADMIN' };
   await repository.retryPadlHubProjection(document.playerKey, actor);
   const retryCall = findAndUpdateCalls.at(-1);
-  assert.deepEqual(retryCall?.[0]?.status?.$in, ['DEAD', 'FAILED_RETRYABLE']);
+  assert.deepEqual(retryCall?.[0]?.status?.$in, ['DEAD', 'FAILED_RETRYABLE', 'WAITING_FOR_MAPPING']);
   assert.equal(retryCall?.[1]?.$set?.attempts, 0);
   assert.equal(retryCall?.[1]?.$set?.status, 'PENDING');
   assert.deepEqual(retryCall?.[1]?.$set?.lastManualRetryBy, actor);

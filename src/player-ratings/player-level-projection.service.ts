@@ -1,11 +1,14 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import {
+  PADLHUB_CALCULATED_RATING_EVENTS,
   PadlHubPlayerLevelProjectionPayload,
+  PadlHubProjectionEventType,
   PlayerRatingStateDocument,
   ratingNumericToGrade
 } from './player-ratings.types';
 import { PlayerRatingRepository } from './player-ratings.repository';
+import { isInPlayerLevelPilot, readPlayerLevelPilot } from './player-level-projection-pilot';
 
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
@@ -14,12 +17,15 @@ const DEFAULT_LEASE_MS = 30_000;
 const DEFAULT_RECONCILE_BATCH_SIZE = 100;
 const DEFAULT_CIRCUIT_FAILURE_THRESHOLD = 5;
 const DEFAULT_CIRCUIT_RESET_MS = 30_000;
+const MAPPING_RECHECK_MS = 300_000;
+const ACTOR_NOT_MAPPED = 'CUP_PLAYER_LEVEL_ACTOR_NOT_MAPPED';
 
 @Injectable()
 export class PlayerLevelProjectionService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PlayerLevelProjectionService.name);
   private readonly workerId = `cup-level-projection:${randomUUID()}`;
   private readonly enabled = readBoolean(process.env.PADLHUB_PLAYER_LEVEL_PROJECTION_ENABLED);
+  private readonly pilot = readPlayerLevelPilot();
   private readonly baseUrl = String(process.env.PADLHUB_PLAYER_LEVEL_PROJECTION_URL ?? '').trim().replace(/\/+$/, '');
   private readonly token = String(process.env.PADLHUB_PLAYER_LEVEL_PROJECTION_TOKEN ?? '').trim();
   private readonly tenantKey = String(process.env.PADLHUB_PLAYER_LEVEL_PROJECTION_TENANT_KEY ?? '').trim();
@@ -52,7 +58,10 @@ export class PlayerLevelProjectionService implements OnModuleInit, OnModuleDestr
     failed: 0,
     stale: 0,
     circuitSkippedCycles: 0,
-    invalidCanonicalStates: 0
+    invalidCanonicalStates: 0,
+    waitingForMapping: 0,
+    pilotStateChanged: 0,
+    pilotBindingConflicts: 0
   };
 
   constructor(private readonly repository: PlayerRatingRepository) {}
@@ -98,7 +107,8 @@ export class PlayerLevelProjectionService implements OnModuleInit, OnModuleDestr
         const claimed = await this.repository.claimPadlHubProjection({
           leaseOwner: this.workerId,
           now: new Date().toISOString(),
-          leaseUntil: new Date(Date.now() + this.leaseMs).toISOString()
+          leaseUntil: new Date(Date.now() + this.leaseMs).toISOString(),
+          ...(this.pilot ? { pilot: this.pilot } : {})
         });
         if (!claimed?.inFlight) break;
         await this.deliver(claimed.playerKey, claimed.inFlight, claimed.attempts);
@@ -124,13 +134,16 @@ export class PlayerLevelProjectionService implements OnModuleInit, OnModuleDestr
   private async reconcileBatch(): Promise<void> {
     const states = await this.repository.listStatesForPadlHubReconcile(
       this.reconcileCursor,
-      DEFAULT_RECONCILE_BATCH_SIZE
+      DEFAULT_RECONCILE_BATCH_SIZE,
+      this.pilot
     );
     let invalidCount = 0;
     for (const state of states) {
       const payload = this.payloadFromState(state);
-      if (payload) await this.repository.ensurePadlHubProjectionDesired(state, payload);
-      else invalidCount += 1;
+      if (!payload) invalidCount += 1;
+      else if (await this.repository.ensurePadlHubProjectionDesired(state, payload) === 'pilot-binding-conflict') {
+        this.metrics.pilotBindingConflicts += 1;
+      }
     }
     if (invalidCount > 0) {
       this.metrics.invalidCanonicalStates += invalidCount;
@@ -165,7 +178,7 @@ export class PlayerLevelProjectionService implements OnModuleInit, OnModuleDestr
       sportCode: 'PADEL',
       level: { code: state.rating, numericValue: state.ratingNumeric },
       source: {
-        eventType: state.lastEventType,
+        eventType: state.lastEventType === 'RATING_INITIAL_ASSIGNED' ? 'RATING_MANUALLY_CHANGED' : state.lastEventType,
         formulaVersion: 'padel-rating-grade-v1'
       }
     };
@@ -177,6 +190,22 @@ export class PlayerLevelProjectionService implements OnModuleInit, OnModuleDestr
     attempts: number
   ): Promise<void> {
     const now = new Date().toISOString();
+    const lease = { playerKey, leaseOwner: this.workerId, revision: payload.sourceRevision, now };
+    if (this.pilot) {
+      const current = await this.repository.stateByKey(playerKey);
+      const fresh = current && isInPlayerLevelPilot(this.pilot, current) ? this.payloadFromState(current) : null;
+      if (!fresh || fresh.sourceEventId !== payload.sourceEventId || fresh.sourceRevision !== payload.sourceRevision
+        || fresh.player.externalClientId !== payload.player.externalClientId
+        || fresh.level.code !== payload.level.code || fresh.level.numericValue !== payload.level.numericValue
+        || fresh.source.eventType !== payload.source.eventType || fresh.occurredAt !== payload.occurredAt) {
+        this.metrics.pilotStateChanged += 1;
+        await this.repository.failPadlHubProjection({
+          ...lease, nextAttemptAt: new Date(Date.now() + MAPPING_RECHECK_MS).toISOString(),
+          errorCode: 'PADLHUB_LEVEL_PROJECTION_PILOT_STATE_CHANGED'
+        });
+        return;
+      }
+    }
     try {
       this.metrics.attempts += 1;
       const response = await fetch(
@@ -193,6 +222,18 @@ export class PlayerLevelProjectionService implements OnModuleInit, OnModuleDestr
           redirect: 'error'
         }
       );
+      if (response.status === 409) {
+        const body: unknown = await response.json().catch(() => null);
+        if (body && typeof body === 'object' && 'code' in body && body.code === ACTOR_NOT_MAPPED) {
+          const deferred = await this.repository.failPadlHubProjection({
+            ...lease, waitingForMapping: true, errorCode: ACTOR_NOT_MAPPED,
+            nextAttemptAt: new Date(Date.now() + MAPPING_RECHECK_MS).toISOString()
+          });
+          if (!deferred) throw new Error('PADLHUB_LEVEL_PROJECTION_LEASE_LOST');
+          this.metrics.waitingForMapping += 1;
+          return;
+        }
+      }
       if (response.status !== 200) throw new Error(`PADLHUB_LEVEL_PROJECTION_HTTP_${response.status}`);
       const responseBody: unknown = await response.json().catch(() => null);
       const outcome =
@@ -206,12 +247,7 @@ export class PlayerLevelProjectionService implements OnModuleInit, OnModuleDestr
       if (outcome !== 'applied' && outcome !== 'replayed') {
         throw new Error('PADLHUB_LEVEL_PROJECTION_RESPONSE_INVALID');
       }
-      const completed = await this.repository.completePadlHubProjection({
-        playerKey,
-        leaseOwner: this.workerId,
-        revision: payload.sourceRevision,
-        now
-      });
+      const completed = await this.repository.completePadlHubProjection(lease);
       if (!completed) throw new Error('PADLHUB_LEVEL_PROJECTION_LEASE_LOST');
       this.consecutiveFailures = 0;
       this.circuitOpenUntil = 0;
@@ -226,12 +262,7 @@ export class PlayerLevelProjectionService implements OnModuleInit, OnModuleDestr
       const errorCode = sanitizeErrorCode(error);
       const nextAttemptAt = new Date(Date.now() + retryDelayMs(attempts)).toISOString();
       await this.repository.failPadlHubProjection({
-        playerKey,
-        leaseOwner: this.workerId,
-        revision: payload.sourceRevision,
-        now,
-        nextAttemptAt,
-        errorCode
+        ...lease, nextAttemptAt, errorCode
       });
       this.logger.warn(`PadlHub player-level projection retry scheduled: ${errorCode}`);
     }
@@ -265,10 +296,11 @@ function isLoopback(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
 }
 
-function isProjectionEventType(
-  value: string
-): value is 'RATING_INITIAL_IMPORTED' | 'RATING_BOOTSTRAPPED_FROM_VIVA' | 'RATING_MANUALLY_CHANGED' {
-  return value === 'RATING_INITIAL_IMPORTED'
-    || value === 'RATING_BOOTSTRAPPED_FROM_VIVA'
-    || value === 'RATING_MANUALLY_CHANGED';
+const projectionEventTypes = new Set<string>([
+  'RATING_INITIAL_ASSIGNED', 'RATING_INITIAL_IMPORTED', 'RATING_BOOTSTRAPPED_FROM_VIVA', 'RATING_MANUALLY_CHANGED',
+  ...PADLHUB_CALCULATED_RATING_EVENTS
+]);
+
+function isProjectionEventType(value: string): value is PadlHubProjectionEventType {
+  return projectionEventTypes.has(value);
 }

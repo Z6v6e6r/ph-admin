@@ -1,3 +1,4 @@
+import { withCanonicalTournamentActor } from './tournament-admission-fixture';
 import * as assert from 'node:assert/strict';
 import { TournamentsService } from '../src/tournaments/tournaments.service';
 import {
@@ -266,7 +267,7 @@ async function main(): Promise<void> {
   assert.equal(sourceBooking?.purchaseFlowUrl, 'https://example.com/persisted-purchase');
   assert.equal((sourceBooking?.acceptedSubscriptions as unknown[])?.length, 1);
   assert.equal((sourceBooking?.purchaseOptions as unknown[])?.length, 1);
-  assert.equal((sourceBooking?.pendingJoinPayments as unknown[])?.length, 1);
+  assert.equal(sourceBooking?.pendingJoinPayments, undefined, "private payment journal is not a public card field");
   assert.equal(sourceDetail.pricePopover?.triggerLabel, '5 500 ₽');
   assert.equal(sourceDetail.hasFriendlySubscriptionTag, true);
   assert.equal(sourceDetail.summerSubscriptionOffer?.id, 'summer-pass');
@@ -431,7 +432,7 @@ async function main(): Promise<void> {
       readPublicAdmissionRule: async (id: string) => {
         assert.equal(id, unavailableCustom.id);
         unavailableRuleReads += 1;
-        return { gender: 'MIXED', updatedAt: '2026-10-31T10:00:00.000Z' };
+        return { gender: 'MIXED', updatedAt: '2026-10-31T10:00:00.000Z', accessLevels: custom.accessLevels };
       },
       findCustomTournamentById: async (id: string) =>
         id === unavailableCustom.id ? unavailableCustom : null,
@@ -450,6 +451,7 @@ async function main(): Promise<void> {
     { simulateRating: () => { throw new Error('Not used in test'); } } as never
   );
 
+  withCanonicalTournamentActor(unavailableService);
   const unavailableRegistration = await unavailableService.getPublicRegistrationByTournamentRef(
     unavailableCustom.id,
     '+7 999 000-77-77'
@@ -474,12 +476,12 @@ async function main(): Promise<void> {
         }
       );
     assert.equal(unavailableRegistrationOutcome.ok, false);
-    assert.equal(unavailableRegistrationOutcome.code, 'BOOKING_FAILED');
+    assert.equal(unavailableRegistrationOutcome.code, 'TOURNAMENT_SECURE_JOIN_REQUIRED');
   } finally {
     globalThis.fetch = originalFetch;
   }
   assert.equal(unavailableLiveDetailCalls, 2);
-  assert.equal(unavailableRuleReads, 1, "Valid raw rule must reach the unknown-owner guard");
+  assert.equal(unavailableRuleReads, 3, "Valid raw rule must reach the restricted external-join guard");
   assert.equal(unavailableBookingCalls, 0);
   assert.equal(unavailableUpdateCalls, 0);
 
@@ -521,7 +523,7 @@ async function main(): Promise<void> {
       readPublicAdmissionRule: async (id: string) => {
         assert.equal(id, nonVivaCustom.id);
         nonVivaRuleReads += 1;
-        return { gender: 'MIXED', updatedAt: '2026-10-31T10:00:00.000Z' };
+        return { gender: 'MIXED', updatedAt: '2026-10-31T10:00:00.000Z', accessLevels: custom.accessLevels };
       },
       findCustomTournamentById: async (id: string) => id === nonVivaCustom.id ? nonVivaCustom : null,
       findCustomTournamentBySourceTournamentId: async (id: string) =>
@@ -549,6 +551,7 @@ async function main(): Promise<void> {
     { simulateRating: () => { throw new Error('Not used in test'); } } as never
   );
 
+  withCanonicalTournamentActor(nonVivaService);
   const nonVivaSourceDetail = await nonVivaService.findById('lk-source-id');
   assert.equal(nonVivaSourceDetail.source, 'LK_PADELHUB');
   assert.equal(nonVivaSourceDetail.linkedCustomTournamentId, nonVivaCustom.id);
@@ -573,7 +576,7 @@ async function main(): Promise<void> {
   } finally {
     globalThis.fetch = originalFetch;
   }
-  assert.equal(nonVivaRuleReads, 1);
+  assert.equal(nonVivaRuleReads, 3);
   assert.equal(nonVivaBookingCalls, 0);
   assert.equal(nonVivaUpdateCalls, 1);
 

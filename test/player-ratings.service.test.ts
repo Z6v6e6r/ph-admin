@@ -2,7 +2,7 @@ import * as assert from 'node:assert/strict';
 import { PlayerRatingsService } from '../src/player-ratings/player-ratings.service';
 import { PlayerRatingStateDocument } from '../src/player-ratings/player-ratings.types';
 
-const actor = { id: 'admin-1', login: 'chief', roles: ['SUPER_ADMIN'] as never[], stationIds: [], connectorRoutes: [] };
+const actor = { id: 'admin-1', login: 'chief', roles: ['SUPER_ADMIN'] as never[], stationIds: [], connectorRoutes: [], permissions: ['*'], authSource: 'token' };
 const state: PlayerRatingStateDocument = {
   playerKey: 'player:1', clientId: 'client-1', phoneNorm: '79990000000', name: 'Анна Тест', nameSearch: 'анна тест',
   ratingNumeric: 3.2, rating: 'C', ownership: 'CUP_CANONICAL', source: 'CUP', schemaVersion: 1,
@@ -63,8 +63,13 @@ async function main(): Promise<void> {
   } as any, actor as any);
   assert.equal(events.length, 1);
   assert.equal(changed.event.actor.id, 'admin-1', 'actor comes from current user, never request body');
+  assert.equal(changed.event.source.kind, 'ADMIN_MANUAL');
+  assert.equal(changed.event.source.reason, 'Уточнение после контрольной игры');
+  assert.equal(changed.event.gradeBefore, 'C');
+  assert.equal(changed.event.gradeAfter, 'C');
   assert.equal(changed.state.ratingNumeric, 3.45);
-  assert.equal(written.outbox.payload.vivaNumericFieldId, 'eabfe27b-3f72-4496-9185-1a2ec6e6465e');
+  assert.equal(written.outbox, undefined, 'CUP-only changes never enqueue a Viva write');
+  assert.equal(changed.projection.status, 'NOT_REQUIRED');
   assert.equal(written.nextState.padlHubProjectionRevision, 1);
   assert.deepEqual(written.padlHubOutbox.desired, {
     schemaVersion: 1,
@@ -87,6 +92,18 @@ async function main(): Promise<void> {
   assert.equal(events.length, 1, 'idempotency prevents duplicate event');
   assert.equal(duplicate.event.id, changed.event.id);
 
+  const retryDto = {
+    ratingNumeric: 3.45, reason: 'Уточнение после контрольной игры', expectedLastEventId: 'rating_evt:old',
+    idempotencyKey: '11111111-1111-4111-8111-111111111111'
+  };
+  await assert.rejects(service.change(state.playerKey, retryDto, { ...actor, permissions: [] } as any),
+    (error: any) => error.status === 403);
+  // The same key replayed on behalf of a station is a different command, not the global change.
+  await assert.rejects(service.change(state.playerKey, retryDto, { ...actor, stationIds: ['synthetic-station'] } as any),
+    (error: any) => error.status === 409);
+  await assert.rejects(service.change(state.playerKey, { ...retryDto, expectedLastEventId: 'different' }, actor as any),
+    (error: any) => error.status === 409);
+
   await assert.rejects(
     () => service.change('player:1', { ratingNumeric: 3.5, reason: 'Достаточная причина', expectedLastEventId: 'rating_evt:old', idempotencyKey: '22222222-2222-4222-8222-222222222222' }, actor as any),
     (error: any) => error?.status === 409
@@ -108,6 +125,24 @@ async function main(): Promise<void> {
     previousState.padlHubProjectionRevision,
     'disabled projection does not advance the PadlHub revision'
   );
+
+  written.nextState.rating = 'C';
+  const align = {
+    ratingNumeric: 3.55, expectedPreviousGrade: 'C' as const, expectedClientId: state.clientId,
+    expectedLastEventId: written.nextState.lastEventId, reason: 'Приравнивание буквы к действующей шкале',
+    idempotencyKey: 'synthetic-alignment-1'
+  };
+  await assert.rejects(() => disabledService.change(state.playerKey, { ...align, ratingNumeric: 4 }, actor as any),
+    (error: any) => error?.status === 409);
+  const aligned = await disabledService.change(state.playerKey, align, actor as any);
+  assert.deepEqual([aligned.state.ratingNumeric, aligned.event.delta, aligned.event.gradeBefore, aligned.event.gradeAfter],
+    [3.55, 0, 'C', 'C+']);
+  assert.deepEqual(written.expectedGradeAlignment, {
+    previousGrade: 'C', clientId: state.clientId, previousEventId: align.expectedLastEventId
+  });
+  assert.equal((await disabledService.change(state.playerKey, align, actor as any)).event.id, aligned.event.id);
+  await assert.rejects(() => disabledService.change(state.playerKey, { ...align, expectedLastEventId: 'other' }, actor as any),
+    (error: any) => error?.status === 409);
   console.log('Player ratings service test passed');
 }
 

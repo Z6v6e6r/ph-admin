@@ -5,8 +5,9 @@ export const PLAYER_RATING_MAX = 7;
 export const PLAYER_RATING_PRECISION = 5;
 
 export type PlayerRatingGrade = 'D' | 'D+' | 'C' | 'C+' | 'B' | 'B+' | 'A';
-export type PlayerRatingProjectionStatus = 'PENDING' | 'SYNCED' | 'FAILED_RETRYABLE';
+export type PlayerRatingProjectionStatus = 'PENDING' | 'SYNCED' | 'FAILED_RETRYABLE' | 'NOT_REQUIRED';
 export type PlayerRatingEventType =
+  | 'RATING_INITIAL_ASSIGNED'
   | 'RATING_INITIAL_IMPORTED'
   | 'RATING_BOOTSTRAPPED_FROM_VIVA'
   | 'RATING_MANUALLY_CHANGED';
@@ -15,13 +16,32 @@ export interface PlayerRatingActor {
   id: string;
   name: string;
   type: 'ADMIN' | 'SYSTEM' | 'IMPORT';
+  /** Station on whose behalf a staff member changed the canonical level; absent for global changes. */
+  stationId?: string;
   memberKey?: string | null;
   phoneNorm?: string | null;
 }
 
 export interface PlayerRatingSource {
   domain: string;
+  kind?: 'GAME' | 'TOURNAMENT' | 'ADMIN_MANUAL';
+  eventId?: string;
+  resultRef?: { id: string; revision: string | number };
+  gameId?: string;
+  resultId?: string;
+  scoreRevision?: number;
+  resultRevision?: number;
+  correctionResultId?: string;
+  correctionScoreRevision?: number;
+  tournamentId?: string;
+  sourceRevision?: string;
+  fprProtocolId?: string;
+  compensationReason?: string;
+  applySemantics?: string;
+  tournamentRatingSnapshot?: { before: number; after: number; delta: number; position?: number; points?: number };
   reason?: string;
+  expectedLastEventId?: string;
+  gradeAlignment?: { previousGrade: PlayerRatingGrade; previousEventId: string; clientId: string };
   sourceId?: string;
   legacyRowId?: string;
   legacyUpdatedAt?: string;
@@ -54,6 +74,30 @@ export interface PlayerRatingStateDocument {
   padlHubProjectionRevision?: number;
 }
 
+// Historical computed events share the canonical ledger with manual changes.
+export const PADLHUB_CALCULATED_RATING_EVENTS = [
+  'RATING_BOOTSTRAPPED_FROM_GAME_RESULT',
+  'RATING_BOOTSTRAPPED_FROM_TOURNAMENT',
+  'RATING_TOURNAMENT_CANONICAL_RECONCILED',
+  'RATING_LEVEL_CORRECTION_APPLIED',
+  'FPR_CANONICAL_RECONCILIATION_APPLIED',
+  'GAME_RESULT_SUBMITTED_APPLIED',
+  'GAME_RESULT_CORRECTION_APPLIED',
+  'GAME_RESULT_CORRECTION_REVERTED',
+  'GAME_RESULT_DISPUTED_REVERTED',
+  'GAME_RESULT_EXPIRED_REVERTED',
+  'GAME_RESULT_CONFIRMED',
+  'GAME_RESULT_TIMEOUT_CONFIRMED',
+  'TOURNAMENT_RATING_FINALIZED',
+  'TOURNAMENT_RATING_CORRECTION_APPLIED',
+  'TOURNAMENT_RATING_REOPENED_REVERTED',
+  'TOURNAMENT_RATING_ANNULLED',
+  'TOURNAMENT_RATING_CORRECTION_REVERTED',
+  'TOURNAMENT_START_RATING_CHANGED',
+] as const;
+
+export type PadlHubProjectionEventType = PlayerRatingEventType | (typeof PADLHUB_CALCULATED_RATING_EVENTS)[number];
+
 export interface PadlHubPlayerLevelProjectionPayload {
   schemaVersion: 1;
   sourceEventId: string;
@@ -66,7 +110,7 @@ export interface PadlHubPlayerLevelProjectionPayload {
     numericValue: number;
   };
   source: {
-    eventType: PlayerRatingEventType;
+    eventType: PadlHubProjectionEventType;
     formulaVersion: 'padel-rating-grade-v1';
   };
 }
@@ -76,7 +120,7 @@ export interface PadlHubPlayerLevelProjectionOutboxDocument {
   desiredRevision: number;
   deliveredRevision: number;
   desired: PadlHubPlayerLevelProjectionPayload;
-  status: 'PENDING' | 'DELIVERING' | 'SYNCED' | 'FAILED_RETRYABLE' | 'DEAD';
+  status: 'PENDING' | 'DELIVERING' | 'SYNCED' | 'WAITING_FOR_MAPPING' | 'FAILED_RETRYABLE' | 'DEAD';
   attempts: number;
   maxAttempts: number;
   nextAttemptAt: string;
@@ -122,7 +166,7 @@ export interface PlayerRatingEventDocument {
   source: PlayerRatingSource;
   actor: PlayerRatingActor;
   projectionIntent: {
-    viva: 'REQUIRED_DURING_MIGRATION';
+    viva: 'REQUIRED_DURING_MIGRATION' | 'NONE_CUP_ONLY';
   };
   stateSnapshot?: PlayerRatingStateDocument;
 }
@@ -195,6 +239,31 @@ export interface PlayerRatingEventDto {
   source: PlayerRatingSource;
   actor: PlayerRatingActor;
   projectionStatus: PlayerRatingProjectionStatus;
+}
+
+export interface PlayerRatingAuditRow {
+  id: string;
+  occurredAt: string;
+  eventType: string;
+  actorId: string;
+  actorName: string;
+  stationId: string | null;
+  playerKey: string;
+  playerName: string;
+  before: number | null;
+  gradeBefore: string | null;
+  after: number;
+  gradeAfter: string;
+  reason: string;
+}
+
+export interface PlayerRatingAuditQuery {
+  actorId?: string;
+  playerKey?: string;
+  eventType?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  cursor?: string;
 }
 
 export interface PlayerRatingSearchResult {
