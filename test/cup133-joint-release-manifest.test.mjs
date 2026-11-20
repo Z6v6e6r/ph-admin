@@ -28,10 +28,15 @@ test('the rejected 88b2e6c worker release cannot pass as the accepted digest', (
   assert.equal(workerFilesDigest(worker.files), worker.filesDigest);
 });
 
-test('unrecorded frontend and graph keep the joint release incomplete', () => {
-  assert.deepEqual(pendingInputs(manifest), ['lk1.frontend', 'nodeRedGraph']);
-  const recorded = structuredClone(manifest);
-  recorded.components.lk1.frontend = { status: 'RECORDED', expected: { files: [{ path: 'bundle.js', sha256: 'a'.repeat(64) }] } };
-  recorded.nodeRedGraph = { ...recorded.nodeRedGraph, status: 'RECORDED', expected: { finalSha256: 'b'.repeat(64) } };
-  assert.deepEqual(pendingInputs(recorded), []);
+test('frontend and graph are recorded; removing either reopens the release', () => {
+  assert.deepEqual(pendingInputs(manifest), []);
+  assert.equal(manifest.components.lk1.frontend.expected.files.length, 32);
+  assert.equal(manifest.components.lk1.frontend.release.sourceCommit, manifest.components.lk1.commit);
+  const reopened = structuredClone(manifest);
+  reopened.components.lk1.frontend.status = 'REQUIRED_INPUT';
+  reopened.nodeRedGraph.expected.finalSha256 = null;
+  assert.deepEqual(pendingInputs(reopened), ['lk1.frontend', 'nodeRedGraph']);
+  const tampered = structuredClone(manifest);
+  tampered.components.lk1.frontend.release.sourceDirty = true;
+  assert.ok(verifyManifestConsistency(tampered).includes('lk1 frontend'));
 });

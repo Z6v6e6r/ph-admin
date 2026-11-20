@@ -55,6 +55,11 @@ export function verifyManifestConsistency(manifest) {
   const comparison = manifest.acceptance?.workerReleaseComparison;
   if (manifest.acceptance?.result !== 'GO' || comparison?.filesCompared !== worker?.fileCount
       || comparison?.filesEqual !== worker?.fileCount || comparison?.finalCommit !== lk1?.commit) errors.push('acceptance');
+  const frontend = lk1?.frontend;
+  if (frontend?.status === 'RECORDED' && (frontend.release?.sourceCommit !== lk1.commit || frontend.release?.sourceDirty !== false
+      || frontend.expected.files.length !== 32 || frontend.expected.files.some(file => !SHA.test(file.sha256)) || !SHA.test(frontend.artifact?.sha256 ?? ''))) errors.push('lk1 frontend');
+  const graphExpected = manifest.nodeRedGraph?.expected;
+  if (manifest.nodeRedGraph?.status === 'RECORDED' && ![graphExpected?.sourceSha256, graphExpected?.intermediateSha256, graphExpected?.finalSha256].every(h => SHA.test(h ?? ''))) errors.push('nodeRedGraph');
   if (!manifest.recovery?.rollbackOrder?.length || !manifest.recovery?.activationOrder?.length || !manifest.recovery?.ratingBoundary) errors.push('recovery');
   return errors;
 }
@@ -103,6 +108,25 @@ export function verifyArtifacts(manifest, dir, errors) {
   const runtimeManifest = JSON.parse(fs.readFileSync(path.join(dir, 'cup-runtime/runtime-manifest.json'), 'utf8'));
   if (runtimeManifest.sourceCommit !== cup.commit || runtimeManifest.files?.length !== cup.runtimeArtifact.runtimeManifest.fileCount) errors.push('artifacts: cup runtime-manifest');
   if (sha256(fs.readFileSync(path.join(dir, 'lk1-SHA256SUMS'))) !== manifest.localArtifacts.lk1Sha256Sums) errors.push('artifacts: lk1 SHA256SUMS differs');
+  const frontend = lk1.frontend;
+  if (frontend?.status === 'RECORDED') {
+    const frontendSums = path.join(dir, 'lk1-frontend/SHA256SUMS');
+    if (!fs.existsSync(frontendSums) || sha256(fs.readFileSync(frontendSums)) !== manifest.localArtifacts.lk1FrontendSha256Sums) errors.push('artifacts: lk1 frontend SHA256SUMS differs');
+    else {
+      const listed = fs.readFileSync(frontendSums, 'utf8').trim().split('\n').map(line => line.split('  ')).map(([hash, file]) => `${hash}  ${file}`).sort();
+      const expected = frontend.expected.files.map(file => `${file.sha256}  ${file.path}`).sort();
+      if (JSON.stringify(listed) !== JSON.stringify(expected)) errors.push('artifacts: lk1 frontend files differ from the manifest');
+    }
+    checkFiles('artifacts lk1 frontend', dir, [frontend.artifact], 'file', errors);
+  }
+  const graph = manifest.nodeRedGraph;
+  if (graph?.status === 'RECORDED') {
+    const graphDir = path.join(dir, 'private-graph');
+    const graphSums = path.join(graphDir, 'SHA256SUMS');
+    if (!fs.existsSync(graphSums) || sha256(fs.readFileSync(graphSums)) !== manifest.localArtifacts.privateGraphSha256Sums) errors.push('artifacts: private graph SHA256SUMS differs');
+    const finalGraph = path.join(graphDir, 'final.flow.json');
+    if (!fs.existsSync(finalGraph) || sha256(fs.readFileSync(finalGraph)) !== graph.expected.finalSha256) errors.push('artifacts: final graph differs');
+  }
   checkFiles('artifacts lk1', dir, [
     { path: lk1.ratingWorker.releaseArtifact.file, sha256: lk1.ratingWorker.releaseArtifact.sha256 },
     { path: 'lk1-level-helper/level.mjs', sha256: lk1.levelHelper.sha256 }

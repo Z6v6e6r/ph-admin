@@ -495,9 +495,9 @@
         "installPath": "/opt/padlhub-player-level/releases/<id>/level.mjs (root-owned, sourceDirty=false manifest checked at runtime)"
       },
       "frontend": {
-        "status": "REQUIRED_INPUT",
+        "status": "RECORDED",
         "sourceCommit": "1bc3219a05d5feece0e4663abb0eecb817a763f3",
-        "build": "npm ci --include=optional && npm run build (Node 22, Linux, @rollup/rollup-linux-x64-gnu as in lk-frontend-delivery.yml); LK_RELEASE_VERSION fixed and recorded",
+        "build": "npm ci --include=optional && npm run build in public.ecr.aws/docker/library/node:22.13.1-bookworm-slim (linux/amd64 rollup) from a clean clone of 1bc3219; LK_RELEASE_VERSION=20261120T090000Z",
         "requiredPublicEnvKeys": [
           "VITE_API_BASE",
           "VITE_KEYCLOAK_BASE",
@@ -551,10 +551,157 @@
           "tournaments-dev.js",
           "tournaments.js"
         ],
-        "blocker": "The production public build values are not available to this preparation: repository variable LK_FRONTEND_BUILD_ENV_JSON does not exist and copying the local ignored .env files was not permitted. Build once with the owner-approved values, then record version, release.json sourceCommit/sourceDirty and the sha256 of every served file here.",
+        "blocker": null,
         "expected": {
-          "releaseVersion": null,
-          "files": []
+          "releaseVersion": "20261120T090000Z",
+          "files": [
+            {
+              "path": "LPD.png",
+              "sha256": "09585aba46b6d15602184a7fa7ed81659ec8c67285e29d27020e0983c18092a9"
+            },
+            {
+              "path": "atlanty-schedule-dev.js",
+              "sha256": "9e5b7f6c600e89bab18e83c98b0756c46915e28d2365d03217765edfdf85d954"
+            },
+            {
+              "path": "atlanty-schedule.js",
+              "sha256": "d325489d47b8378fc7ef7df999f6894a2f0e11377ee844b354250e99248aafe5"
+            },
+            {
+              "path": "bundle-dev.js",
+              "sha256": "1d95e45a4800afdbdf6b0dc149d151a3045ac8a06c93a83f1f217cc9f31a54a9"
+            },
+            {
+              "path": "bundle.js",
+              "sha256": "ef2ef5be2e078bf03721e3b652ad874755cbb15710012a42bb54137748300a34"
+            },
+            {
+              "path": "communities-dev.js",
+              "sha256": "5da7bf39a941927b826d2fb38920b7f04631400521754bc777a0427b504abe58"
+            },
+            {
+              "path": "communities.js",
+              "sha256": "a5e7e2596b4f9147d0dbba4ff65b785a829e668f58a6bc30071a862b7cc1321e"
+            },
+            {
+              "path": "ffc-academy-lk-dev.js",
+              "sha256": "59aa0e4c15453891dc2afc662972583179ab41d8d0e1c399e2cc8d805f5858b0"
+            },
+            {
+              "path": "ffc-academy-lk.js",
+              "sha256": "e00b5d2be64822e8a78bd489b7be0dda022d994d5b5322ebd2ed70878da81985"
+            },
+            {
+              "path": "games-dev.js",
+              "sha256": "d5575fa0e556e1c777f247dc58de1c064e722a89b5e3e24898256884b384d01d"
+            },
+            {
+              "path": "games.js",
+              "sha256": "8b2cdbd50d06641b32874e3d022ca3afec648840dc9245763bf5bf924c70ddf1"
+            },
+            {
+              "path": "group-schedule-dev.js",
+              "sha256": "8bf07feae4daa639f1a73e2684e1c6b5e664935b0395611893fd4d0e78788bfd"
+            },
+            {
+              "path": "group-schedule.js",
+              "sha256": "7bc8b80b76350bff7b819c4713b4c074ca4695e3eab5494bd252641720227dca"
+            },
+            {
+              "path": "levels-info-dev.js",
+              "sha256": "88664187e88633b31323bad14788affe677dde358ec578232c756865d6f9fb9a"
+            },
+            {
+              "path": "levels-info.js",
+              "sha256": "56f452ed83cdc3dc307d8dae0206f6bca07fb9ed37468c60b852dbca4f5e224b"
+            },
+            {
+              "path": "manifest.json",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            {
+              "path": "onboarding-dev.js",
+              "sha256": "3f21d007e60d8264d98e38005fba0a7b082cd9bf6e6df831a179418c1c4d1ae8"
+            },
+            {
+              "path": "onboarding.js",
+              "sha256": "8d4c07eca86320b7f49350829dadc4432c2a86ca51e96ecf7add3c39bde6a4f2"
+            },
+            {
+              "path": "padel-day-schedule-dev.js",
+              "sha256": "2e2cccfbe2b6a31c1e6eb7563f9216c64cdb74ab0e885fba4c2df3fac4d71959"
+            },
+            {
+              "path": "padel-day-schedule.js",
+              "sha256": "0ae69d3e3b89617e4827f6e50763b4fe50eafab3744322e5ae4f6444e527a30e"
+            },
+            {
+              "path": "release-dev.json",
+              "sha256": "174a1c29b30eb61ea829f660431859742c4eaca8122192ed11a9808b187b6b90"
+            },
+            {
+              "path": "release-ffc-academy-dev.json",
+              "sha256": "495812e5bb73a77effb59021c5ce8eaab58d6e10c4964e2be543ade81dcfc66a"
+            },
+            {
+              "path": "release-ffc-academy.json",
+              "sha256": "7d0ac186ef17d76313aaf438c3e39353a10db119cdc94d85692f24a50d7d0226"
+            },
+            {
+              "path": "release.json",
+              "sha256": "eff3bca4b3a129c17a8913903ce6d3f76f9510a13044999c2b6a6c6fd102d852"
+            },
+            {
+              "path": "tournament-signup-dev.js",
+              "sha256": "aceb416cca7970dea2de315cd743e673f62ab87a25dbf07c54f37be2d4f6115b"
+            },
+            {
+              "path": "tournament-signup.js",
+              "sha256": "9b8e4da87bafa8fb4432cbb5cee530f575b4e92a9fb9d2b1dc2a4a36af3b5812"
+            },
+            {
+              "path": "tournament-subscription-dev.js",
+              "sha256": "5124c5100c0699dc51412b4edaf82f1fcb10bfb5ba6ea9e752198963b81ac15d"
+            },
+            {
+              "path": "tournament-subscription-referral-dev.js",
+              "sha256": "f079f070428f0903d3b0c7b5d93dc5f3cd302786eb43340ff09b9a79409ef534"
+            },
+            {
+              "path": "tournament-subscription-referral.js",
+              "sha256": "a1822cadfb6e3917cb5d1a985a5c02e6437ca9be69fd33bc3d513de83119a523"
+            },
+            {
+              "path": "tournament-subscription.js",
+              "sha256": "9d7d03a6c45a8a2b8e7c45de9b887230e9e99bd636ba9db29eb06771c1d90cfa"
+            },
+            {
+              "path": "tournaments-dev.js",
+              "sha256": "7ccd70c6563b19f12714bf0b0e39ccd6054c10af1efc5ff3f6ba17701684c192"
+            },
+            {
+              "path": "tournaments.js",
+              "sha256": "bf2571939e078856e04b0acfc60b32d91eade29a5a23d2f58978525fb29ce968"
+            }
+          ]
+        },
+        "publicEnv": {
+          "source": "ignored .env / .env.dev of the owner LK1 checkout (owner-approved 2026-11-20); validated by scripts/assert-build-env.mjs; values are public and not recorded here",
+          "envSha256": "1b5d72deda6a038f358ba6f4abec81d378deae1a13eac4adcff34199a38012fb",
+          "envDevSha256": "18ead24f7a8cf2d603c24331bf1a921f23f59f7c31896dba06b94d9d686b75ed",
+          "note": "Both files are dated 2026-06-08; confirm the public endpoints are current before publication."
+        },
+        "preflight": "node scripts/assert-clean-deploy.mjs dist/release.json dist/release-dev.json: source 1bc3219 verified, working tree clean",
+        "release": {
+          "version": "20261120T090000Z",
+          "sourceCommit": "1bc3219a05d5feece0e4663abb0eecb817a763f3",
+          "sourceDirty": false,
+          "generatedAt": "2026-11-20T08:42:38.682Z"
+        },
+        "artifact": {
+          "file": "lk1-frontend/lk1-frontend-1bc3219-20261120T090000Z.tgz",
+          "sha256": "eca172a2195f24a135d9475a09576e80da55bc021d02d6f17759c2f4e4e25d0b",
+          "note": "Build once, publish these bytes. release*.json include generatedAt, so a rebuild is a different release."
         }
       }
     },
@@ -648,11 +795,11 @@
   ],
   "status": {
     "ratingTransition": "GO (LOCAL)",
-    "jointRelease": "BLOCKED: required inputs lk1.frontend and nodeRedGraph are not yet produced",
+    "jointRelease": "COMPLETE (LOCAL): every component, artifact and input is recorded; publication, import and deployment remain separate approvals",
     "updatedAt": "2026-11-20"
   },
   "nodeRedGraph": {
-    "status": "REQUIRED_INPUT",
+    "status": "RECORDED",
     "target": "lk-primary-147 /root/.node-red/flows.json",
     "generators": [
       {
@@ -673,13 +820,36 @@
       "Never commit or publish the raw or generated graph: it contains runtime configuration. Only hashes go into this manifest.",
       "If 147 drifts before installation, repeat from step 1; an older snapshot is not release authority."
     ],
-    "blocker": "No full 147 graph snapshot exists in this preparation and a production read was not part of the authorized scope.",
+    "blocker": null,
     "expected": {
-      "sourceSha256": null,
+      "sourceSha256": "a490eaa815ee3c3a28c727a92faa27971c4fb8defcfb3fb895ebf824069041dd",
       "sourceRuntimeRevision": null,
-      "intermediateSha256": null,
-      "finalSha256": null
-    }
+      "intermediateSha256": "d0bca68bcabd9fa4fea32ce196b58888f625a5e561be45cb0a92d8c0dd6a5091",
+      "finalSha256": "56525c24d01764e8de9d34d1358258d35de203c7d383dcabc7f5a5cb59955e81"
+    },
+    "snapshot": {
+      "readAt": "2026-11-20T08:39:44Z",
+      "method": "ssh lk-primary-147 cat /root/.node-red/flows.json into a private 0700 directory (read-only)",
+      "fileMtime": "2026-11-19T12:24:02Z",
+      "bytes": 17814451,
+      "nodes": 5678,
+      "remoteSha256Matched": true,
+      "runtimeRevision": "not read: Node-RED admin API returned 401 and no credentials were used"
+    },
+    "result": {
+      "patchReport": {
+        "changed": 196,
+        "added": 29,
+        "providerLevelFieldReferences": 0,
+        "preservedOtherTenantReaders": [
+          "c94761527a2905c6"
+        ]
+      },
+      "reportSha256": "d226277d8b3017105b64017cbc2585b096d683e3b7deaa8f69889e95f7dd7f3c",
+      "finalNodes": 5707,
+      "reproducible": "a second offline run produced identical intermediate, report and final bytes"
+    },
+    "installGate": "Before import, re-read 147: if its flows.json sha256 is not sourceSha256, regenerate from the new snapshot and update this manifest."
   },
   "excludedFromBundle": [
     {
@@ -705,7 +875,10 @@
   "localArtifacts": {
     "location": "~/Documents/PadlHub-release-artifacts/cup133-joint-20261120 (owner Mac, private 0700, not in Git)",
     "cupRuntimeSha256Sums": "a6e97cdec90f77e0f177a13053503a5aae9cc614f19575f67ad7adfe7d810e31",
-    "lk1Sha256Sums": "e9a235f41a07e75ae6200b70b07c868eb09aa49317c816c7a4ce8096ca8d879c"
+    "lk1Sha256Sums": "e9a235f41a07e75ae6200b70b07c868eb09aa49317c816c7a4ce8096ca8d879c",
+    "lk1FrontendSha256Sums": "d05035e08c4863dbc27e1a2d6efb554c23320260eb4c830ad3cf53a6817f1304",
+    "privateGraphSha256Sums": "a7199b183021c7699ae43813e6df6015e5fc69a97bac71eaea8580a7d19e35ee",
+    "privateGraphNote": "private-graph/ holds the 147 snapshot and generated graphs (runtime configuration); never copy into Git, CI or messages."
   },
   "recovery": {
     "beforeActivation": [
