@@ -220,7 +220,10 @@ export class TournamentCheckoutService {
     const previous = reconciled.operation;
     context = reconciled.context;
     if (previous && (replay || !permitsFreshAttempt(previous))) {
-      if (!this.boundToContext(previous, context) || previous.ownerCommand?.kind !== 'SUBSCRIPTION'
+      if (!this.boundToContext(previous, context)) {
+        throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+      }
+      if (previous.ownerCommand.kind !== 'SUBSCRIPTION'
         || previous.ownerCommand.requestOperationId !== body.operationId
         || previous.ownerCommand.clientSubscriptionId !== body.clientSubscriptionId) {
         throw new ConflictException({ code: 'TOURNAMENT_OPERATION_ALREADY_STARTED', operationId: previous.transactionId });
@@ -282,7 +285,7 @@ export class TournamentCheckoutService {
     try { booking = await this.readCancelledBooking(operation, auth); } catch { return { operation, context }; }
     if (!booking || !await this.persistence.cancelTournamentCheckout(context.tournament.id, operation, booking.id)) return { operation, context };
     // Re-read both the fresh rule revision and a possible concurrent successor.
-    const refreshed = await this.tournaments.resolveCheckoutIdentity(context.exerciseId, auth);
+    const refreshed = await this.tournaments.refreshCheckoutIdentity(context.exerciseId, context.actor);
     if (refreshed.tournament.id !== context.tournament.id || !this.boundToContext(operation, refreshed)) {
       throw new ConflictException({ code: 'TOURNAMENT_TARGET_CHANGED' });
     }
@@ -331,8 +334,7 @@ export class TournamentCheckoutService {
     bindCopay = false): Promise<Row> {
     // Only the authenticated Node-RED write owner can attest its durable confirmed result.
     const actor = await this.tournaments.verifyCheckoutOwner(auth, token);
-    const context = await this.tournaments.resolveCheckoutIdentity(ref, auth);
-    if (actor.clientId !== context.actor.clientId || actor.phoneNorm !== context.actor.phoneNorm || actor.tenantKey !== context.tenantKey) throw new ConflictException();
+    const context = await this.tournaments.refreshCheckoutIdentity(ref, actor);
     if (!record(body) || !id(body.operationId) || !id(body.clientSubscriptionId) || !id(body.bookingId)
       || bindCopay !== (body.payment !== undefined)) throw new BadRequestException();
     const operation = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, actor.phoneNorm, { requestKey: body.operationId });
@@ -371,9 +373,7 @@ export class TournamentCheckoutService {
 
   async abortSubscription(ref: string, auth: string | undefined, token: string | undefined, body: unknown): Promise<Row> {
     const actor = await this.tournaments.verifyCheckoutOwner(auth, token);
-    const context = await this.tournaments.resolveCheckoutIdentity(ref, auth);
-    if (actor.clientId !== context.actor.clientId || actor.phoneNorm !== context.actor.phoneNorm
-      || actor.tenantKey !== context.tenantKey) throw new ConflictException();
+    const context = await this.tournaments.refreshCheckoutIdentity(ref, actor);
     if (!record(body) || !id(body.operationId) || !id(body.ownerOperationId) || !id(body.clientSubscriptionId)
       || body.proof !== 'PRE_DISPATCH_REJECTED_V1'
       || body.code !== 'SUBSCRIPTION_ELIGIBILITY_CHANGED_BEFORE_WRITE') throw new BadRequestException();
@@ -404,17 +404,17 @@ export class TournamentCheckoutService {
   }
 
   private async resume(context: CheckoutContext, auth: string | undefined, operation: Row): Promise<Row> {
-    if (operation.clientId !== context.actor.clientId || operation.exerciseId !== context.exerciseId
-      || operation.studioId !== context.studioId || operation.widgetId !== context.tenantKey
-      || operation.ownerCommand?.version !== 1 || operation.ownerCommand.kind !== 'CHECKOUT') {
+    if (!this.boundToContext(operation, context)) {
+      throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+    }
+    if (operation.ownerCommand.kind !== 'CHECKOUT') {
       throw new ConflictException({ code: 'TOURNAMENT_OPERATION_ALREADY_STARTED', operationId: operation.transactionId });
     }
     if (operation.ownerReceipt || operation.state !== 'PROVIDER_CREATE_PENDING') return this.view(operation);
     // A persisted preparation is resumable, but never grants a new dispatch on stale facts.
-    const currentContext = await this.tournaments.resolveCheckoutIdentity(context.exerciseId, auth);
+    const currentContext = await this.tournaments.refreshCheckoutIdentity(context.exerciseId, context.actor);
     if (currentContext.tournament.id !== context.tournament.id
-      || currentContext.exerciseId !== operation.exerciseId || currentContext.studioId !== operation.studioId
-      || currentContext.tenantKey !== operation.widgetId) throw new ConflictException({ code: 'TOURNAMENT_TARGET_CHANGED' });
+      || !this.boundToContext(operation, currentContext)) throw new ConflictException({ code: 'TOURNAMENT_TARGET_CHANGED' });
     let rule;
     try { rule = await this.tournaments.checkCheckoutAdmission(currentContext, auth); }
     catch (error) {

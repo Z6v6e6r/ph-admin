@@ -266,12 +266,13 @@ export class TournamentsController {
     levelDecision?: TournamentLevelDecision;
   }> {
     const client = await this.resolveLkClient(request, user);
-    const registration = await this.tournamentsService.getPublicRegistrationByTournamentRef(id, client.phone);
+    const registration = await this.tournamentsService.getPublicRegistrationByTournamentRef(id, client.phone, client);
     if (registration.status !== 'NONE' || !registration.canRegister) return registration;
     // Existing registrations are never re-evaluated; only a new registration is gated.
     const levelDecision = await this.tournamentsService.getLevelDecisionByTournamentRef(
       id,
-      this.pickString(request.headers.authorization)
+      this.pickString(request.headers.authorization),
+      client
     );
     if (levelDecision.enforced && !levelDecision.allowed) {
       return { ...registration, canRegister: false, message: levelDecision.message, levelDecision };
@@ -345,6 +346,7 @@ export class TournamentsController {
 
     const outcome = await this.tournamentsService.registerPublicParticipantByTournamentRef(id, {
       trustedIdentity: client,
+      clientId: client.clientId,
       name: client.name || client.phone,
       phone: client.phone,
       levelLabel: client.levelLabel,
@@ -367,7 +369,7 @@ export class TournamentsController {
     message: string;
   }> {
     const client = await this.resolveLkClient(request, user);
-    return this.tournamentsService.cancelPublicRegistrationByTournamentRef(id, client.phone);
+    return this.tournamentsService.cancelPublicRegistrationByTournamentRef(id, client.phone, client);
   }
 
   @Post(':id/checkout')
@@ -548,7 +550,7 @@ export class TournamentsController {
     request: Request,
     _user?: RequestUser,
     _body?: Record<string, unknown>
-  ): Promise<{ name: string; phone: string; levelLabel?: string }> {
+  ) {
     return this.tournamentsService.resolveTrustedLkRegistrationClient(
       this.pickString(request.headers.authorization)
     );

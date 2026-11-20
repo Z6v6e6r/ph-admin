@@ -1,14 +1,18 @@
 import 'reflect-metadata';
 import * as assert from 'node:assert/strict';
-import { test } from 'node:test';
-import { ForbiddenException } from '@nestjs/common';
+import { test, type TestContext } from 'node:test';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
+import { TRUSTED_TOURNAMENT_CLIENT } from '../src/tournaments/tournaments.types';
+import { TournamentsController } from '../src/tournaments/tournaments.controller';
 import { TournamentCheckoutService } from '../src/tournaments/tournament-checkout.service';
 import { TournamentsService } from '../src/tournaments/tournaments.service';
 import { TournamentsPersistenceService } from '../src/tournaments/tournaments-persistence.service';
 
 const clone = <T>(value: T): T => structuredClone(value);
 type Row = Record<string, any>;
-const actor = { clientId: 'synthetic-client', phoneNorm: '12025550101', tenantKey: 'fixture-tenant' };
+const actor = { clientId: 'synthetic-client', phoneNorm: '79000000001', tenantKey: 'fixture-tenant', verified: true };
+const ownerToken = 'synthetic-owner-token';
+const ownProfileUrl = 'https://viva.example/end-user/api/v1/fixture-tenant/profile';
 const exerciseId = 'synthetic-exercise', studioId = 'synthetic-studio';
 const auth = 'Bearer synthetic-not-a-real-token';
 const levels = ['3', '3.125', '3.25', '3.375', '3.5'];
@@ -18,21 +22,30 @@ function fixture() {
     status: 'REGISTRATION', participants: [], waitlist: [], details: { booking: {
       vivaExerciseId: exerciseId, vivaStudioId: studioId, vivaWidgetId: actor.tenantKey } } };
   let operation: Row | null = null, rating = 3.25;
+  let verifiedActor: Row = { ...actor };
   const calls: Array<{ url: string; body?: Row }> = [];
+  const bookings: Row[] = [];
+  const ratingClientIds: string[] = [];
   const products: Row[] = [{ id: 'one-time', name: 'Разовое участие', type: 'SERVICE', cost: 250000 }];
   const exercise: Row = { id: exerciseId, studio: { id: studioId }, timeFrom: '2099-11-18T10:00:00+03:00', availableClientOneTimes: [] };
   const persistence: any = {
+    bindTournamentSubscriptionCopay: async (_id: string, current: Row, receipt: Row) => {
+      assert.equal(current.clientId, actor.clientId);
+      assert.equal(operation?.transactionId, current.transactionId);
+      operation!.ownerReceipt = clone(receipt);
+      return 'PAYMENT_PENDING';
+    },
     isEnabled: () => true,
     findCheckoutTournamentByExerciseId: async (ref: string) => ref === exerciseId
       ? { tournament: clone(row), mappingChecks: [] } : null,
     readPublicAdmissionRule: async () => ({ gender: row.gender, accessLevels: clone(row.accessLevels),
       levelTolerance: row.levelTolerance, updatedAt: row.updatedAt }),
-    readTournamentCheckoutOperation: async (_id: string, _phone: string, selector?: Row) => clone(operation &&
+    readTournamentCheckoutOperation: async (_id: string, phone: string, selector?: Row) => clone(operation && operation.phone === phone &&
       (!selector?.requestKey || operation.ownerCommand?.requestKey === selector.requestKey) &&
       (!selector?.transactionId || operation.transactionId === selector.transactionId) ? operation : null),
     reservePublicJoinPayment: async (_id: string, next: Row) => {
       if (operation) return null;
-      operation = clone(next); return clone(row);
+      operation = clone(next); row.details.booking.pendingJoinPayments = [operation]; return clone(row);
     },
     claimTournamentCheckout: async (_id: string, current: Row) => {
       if (!operation || operation.transactionId !== current.transactionId || operation.state !== 'PROVIDER_CREATE_PENDING') return false;
@@ -51,31 +64,45 @@ function fixture() {
   };
   const tournaments: any = Object.create(TournamentsService.prototype);
   Object.assign(tournaments, { tournamentsPersistence: persistence, trustedRegistrationIdentities: new WeakMap(),
+    requireCustomByPublicRef: async () => clone(row),
+    requireCustomByPublicRefReadModel: async () => clone(row),
+    requireCustomBySlug: async () => clone(row),
+    vivaEndUserApiBaseUrl: 'https://viva.example', vivaEndUserRequestTimeoutMs: 5000,
     lkIdentityService: { verifyTrustedBearer: async (header: string) => {
-      assert.equal(header, auth); return { actor };
+      assert.equal(header, auth); return { actor: verifiedActor };
     }, verify: async (header: string, token: string) => {
-      if (header === auth && token === 'synthetic-owner-token') return { actor: { ...actor, verified: true } };
+      if (header === auth && token === ownerToken) return { actor: verifiedActor };
       throw new ForbiddenException({ code: 'INTEGRATION_TOKEN_REQUIRED' });
     } },
     playerRatingsService: { resolveCanonicalLevelByIdentity: async (identity: Row) => {
-      assert.equal(identity.clientId, actor.clientId); return { ratingNumeric: rating, levelLabel: String(rating) };
+      ratingClientIds.push(identity.clientId);
+      return { ratingNumeric: rating, levelLabel: String(rating) };
     } },
   });
+  let copayProof: Row | undefined;
   let response: () => Promise<unknown> = async () => ({ transactionId: 'provider-original', paymentUrl: 'https://pay.example/original' });
   const make = () => {
-    const service = new TournamentCheckoutService(tournaments, persistence as TournamentsPersistenceService);
+    const service = new TournamentCheckoutService(tournaments, persistence as TournamentsPersistenceService,
+      { readTournamentCopayTransaction: async () => copayProof } as never);
     (service as any).http = async (url: string, header: string, body?: Row) => {
       assert.equal(header, auth); calls.push({ url, ...(body ? { body: clone(body) } : {}) });
       if (body) return response();
       if (url.includes('/exercises/')) return clone(exercise);
       if (url.includes('/products/')) return clone(products);
+      if (url.includes('/bookings/history')) return [];
+      if (url.includes('/bookings?')) return clone(bookings);
       throw Error(`Unexpected synthetic request ${url}`);
     };
     return service;
   };
-  return { service: make(), restart: make, row, exercise, products, calls, persistence,
+  return { service: make(), restart: make, row, exercise, products, calls, persistence, tournaments, bookings, ratingClientIds,
+    setCopayProof: (value: Row) => { copayProof = value; },
+    setVerifiedActor: (value: Row) => { verifiedActor = value; },
+
     setRating: (value: number) => { rating = value; }, setResponse: (value: typeof response) => { response = value; },
-    get operation() { return operation; }, setOperation: (value: Row) => { operation = clone(value); } };
+    get operation() { return operation; }, setOperation: (value: Row) => {
+      operation = clone(value); row.details.booking.pendingJoinPayments = [operation];
+    } };
 }
 const body = { productId: 'one-time', source: 'one-time' };
 const postCalls = (f: ReturnType<typeof fixture>) => f.calls.filter(c => c.body);
@@ -216,4 +243,147 @@ test('subscription abort cannot be attested by browser bearer or a malformed pro
     ...input, ownerOperationId: grant.operationId, proof: 'PRE_DISPATCH_REJECTED_V1',
     code: 'SUBSCRIPTION_ELIGIBILITY_CHANGED_BEFORE_WRITE' }), errorCode('INTEGRATION_TOKEN_REQUIRED'));
   assert.deepEqual(f.operation, before);
+});
+
+const widgetRequest = { headers: { authorization: auth, 'x-user-id': 'untrusted-header-id' } } as never;
+const subscription = { operationId: 'registration-operation', clientSubscriptionId: 'synthetic-subscription' };
+const playerWithoutId = { ...actor, clientId: undefined, subject: 'keycloak-subject' };
+const ownProfile = { id: actor.clientId, phone: '+7 (900) 000-00-01' };
+
+function mockProfile(t: TestContext, read: () => Response | Promise<Response>) {
+  const originalFetch = globalThis.fetch;
+  let reads = 0;
+  globalThis.fetch = async (url, init) => {
+    assert.equal(String(url), ownProfileUrl);
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get('authorization'), auth);
+    assert.equal(headers.get('x-user-id'), null);
+    assert.equal(headers.get('x-user-phone'), null);
+    assert.equal(init?.redirect, 'error');
+    assert.ok(init?.signal);
+    reads++;
+    return read();
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+  return () => reads;
+}
+
+test('status and admission share the confirmed player from Viva; existing IDs skip the profile', async (t) => {
+  const f = fixture();
+  const controller = new TournamentsController(f.tournaments, {} as never, {} as never);
+  const reads = mockProfile(t, () => Response.json(ownProfile));
+  assert.equal((await controller.getMyRegistration(f.row.id, widgetRequest)).canRegister, true);
+  assert.equal(reads(), 0);
+
+  f.setVerifiedActor(playerWithoutId);
+  const status = await controller.getMyRegistration(f.row.id, widgetRequest);
+  assert.equal(status.canRegister, true);
+  assert.equal(status.levelDecision?.allowed, true);
+  assert.equal(reads(), 1, 'status and level use the same profile');
+  assert.equal((await controller.getMyLevelDecision(f.row.id, widgetRequest) as Row).actorClientId, actor.clientId);
+  assert.equal(reads(), 2);
+  assert.equal(f.ratingClientIds.length, 5);
+  assert.ok(f.ratingClientIds.every(clientId => clientId === actor.clientId));
+});
+
+test('checkout, integration copay and paid reconciliation use the confirmed Viva ID', async (t) => {
+  const reads = mockProfile(t, () => Response.json(ownProfile));
+  const purchase = fixture();
+  purchase.setVerifiedActor(playerWithoutId);
+  const first = await purchase.service.checkout(exerciseId, auth, body, 'viva-profile-key');
+  assert.equal(purchase.operation?.clientId, actor.clientId);
+  assert.equal(postCalls(purchase).length, 1);
+  assert.equal(reads(), 1, 'a provider dispatch never repeats identity lookup after reserving a seat');
+  assert.deepEqual(await purchase.restart().reconcile(exerciseId, auth), first);
+
+  const f = fixture();
+  f.setVerifiedActor(playerWithoutId);
+  const grant = await f.service.subscriptionAdmission(exerciseId, auth, subscription);
+  assert.equal(grant.actorClientId, actor.clientId);
+  const bookingId = 'viva-booking', transactionId = 'viva-copay';
+  const copay = { ...subscription, ownerOperationId: grant.operationId, bookingId,
+    payment: { transactionId, amountMinor: 50000 } };
+  await assert.rejects(f.service.completeSubscription(exerciseId, auth, undefined, copay, true),
+    errorCode('INTEGRATION_TOKEN_REQUIRED'));
+  assert.equal(reads(), 3);
+  assert.equal((await f.service.completeSubscription(exerciseId, auth, ownerToken, copay, true)).state, 'PAYMENT_PENDING');
+  const controller = new TournamentsController(f.tournaments, {} as never, {} as never);
+  assert.equal((await controller.getMyRegistration(f.row.id, widgetRequest)).bookingId, bookingId);
+  f.setCopayProof({ id: transactionId, clientId: actor.clientId, bookingId, status: 'PAID', toPayMinor: 50000 });
+  f.bookings.push({ id: bookingId, clientId: actor.clientId, exerciseId, studioId, status: 'ACTIVE' });
+  f.persistence.completeTournamentCheckout = async (_id: string, operation: Row, verifiedBookingId: string, paid: boolean) => {
+    assert.equal(operation.clientId, actor.clientId);
+    assert.equal(verifiedBookingId, bookingId);
+    assert.equal(paid, true);
+    return true;
+  };
+  assert.equal((await f.restart().reconcile(exerciseId, auth)).state, 'COMPLETED');
+  assert.equal(reads(), 6);
+  assert.equal(postCalls(f).length, 0);
+});
+
+test('identity conflicts and Viva outages deny new operations and protect an existing reservation', async (t) => {
+  let response = () => Response.json(ownProfile);
+  const reads = mockProfile(t, () => response());
+  const f = fixture();
+  f.setVerifiedActor({ ...playerWithoutId, tenantKey: 'foreign-tenant' });
+  await assert.rejects(f.service.checkout(exerciseId, auth, body, 'foreign-tenant'), errorCode('TOURNAMENT_IDENTITY_MISMATCH'));
+  assert.equal(reads(), 0, 'a mismatched booking tenant receives no bearer');
+
+  f.setVerifiedActor(playerWithoutId);
+  const controller = new TournamentsController(f.tournaments, {} as never, {} as never);
+  for (const profile of [
+    { ...ownProfile, mobilePhone: '+7 900 000-00-02' },
+    { ...ownProfile, client: { id: 'other-client' } },
+    { ...ownProfile, tenantKey: 'foreign-tenant' },
+    { id: actor.clientId },
+  ]) {
+    response = () => Response.json(profile);
+    await assert.rejects(controller.getMyRegistration(f.row.id, widgetRequest), errorCode('TOURNAMENT_IDENTITY_MISMATCH'));
+    await assert.rejects(f.service.subscriptionAdmission(exerciseId, auth, subscription), errorCode('TOURNAMENT_IDENTITY_MISMATCH'));
+  }
+  for (const unavailable of [
+    () => new Response(null, { status: 503 }),
+    () => new Response('unavailable'),
+    () => { throw new Error('network timeout'); }
+  ]) {
+    response = unavailable;
+    const temporary = (error: any) => error.getStatus?.() === 503 && errorCode('TOURNAMENT_PROFILE_UNAVAILABLE')(error);
+    await assert.rejects(controller.getMyRegistration(f.row.id, widgetRequest), temporary);
+    await assert.rejects(f.service.checkout(exerciseId, auth, body, 'profile-outage'), temporary);
+    await assert.rejects(f.service.subscriptionAdmission(exerciseId, auth, subscription), temporary);
+  }
+  assert.equal(f.operation, null);
+  assert.equal(f.calls.length, 0);
+
+  response = () => Response.json(ownProfile);
+  await f.service.subscriptionAdmission(exerciseId, auth, subscription);
+  const before = clone(f.operation);
+  response = () => Response.json({ ...ownProfile, id: 'different-client' });
+  await assert.rejects(controller.getMyRegistration(f.row.id, widgetRequest), errorCode('TOURNAMENT_IDENTITY_MISMATCH'));
+  await assert.rejects(f.service.reconcile(exerciseId, auth), errorCode('TOURNAMENT_IDENTITY_MISMATCH'));
+  const trustedIdentity = await f.tournaments.resolveTrustedLkRegistrationClient(auth);
+  const legacyInput = { phone: actor.phoneNorm, name: 'Synthetic', trustedIdentity };
+  await assert.rejects(f.tournaments.getPublicJoinFlow(f.row.slug,
+    { ...legacyInput, [TRUSTED_TOURNAMENT_CLIENT]: trustedIdentity }), errorCode('TOURNAMENT_IDENTITY_MISMATCH'));
+  await assert.rejects(f.tournaments.createPublicJoinPurchaseTransaction(f.row.slug, legacyInput),
+    errorCode('TOURNAMENT_IDENTITY_MISMATCH'));
+  await assert.rejects(f.tournaments.confirmPublicJoinAfterPayment(f.row.slug, legacyInput),
+    errorCode('TOURNAMENT_IDENTITY_MISMATCH'));
+  f.setVerifiedActor({ ...playerWithoutId, phoneNorm: '79000000002' });
+  response = () => Response.json({ id: actor.clientId, phone: '79000000002' });
+  await assert.rejects(f.service.checkout(exerciseId, auth, body, 'changed-phone'), errorCode('TOURNAMENT_IDENTITY_MISMATCH'));
+  assert.deepEqual(f.operation, before);
+});
+
+test('canonical identity conflicts block admission even without a tournament level restriction', async (t) => {
+  const f = fixture();
+  f.row.accessLevels = [];
+  f.setVerifiedActor(playerWithoutId);
+  mockProfile(t, () => Response.json(ownProfile));
+  f.tournaments.playerRatingsService.resolveCanonicalLevelByIdentity = async () => {
+    throw new ConflictException({ code: 'RATING_IDENTITY_CONFLICT' });
+  };
+  await assert.rejects(f.service.subscriptionAdmission(exerciseId, auth, subscription), errorCode('TOURNAMENT_IDENTITY_MISMATCH'));
+  assert.equal(f.operation, null);
 });
