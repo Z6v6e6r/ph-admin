@@ -1,14 +1,14 @@
 {
-  "schemaVersion": "PHUB_CUP133_JOINT_RELEASE_MANIFEST_V1",
-  "bundle": "CUP canonical player level transition (ph-admin#133 joint candidate)",
+  "schemaVersion": "PHUB_CUP133_JOINT_RELEASE_MANIFEST_V2",
+  "bundle": "ph-admin#133 joint candidate: CUP canonical player level, LK1 consumers and workers, LK2 projection",
   "evidenceLevel": "LOCAL",
   "acceptedAt": "2026-11-20",
   "components": {
     "cup": {
       "repository": "Z6v6e6r/ph-admin",
       "branch": "codex/shared-cup-rating-tournament-candidate-20261118",
-      "commit": "3799c4a88b9b8d5933911223083e7b511c5a1693",
-      "tree": "fa5d4dd9c1d32dac3657c36ab8a58ed8e972d241",
+      "commit": "26aed3bc9e966a2c4b508a03190eda7d07993088",
+      "tree": "6a59c2e2b8083fea90e3190f2c975b04dd3b17b1",
       "role": "Canonical rating owner and CUP -> LK2 projection sender (player_level_projection_outbox)",
       "senderFiles": [
         {
@@ -31,7 +31,64 @@
           "path": "src/player-ratings/player-ratings.types.ts",
           "sha256": "72d799a063da9526ac52aae93aeb5c9e86a75eefb81edfb733e317f1c8fe4294"
         }
-      ]
+      ],
+      "acceptedSourceCommit": "3799c4a88b9b8d5933911223083e7b511c5a1693",
+      "sourceNote": "26aed3b differs from the accepted 3799c4a only by this manifest, its verifier/test and one documentation paragraph; CUP code is identical.",
+      "manifestOwnedPaths": [
+        "docs/release/cup133-joint-release-manifest.json",
+        "scripts/verify-cup133-joint-release-manifest.mjs",
+        "test/cup133-joint-release-manifest.test.mjs",
+        "docs/player-level-journal.md"
+      ],
+      "runtimeArtifact": {
+        "workflow": "CUP immutable runtime and recovery",
+        "runId": 44696531628,
+        "runUrl": "https://github.com/Z6v6e6r/ph-admin/actions/runs/44696531628",
+        "artifactId": 14611270523,
+        "artifactName": "cup-runtime-release",
+        "artifactDigest": "sha256:c3aa642963629c2462cd64fa2ddda83c3e82ea656980a3abdb54239eb8d0d4ad",
+        "runtimeManifest": {
+          "schema": "PHAB_CUP_RUNTIME_RELEASE_V1",
+          "sourceCommit": "26aed3bc9e966a2c4b508a03190eda7d07993088",
+          "sourceTree": "6a59c2e2b8083fea90e3190f2c975b04dd3b17b1",
+          "nodeVersion": "v22.13.1",
+          "fileCount": 13918
+        },
+        "files": [
+          {
+            "path": "cup-runtime.tgz",
+            "sha256": "b78d8616be1b9ee3ef7cea61a355a0d39188558c1d72f8e1bca69b776448842a"
+          },
+          {
+            "path": "legacy-max-recovery-manifest.json",
+            "sha256": "ba4f3f69e844b53ef5f182e36c836519ac1092d13a167e92ec3c29142129f814"
+          },
+          {
+            "path": "legacy-max-recovery-runtime-delta.tgz",
+            "sha256": "716358e2dae9ec936e2947459bf4b17620c389fc792f9ffa4ed28ccd280bfd91"
+          },
+          {
+            "path": "media-recovery-manifest.json",
+            "sha256": "7dea7176de0fecde36eba6fc2953d8e3fbb0c506570ab59581c1fd65bb782824"
+          },
+          {
+            "path": "media-recovery-runtime.tgz",
+            "sha256": "84567715013c93dccd9c6b3441526c994ee75e2fbdf3263a6433a86d39a714c3"
+          },
+          {
+            "path": "recovery-manifest.json",
+            "sha256": "6c5fc97d243ef132c24984808a0af3a0554038fad044584bf9e7f9bfdeebf651"
+          },
+          {
+            "path": "recovery-runtime-delta.tgz",
+            "sha256": "ae8c9113024a98a00c50e5e544bce2ad9c5b1488ea51071898498f9ac154e67f"
+          },
+          {
+            "path": "runtime-manifest.json",
+            "sha256": "9629819b9f689fb50a4d74838990ff159c83fca264f9d3eba70d50c28d5118e9"
+          }
+        ]
+      }
     },
     "lk1": {
       "repository": "Z6v6e6r/lk",
@@ -378,6 +435,36 @@
           "fileCount": 63,
           "filesDigest": "ceaa09598cf7843203ac63d307b4f1169f348c39a7438fc0f42d78e92efff06f",
           "reason": "Delta replay overrides a CUP ADMIN_MANUAL target after a late game result; LK2 diverges."
+        },
+        "workers": [
+          {
+            "name": "rating-worker (canonical ledger projector)",
+            "entry": "scripts/rating_worker.mjs",
+            "sha256": "13f909c4abd8c6d9cffe4790b566bee110d7a24fcd24c661d4b078925881bfb3",
+            "version": "rating-worker-v1.0.14",
+            "schedule": [
+              "*/15 * * * * deploy/rating-worker/run-incremental.sh",
+              "17 3 * * * deploy/rating-worker/run-full.sh"
+            ],
+            "vivaDispatch": "disabled (vivaProjection CUP_ONLY)"
+          },
+          {
+            "name": "game-result-rating-worker",
+            "entry": "scripts/game_result_rating_worker.mjs",
+            "sha256": "a111272358c88985f7e39fa2de523c5ac8b31bc79d0e3d93b6d14185ab5a68bf",
+            "version": "game-result-rating-worker-v1.0.0",
+            "schedule": [
+              "* * * * * deploy/rating-worker/run-game-results.sh"
+            ],
+            "activation": "GAME_RESULT_RATING_WORKER_ENABLED=true only after the matching Node-RED result flow passes postchecks",
+            "vivaDispatch": "disabled"
+          }
+        ],
+        "releaseArtifact": {
+          "file": "lk1-rating-worker/padlhub-rating-worker-1bc3219.tgz",
+          "sha256": "f2bed57670101988f6886d5349bba8029268483803276b8f4b227e514093da83",
+          "releaseManifestSha256": "2fb2df394f5c513cd25305ad0bdb6d87a5bdcbd11f90a58baa33a6702a6d30ed",
+          "note": "Built once from the clean 1bc3219 checkout; the release-manifest.json bytes include generatedAt, so identity is the filesDigest."
         }
       },
       "levelReader": [
@@ -397,6 +484,78 @@
       "vivaQueues": {
         "rating_projection_outbox": "retired: no enqueue, no dispatch (vivaProjection CUP_ONLY); historical rows kept",
         "lk_result_viva_sync_outbox": "retired; historical rows kept"
+      },
+      "levelHelper": {
+        "builder": "scripts/build_cup_player_level.mjs",
+        "builderSha256": "ebeb13d431b703c259af8450bbaf1ad0ae8e01179e7b4828bf7ce7111a15bd4b",
+        "esbuild": "0.27.2 (LK1 package-lock)",
+        "output": "level.mjs",
+        "sha256": "22c56827e67da29a1c9b76830f828f8919a5da5a25194a6ddc6d0d5947b764ee",
+        "reproducible": "two builds from 1bc3219 produce identical bytes; equal to the helper installed on stand 24633",
+        "installPath": "/opt/padlhub-player-level/releases/<id>/level.mjs (root-owned, sourceDirty=false manifest checked at runtime)"
+      },
+      "frontend": {
+        "status": "REQUIRED_INPUT",
+        "sourceCommit": "1bc3219a05d5feece0e4663abb0eecb817a763f3",
+        "build": "npm ci --include=optional && npm run build (Node 22, Linux, @rollup/rollup-linux-x64-gnu as in lk-frontend-delivery.yml); LK_RELEASE_VERSION fixed and recorded",
+        "requiredPublicEnvKeys": [
+          "VITE_API_BASE",
+          "VITE_KEYCLOAK_BASE",
+          "VITE_TENANT_KEY",
+          "VITE_SERV2",
+          "VITE_SERV2_FALLBACK",
+          "VITE_SUPPORT_API_BASE",
+          "VITE_SUCCESS_URL",
+          "VITE_FAIL_URL",
+          "VITE_GAMES_BUNDLE_URL",
+          "VITE_TOURNAMENTS_BUNDLE_URL",
+          "VITE_ONBOARDING_BUNDLE_URL",
+          "VITE_LEVELS_INFO_BUNDLE_URL",
+          "VITE_COMMUNITIES_BUNDLE_URL",
+          "VITE_CABINET_URL",
+          "VITE_LK_ASSET_FALLBACK_BASE_URLS",
+          "VITE_PUSH_REGISTRATION_URL",
+          "VITE_PUSH_UNREGISTRATION_URL"
+        ],
+        "servedFiles": [
+          "LPD.png",
+          "atlanty-schedule-dev.js",
+          "atlanty-schedule.js",
+          "bundle-dev.js",
+          "bundle.js",
+          "communities-dev.js",
+          "communities.js",
+          "ffc-academy-lk-dev.js",
+          "ffc-academy-lk.js",
+          "games-dev.js",
+          "games.js",
+          "group-schedule-dev.js",
+          "group-schedule.js",
+          "levels-info-dev.js",
+          "levels-info.js",
+          "manifest.json",
+          "onboarding-dev.js",
+          "onboarding.js",
+          "padel-day-schedule-dev.js",
+          "padel-day-schedule.js",
+          "release-dev.json",
+          "release-ffc-academy-dev.json",
+          "release-ffc-academy.json",
+          "release.json",
+          "tournament-signup-dev.js",
+          "tournament-signup.js",
+          "tournament-subscription-dev.js",
+          "tournament-subscription-referral-dev.js",
+          "tournament-subscription-referral.js",
+          "tournament-subscription.js",
+          "tournaments-dev.js",
+          "tournaments.js"
+        ],
+        "blocker": "The production public build values are not available to this preparation: repository variable LK_FRONTEND_BUILD_ENV_JSON does not exist and copying the local ignored .env files was not permitted. Build once with the owner-approved values, then record version, release.json sourceCommit/sourceDirty and the sha256 of every served file here.",
+        "expected": {
+          "releaseVersion": null,
+          "files": []
+        }
       }
     },
     "lk2": {
@@ -481,8 +640,94 @@
   },
   "notAuthorized": [
     "merge to main",
-    "image publication",
+    "image or frontend publication",
+    "Node-RED import",
     "deployment",
-    "24636 or production changes"
-  ]
+    "147, 24636 or production changes",
+    "permission changes on any deployed target"
+  ],
+  "status": {
+    "ratingTransition": "GO (LOCAL)",
+    "jointRelease": "BLOCKED: required inputs lk1.frontend and nodeRedGraph are not yet produced",
+    "updatedAt": "2026-11-20"
+  },
+  "nodeRedGraph": {
+    "status": "REQUIRED_INPUT",
+    "target": "lk-primary-147 /root/.node-red/flows.json",
+    "generators": [
+      {
+        "path": "scripts/patch_cup_only_player_level.mjs",
+        "sha256": "966da209a8ac58ec456b2d2d713e4a1247f0552c2589edb6445bd42bf99e30c7",
+        "args": "<source.flow.json> <EXACT-SOURCE-SHA256> <NEW-candidate.flow.json> <NEW-report.json>"
+      },
+      {
+        "path": "scripts/prepare_tournament_admission_candidate.mjs",
+        "sha256": "7c7e7b95b18dda48e55207523d328575759983e5a62809f22169bf5be521d89a",
+        "args": "<candidate.flow.json> <INTERMEDIATE-SHA256> <NEW-final.flow.json>"
+      }
+    ],
+    "procedure": [
+      "Read a fresh /root/.node-red/flows.json from 147 read-only into a new private 0700 directory outside Git (files 0600); record its sha256 and the Node-RED runtime revision.",
+      "Run patch_cup_only_player_level.mjs from the exact LK1 commit offline; record the intermediate sha256 and the report.",
+      "Run prepare_tournament_admission_candidate.mjs on the intermediate graph; record the final sha256.",
+      "Never commit or publish the raw or generated graph: it contains runtime configuration. Only hashes go into this manifest.",
+      "If 147 drifts before installation, repeat from step 1; an older snapshot is not release authority."
+    ],
+    "blocker": "No full 147 graph snapshot exists in this preparation and a production read was not part of the authorized scope.",
+    "expected": {
+      "sourceSha256": null,
+      "sourceRuntimeRevision": null,
+      "intermediateSha256": null,
+      "finalSha256": null
+    }
+  },
+  "excludedFromBundle": [
+    {
+      "pr": "lk#465",
+      "head": "ccfbc1ea911d73d82758867ad0ec2e0c2ded45c7",
+      "reason": "open draft (tournament payment via CUP); not merged into the LK1 candidate"
+    },
+    {
+      "pr": "lk#469",
+      "head": "0da60162cb712053666c9b4836f70f529ac573e6",
+      "reason": "stand-only integration of #454+#465+#466"
+    },
+    {
+      "pr": "lk#470",
+      "head": "606768a7e95561a46c0b6a924cda43cae0d9fbb7",
+      "reason": "open draft (tournament copay settlement)"
+    },
+    {
+      "pr": "lk2#689",
+      "reason": "open draft; not required by the accepted projection scenario"
+    }
+  ],
+  "localArtifacts": {
+    "location": "~/Documents/PadlHub-release-artifacts/cup133-joint-20261120 (owner Mac, private 0700, not in Git)",
+    "cupRuntimeSha256Sums": "a6e97cdec90f77e0f177a13053503a5aae9cc614f19575f67ad7adfe7d810e31",
+    "lk1Sha256Sums": "e9a235f41a07e75ae6200b70b07c868eb09aa49317c816c7a4ce8096ca8d879c"
+  },
+  "recovery": {
+    "beforeActivation": [
+      "Back up and test-restore into empty namespaces: MongoDB player_rating_state, rating_events, player_ratings, player_level_projection_outbox, rating_projection_outbox, lk_result_viva_sync_outbox, admin_roles, admin_users; LK2 PostgreSQL; Node-RED flows.json with its runtime revision; the current LK1 static release directory; the current /opt/padlhub-rating-worker/current target; the current CUP runtime digest.",
+      "Record unfinished tournament operations with their original idempotency keys."
+    ],
+    "activationOrder": [
+      "CUP runtime (artifactDigest above) with PADLHUB_PLAYER_LEVEL_PROJECTION_ENABLED=false",
+      "LK1 rating worker release (filesDigest) and level helper (sha256); first worker run --dry-run",
+      "Node-RED final graph (nodeRedGraph.finalSha256)",
+      "LK1 frontend (lk1.frontend files)",
+      "LK2 ingress enable, then CUP projection sender enable (pilot binding first)"
+    ],
+    "rollbackOrder": [
+      "Pause new writes: set PLAYER_RATING_ADMIN_ENABLED=false in CUP (closes manual level changes) and keep tournament owner in recovery-only mode; never replay or delete rating_projection_outbox or lk_result_viva_sync_outbox.",
+      "Disable the CUP projection sender (PADLHUB_PLAYER_LEVEL_PROJECTION_ENABLED=false), then the LK2 ingress (CUP_PLAYER_LEVEL_PROJECTION_ENABLED=false). Accepted LK2 projections and the CUP ledger stay.",
+      "LK1 frontend: atomically switch the static directory back to the saved release and verify every served file by sha256 over HTTP.",
+      "Node-RED: restore the saved flows.json by exact sha256 and verify the runtime revision and readback.",
+      "CUP: reinstall the previous runtime by exact digest; verify /api/health and the SDK bytes.",
+      "Recover each unfinished operation only through its original key with durable readback."
+    ],
+    "ratingBoundary": "Before the first ADMIN_MANUAL event: the rating worker may return to the saved release. After it: keep this worker release (lk#466 semantics) and the journal; rollback of rating code is forward-fix only, because the earlier release replays ADMIN_MANUAL as a delta and diverges (stand example: 5.01 vs 4.71).",
+    "verification": "Postchecks and stop conditions: https://github.com/Z6v6e6r/ph-admin/pull/133#issuecomment-7030806946"
+  }
 }
