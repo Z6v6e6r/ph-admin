@@ -449,7 +449,7 @@ async function main() {
       const token = 'Bearer synthetic-token';
       const integration = 'synthetic-owner-token';
       const grant = await f.service.subscriptionAdmission(exerciseId, token, subscription('copay-key'));
-      const booking = { id: 'copay-booking', exerciseId, clientId: actor(355).clientId };
+      const booking = { id: 'copay-booking', exerciseId, clientId: actor(355).clientId, studioId: 'synthetic-studio' };
       const transaction = { id: 'copay-transaction', status: 'PAID', toPayMinor: 50000,
         bookingId: booking.id, clientId: booking.clientId };
       const request = { ...subscription('copay-key'), ownerOperationId: grant.operationId, bookingId: booking.id,
@@ -478,8 +478,10 @@ async function main() {
 
       let readback: Row = { ...transaction, status: 'WAITING' };
       let activeBooking: Row | null = booking;
+      let readbackUnavailable = false;
       const viva = { readTournamentCopayTransaction: async (id: string) => {
         assert.equal(id, transaction.id);
+        if (readbackUnavailable) throw new Error('Synthetic Viva timeout');
         return readback;
       } } as unknown as VivaAdminService;
       const reconciler = new TournamentCheckoutService(f.tournaments, f.repo, viva);
@@ -487,12 +489,18 @@ async function main() {
       const query = () => reconciler.reconcile(exerciseId, token);
       assert.equal((await query()).state, 'PAYMENT_PENDING');
       for (const invalid of [{ id: 'wrong-tx' }, { toPayMinor: 49999 }, { transactionStatus: 'WAITING' },
+        { bookingId: undefined }, { bookingId: null, bookingIds: [] }, { bookingId: 'other-booking' },
         { cardPaymentInfo: { refundedAmountMinor: 50000 } },
         { bookingIds: [{ id: booking.id, bookingId: 'wrong-booking' }] }]) {
         readback = { ...transaction, ...invalid };
         assert.equal((await query()).state, 'PAYMENT_PENDING');
+        assert.deepEqual(await collection.findOne({ id: name }), before);
       }
-      readback = transaction;
+      readback = { ...transaction, bookingId: undefined, products: [{ pricingDetails: [{ clientBookingId: booking.id }] }] };
+      readbackUnavailable = true;
+      assert.equal((await query()).state, 'PAYMENT_PENDING');
+      assert.deepEqual(await collection.findOne({ id: name }), before);
+      readbackUnavailable = false;
       activeBooking = { ...booking, isCancelled: true };
       assert.equal((await query()).state, 'PAYMENT_PENDING');
       activeBooking = booking;

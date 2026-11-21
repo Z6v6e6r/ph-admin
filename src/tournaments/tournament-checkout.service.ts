@@ -50,7 +50,7 @@ function matchesCopayTransaction(transaction: Row, operation: Row): boolean {
       transaction.client?.clientId], operation.clientId)
     && agree([transaction.exerciseId, transaction.exercise?.id], operation.exerciseId)
     && agree([transaction.studioId, transaction.studio?.id], operation.studioId)
-    && agree(bookings, receipt.bookingId)
+    && agree(bookings, receipt.bookingId, true)
     && !hasCancellationOrRefund(transaction);
 }
 
