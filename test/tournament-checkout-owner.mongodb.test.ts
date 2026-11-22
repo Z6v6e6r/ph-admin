@@ -577,6 +577,66 @@ async function main() {
       assert.equal(bookingPosts, 1);
       assert.equal(postCount, before);
     });
+    await check('recovery-only completes the original free booking before or after provider dispatch', async () => {
+      for (const hasReceipt of [false, true]) {
+        const name = hasReceipt ? 'recover-free-receipt' : 'recover-free-prepared';
+        const player = actor(357);
+        await seedLastSeat(name);
+        await collection.updateOne({ id: name }, { $set: { 'details.sourceTournamentSnapshot': { source: 'VIVA' } } });
+        let providerBookings = 0;
+        const before = postCount;
+        function fixture() {
+          const f = instance(357);
+          Object.assign(f.tournaments, {
+            requireCustomBySlug: async () => collection.findOne({ id: name }),
+            requireCustomByPublicRef: async () => collection.findOne({ id: name }),
+            resolveSourceTournamentProvider: () => 'VIVA',
+            fetchVivaJoinPurchaseOptions: async () => [],
+            enrichTournamentParticipantWithViva: async (participant: Row) => participant,
+            invalidatePublicDirectoryCache: () => {},
+            vivaAdminService: { createExerciseBooking: async (binding: Row) => {
+              assert.deepEqual(binding, { exerciseId: 'exercise-' + name, clientId: player.clientId, phone: player.phoneNorm });
+              providerBookings++;
+              return { outcome: 'CREATED', bookingId: 'original-free-booking' };
+            } }
+          });
+          return f;
+        }
+        const register = (f = fixture()) => f.tournaments.registerPublicParticipantByTournamentRef(name, {
+          phone: player.phoneNorm, name: 'Synthetic', vivaAuthorizationHeader: 'Bearer synthetic-token',
+          trustedIdentity: f.tournaments.rememberRegistrationIdentity({ phone: player.phoneNorm, clientId: player.clientId })
+        });
+        const interrupted = fixture();
+        if (hasReceipt) interrupted.repo.completeTournamentCheckout = async () => false;
+        else interrupted.repo.claimTournamentCheckout = async () => false;
+        assert.equal((await register(interrupted)).code, 'BOOKING_FAILED');
+        const pending = (await collection.findOne({ id: name }))!.details.booking.pendingJoinPayments[0];
+        assert.equal(pending.state, hasReceipt ? 'PROVIDER_RESULT_UNKNOWN' : 'PROVIDER_CREATE_PENDING');
+        assert.equal(providerBookings, Number(hasReceipt));
+
+        const previousMode = process.env.TOURNAMENT_OWNER_RECOVERY_ONLY;
+        process.env.TOURNAMENT_OWNER_RECOVERY_ONLY = 'true';
+        try {
+          const replies = await Promise.all([register(), register()]);
+          assert.ok(replies.some(reply => reply.code === 'REGISTERED'));
+          assert.equal((await register()).code, 'ALREADY_REGISTERED');
+        } finally {
+          if (previousMode === undefined) delete process.env.TOURNAMENT_OWNER_RECOVERY_ONLY;
+          else process.env.TOURNAMENT_OWNER_RECOVERY_ONLY = previousMode;
+        }
+        const row = (await collection.findOne({ id: name }))!;
+        assert.equal(row.participants.length, 2);
+        assert.equal(row.participants.filter((participant: Row) => participant.phone === player.phoneNorm).length, 1);
+        assert.equal(row.details.booking.pendingJoinPayments.length, 1);
+        const completed = row.details.booking.pendingJoinPayments[0];
+        assert.equal(completed.transactionId, pending.transactionId);
+        assert.equal(completed.state, 'OWNER_COMPLETED');
+        assert.equal(completed.providerBookingId, 'original-free-booking');
+        assert.equal(completed.providerTransactionId, undefined);
+        assert.equal(providerBookings, 1);
+        assert.equal(postCount, before);
+      }
+    });
     await check('abort/complete race never leaves a completed participant without capacity accounting', async () => {
       for (const order of ['abort', 'complete', 'concurrent']) {
         const name = 'abort-race-' + order; await seedLastSeat(name); const f = owner(310);
