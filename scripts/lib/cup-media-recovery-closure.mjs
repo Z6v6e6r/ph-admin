@@ -22,16 +22,21 @@ export const MEDIA_RECOVERY_SOURCES = Object.freeze([
 const modules = MEDIA_RECOVERY_SOURCES.filter(p => p.startsWith('src/')).map(p => p.slice(4, -3));
 const sdk = ['phab-admin-panel.js', 'client-sdk/phab-admin-panel.js'];
 // The media recovery deliberately retains its reviewed historical SDK. Main also
-// contains the independently released FPR artwork UI; neither arbitrary SDK drift
-// nor server-module differences qualify for this exact compatibility pair.
+// contains the independently reviewed FPR artwork and tournament level scale UI.
+// Only these exact SDKs may be paired with the unchanged recovery SDK.
 export const MEDIA_RECOVERY_SDK_SHA256 = 'e67b6151067caffe5ee111c444ebe01d01e20274b681ee6b6ee566ff3f6609bb';
 export const MEDIA_FPR_CANDIDATE_SDK_SHA256 = '3eec0814027643f0c26e15ad68d2f0e9d530eb5688b37ce2b39562eecbed9a65';
+export const MEDIA_TOURNAMENT_SCALE_CANDIDATE_SDK_SHA256 = '51282022b440ac642a397b930cda2fac9b094f3dc743516014412d90290c5df8';
 const digest = body => createHash('sha256').update(body).digest('hex');
 
 export function verifyMediaRecoveryCandidateHash(name, candidateSha256, recoverySha256) {
   if (sdk.includes(name)) {
     assert.equal(recoverySha256, MEDIA_RECOVERY_SDK_SHA256, 'Media recovery SDK drift');
-    assert.ok([MEDIA_RECOVERY_SDK_SHA256, MEDIA_FPR_CANDIDATE_SDK_SHA256].includes(candidateSha256), 'Unreviewed candidate SDK drift');
+    assert.ok([
+      MEDIA_RECOVERY_SDK_SHA256,
+      MEDIA_FPR_CANDIDATE_SDK_SHA256,
+      MEDIA_TOURNAMENT_SCALE_CANDIDATE_SDK_SHA256
+    ].includes(candidateSha256), 'Unreviewed candidate SDK drift');
     return;
   }
   assert.equal(candidateSha256, recoverySha256, 'Candidate/media recovery compiled closure mismatch');
