@@ -1953,6 +1953,7 @@ export class TournamentsService {
       (item) => this.isCapacityHoldingPendingJoinPayment(item)
     ).length;
     if (!pendingFree && tournament.participants.length + reservedPaymentSeats >= maxPlayers) {
+      this.assertTournamentOwnerNewOperationsOpen();
       const nextWaitlist: TournamentParticipant[] = [
         ...tournament.waitlist,
         {
@@ -2863,6 +2864,7 @@ export class TournamentsService {
       notes: this.pickString(input.notes) ?? undefined
     });
 
+    this.assertTournamentOwnerNewOperationsOpen();
     const nextWaitlist: TournamentParticipant[] = [...tournament.waitlist, participant];
     const appended = await this.tournamentsPersistence.appendPublicWaitlistWithAdmission(
       tournament.id, normalizedPhone, participant, gender.decision

@@ -449,7 +449,7 @@ async function main() {
       const token = 'Bearer synthetic-token';
       const integration = 'synthetic-owner-token';
       const grant = await f.service.subscriptionAdmission(exerciseId, token, subscription('copay-key'));
-      const booking = { id: 'copay-booking', exerciseId, clientId: actor(355).clientId };
+      const booking = { id: 'copay-booking', exerciseId, clientId: actor(355).clientId, studioId: 'synthetic-studio' };
       const transaction = { id: 'copay-transaction', status: 'PAID', toPayMinor: 50000,
         bookingId: booking.id, clientId: booking.clientId };
       const request = { ...subscription('copay-key'), ownerOperationId: grant.operationId, bookingId: booking.id,
@@ -478,8 +478,10 @@ async function main() {
 
       let readback: Row = { ...transaction, status: 'WAITING' };
       let activeBooking: Row | null = booking;
+      let readbackUnavailable = false;
       const viva = { readTournamentCopayTransaction: async (id: string) => {
         assert.equal(id, transaction.id);
+        if (readbackUnavailable) throw new Error('Synthetic Viva timeout');
         return readback;
       } } as unknown as VivaAdminService;
       const reconciler = new TournamentCheckoutService(f.tournaments, f.repo, viva);
@@ -487,12 +489,18 @@ async function main() {
       const query = () => reconciler.reconcile(exerciseId, token);
       assert.equal((await query()).state, 'PAYMENT_PENDING');
       for (const invalid of [{ id: 'wrong-tx' }, { toPayMinor: 49999 }, { transactionStatus: 'WAITING' },
+        { bookingId: undefined }, { bookingId: null, bookingIds: [] }, { bookingId: 'other-booking' },
         { cardPaymentInfo: { refundedAmountMinor: 50000 } },
         { bookingIds: [{ id: booking.id, bookingId: 'wrong-booking' }] }]) {
         readback = { ...transaction, ...invalid };
         assert.equal((await query()).state, 'PAYMENT_PENDING');
+        assert.deepEqual(await collection.findOne({ id: name }), before);
       }
-      readback = transaction;
+      readback = { ...transaction, bookingId: undefined, products: [{ pricingDetails: [{ clientBookingId: booking.id }] }] };
+      readbackUnavailable = true;
+      assert.equal((await query()).state, 'PAYMENT_PENDING');
+      assert.deepEqual(await collection.findOne({ id: name }), before);
+      readbackUnavailable = false;
       activeBooking = { ...booking, isCancelled: true };
       assert.equal((await query()).state, 'PAYMENT_PENDING');
       activeBooking = booking;
@@ -568,6 +576,66 @@ async function main() {
       assert.equal(row.details.booking.pendingJoinPayments[0].providerTransactionId, undefined);
       assert.equal(bookingPosts, 1);
       assert.equal(postCount, before);
+    });
+    await check('recovery-only completes the original free booking before or after provider dispatch', async () => {
+      for (const hasReceipt of [false, true]) {
+        const name = hasReceipt ? 'recover-free-receipt' : 'recover-free-prepared';
+        const player = actor(357);
+        await seedLastSeat(name);
+        await collection.updateOne({ id: name }, { $set: { 'details.sourceTournamentSnapshot': { source: 'VIVA' } } });
+        let providerBookings = 0;
+        const before = postCount;
+        function fixture() {
+          const f = instance(357);
+          Object.assign(f.tournaments, {
+            requireCustomBySlug: async () => collection.findOne({ id: name }),
+            requireCustomByPublicRef: async () => collection.findOne({ id: name }),
+            resolveSourceTournamentProvider: () => 'VIVA',
+            fetchVivaJoinPurchaseOptions: async () => [],
+            enrichTournamentParticipantWithViva: async (participant: Row) => participant,
+            invalidatePublicDirectoryCache: () => {},
+            vivaAdminService: { createExerciseBooking: async (binding: Row) => {
+              assert.deepEqual(binding, { exerciseId: 'exercise-' + name, clientId: player.clientId, phone: player.phoneNorm });
+              providerBookings++;
+              return { outcome: 'CREATED', bookingId: 'original-free-booking' };
+            } }
+          });
+          return f;
+        }
+        const register = (f = fixture()) => f.tournaments.registerPublicParticipantByTournamentRef(name, {
+          phone: player.phoneNorm, name: 'Synthetic', vivaAuthorizationHeader: 'Bearer synthetic-token',
+          trustedIdentity: f.tournaments.rememberRegistrationIdentity({ phone: player.phoneNorm, clientId: player.clientId })
+        });
+        const interrupted = fixture();
+        if (hasReceipt) interrupted.repo.completeTournamentCheckout = async () => false;
+        else interrupted.repo.claimTournamentCheckout = async () => false;
+        assert.equal((await register(interrupted)).code, 'BOOKING_FAILED');
+        const pending = (await collection.findOne({ id: name }))!.details.booking.pendingJoinPayments[0];
+        assert.equal(pending.state, hasReceipt ? 'PROVIDER_RESULT_UNKNOWN' : 'PROVIDER_CREATE_PENDING');
+        assert.equal(providerBookings, Number(hasReceipt));
+
+        const previousMode = process.env.TOURNAMENT_OWNER_RECOVERY_ONLY;
+        process.env.TOURNAMENT_OWNER_RECOVERY_ONLY = 'true';
+        try {
+          const replies = await Promise.all([register(), register()]);
+          assert.ok(replies.some(reply => reply.code === 'REGISTERED'));
+          assert.equal((await register()).code, 'ALREADY_REGISTERED');
+        } finally {
+          if (previousMode === undefined) delete process.env.TOURNAMENT_OWNER_RECOVERY_ONLY;
+          else process.env.TOURNAMENT_OWNER_RECOVERY_ONLY = previousMode;
+        }
+        const row = (await collection.findOne({ id: name }))!;
+        assert.equal(row.participants.length, 2);
+        assert.equal(row.participants.filter((participant: Row) => participant.phone === player.phoneNorm).length, 1);
+        assert.equal(row.details.booking.pendingJoinPayments.length, 1);
+        const completed = row.details.booking.pendingJoinPayments[0];
+        assert.equal(completed.transactionId, pending.transactionId);
+        assert.equal(completed.state, 'OWNER_COMPLETED');
+        assert.equal(completed.providerBookingId, 'original-free-booking');
+        assert.equal(completed.providerTransactionId, undefined);
+        assert.equal(providerBookings, 1);
+        assert.equal(postCount, before);
+      }
     });
     await check('abort/complete race never leaves a completed participant without capacity accounting', async () => {
       for (const order of ['abort', 'complete', 'concurrent']) {
