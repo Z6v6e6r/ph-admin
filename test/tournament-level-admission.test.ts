@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   LEVEL_TOLERANCE_MAX,
+  LEVEL_TOLERANCE_NEW_TOURNAMENT_DEFAULT,
   TOURNAMENT_LEVEL_GRID,
   evaluateTournamentLevelAdmission,
   normalizeLevelToleranceInput,
@@ -62,11 +63,23 @@ expect(rule(['3.25'], 0), 3.25001, false);
 expect(rule(['3.25'], 0.2), 3.45, true);
 expect(rule(['3.25'], 0.2), 3.45001, false);
 
-// Old tournament without the field means tolerance 0; stored 0 stays 0.
-assert.equal(readStoredLevelTolerance(undefined), 0);
-assert.equal(readStoredLevelTolerance(null), 0);
+// Existing and newly created numeric ranges use the same symmetric default unless overridden.
+assert.equal(LEVEL_TOLERANCE_NEW_TOURNAMENT_DEFAULT, 0.15);
+assert.equal(readStoredLevelTolerance(undefined), 0.15);
+assert.equal(readStoredLevelTolerance(null), 0.15);
 assert.equal(readStoredLevelTolerance(0), 0);
-expect(rule(C_SLIDER), 3.6, false);
+for (const unset of [undefined, null]) {
+  const input = rule(C_SLIDER, unset);
+  expect(input, 2.84999, false, 'LEVEL_NOT_ALLOWED');
+  expect(input, 2.85, true, 'LEVEL_ALLOWED_WITH_TOLERANCE');
+  expect(input, 3.31, true, 'LEVEL_ALLOWED');
+  expect(input, 3.65, true, 'LEVEL_ALLOWED_WITH_TOLERANCE');
+  expect(input, 3.65001, false, 'LEVEL_NOT_ALLOWED');
+  const decision = decide(input, ok(3.65));
+  assert.deepEqual(decision.effectiveRange, { min: 2.85, max: 3.65 });
+  assert.equal(decision.ruleVersion, decide(rule(C_SLIDER, 0.15), ok(3.65)).ruleVersion);
+  assert.notEqual(decision.ruleVersion, decide(rule(C_SLIDER, 0), ok(3.65)).ruleVersion);
+}
 expect(rule(C_SLIDER, 0), 3.6, false);
 
 // Tournament without a range stays unrestricted and needs no player level.
@@ -78,7 +91,8 @@ for (const levels of [[], undefined, null, TOURNAMENT_LEVEL_GRID.map((entry) => 
 
 // Top grid token is open-ended: canonical ratings reach 7.
 expect(rule(['5.7', '5.9', '6.1', '6.3']), 6.9, true);
-expect(rule(['5.7', '5.9', '6.1', '6.3']), 5.69999, false);
+expect(rule(['5.7', '5.9', '6.1', '6.3']), 5.55, true);
+expect(rule(['5.7', '5.9', '6.1', '6.3']), 5.54999, false);
 
 // Legacy grade lists keep set semantics (no silent widening across adjacent grades).
 expect(rule(['C']), 3.31, true);

@@ -196,6 +196,15 @@ async function decisionCases(): Promise<void> {
     assert.equal(legacy.reasonCode, 'LEVEL_NOT_ALLOWED');
   });
 
+  const defaultCorridor = service(tournament({ levelTolerance: undefined }), rating);
+  for (const [value, allowed] of [[2.84999, false], [2.85, true], [3.65, true], [3.65001, false]] as const) {
+    current = value;
+    const decision = await defaultCorridor.getLevelDecisionByTournamentRef('custom-level-1', 'Bearer synthetic');
+    assert.equal(decision.allowed, allowed);
+    assert.equal(decision.levelTolerance, 0.15);
+    assert.deepEqual(decision.effectiveRange, { min: 2.85, max: 3.65 });
+  }
+
   const unrestricted = service(tournament({ accessLevels: [] }), ratings(() => 5));
   await assert.rejects(() => unrestricted.getLevelDecisionByTournamentRef('custom-level-1', 'Bearer forged'));
   const stale = service(tournament(), rating, {}, { readPublicAdmissionRule: async () => null });
@@ -331,7 +340,7 @@ async function persistenceCases(): Promise<void> {
   persistence.collection = async () => collection;
   const actor = { id: 'admin-1', name: 'Organizer', login: 'organizer' };
 
-  // Old tournament without the field: read back as absent (= 0 by the rule).
+  // Old tournament without the field: read back as absent; the evaluator applies the default without writing a field.
   const legacy = await persistence.findCustomTournamentById('custom-level-1');
   assert.equal(legacy.levelTolerance, undefined);
 
@@ -356,10 +365,10 @@ async function persistenceCases(): Promise<void> {
   }
   assert.equal(collection.rows[0].levelTolerance, 0.2);
 
-  // New tournament: default 0 when omitted; explicit 0 is kept.
+  // New tournament: default 0.15 when omitted; explicit 0 is kept.
   const created = await persistence.buildCreateDocument({ name: 'New', tournamentType: 'AMERICANO', accessLevels: C_SLIDER,
     gender: 'MIXED', maxPlayers: 8, participants: [], waitlist: [], allowedManagerPhones: [] });
-  assert.equal(created.levelTolerance, 0);
+  assert.equal(created.levelTolerance, 0.15);
   const strict = await persistence.buildCreateDocument({ name: 'Strict', tournamentType: 'AMERICANO', accessLevels: C_SLIDER,
     levelTolerance: 0, gender: 'MIXED', maxPlayers: 8, participants: [], waitlist: [], allowedManagerPhones: [] });
   assert.equal(strict.levelTolerance, 0);

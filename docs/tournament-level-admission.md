@@ -35,9 +35,9 @@ not recompute a second authoritative decision from its local projection.
   the upper-open category through the canonical maximum 7.
 - Legacy grade arrays retain set semantics. Numeric CUP grades are D [1,2), D+ [2,3),
   C [3,3.5), C+ [3.5,4), B [4,4.7), B+ [4.7,5.5), A [5.5,7]. No lexical string comparison.
-- Integer comparison at five decimal places. Absent tolerance = 0; newly created tournaments
-  also default to 0. Explicit stored tolerance (0..1, up to five decimals) is retained and applies
-  to continuous ranges. No player rating or residency field is changed.
+- Integer comparison at five decimal places. Numeric ranges use a default tolerance of ±0.15
+  for existing tournaments without the field and for new tournaments. Both edges are inclusive.
+  Explicit stored tolerance (0..1, up to five decimals), including zero, takes precedence.
 - Server mode is always ENFORCE. Unset, OFF, LEGACY and misspelled environment values cannot
   bypass admission. Pure evaluator legacy/off cases remain only for explicit utility tests.
 - No confirmed personal-invitation exception or authorized exception field exists in these
@@ -202,8 +202,8 @@ tolerance edits. Report local results separately from CI and provider tests.
 
 No live migration/backfill ran. The inherited experimental collection
 `tournament_server_booking_attempts_v1` uses Mongo's unique `_id`; no added secondary index or
-live collection setup was performed. Existing fields are additive; existing absent tolerance is
-read as zero. Preserve this collection and existing payment eligibility snapshots during rollback.
+live collection setup was performed. The evaluator applies ±0.15 to numeric ranges with no stored
+override. Preserve this collection and existing payment eligibility snapshots during rollback.
 Rollback must never mean enabling OFF or reverting to an unguarded booking writer. Keep affected
 new registrations closed until the owner guard is repaired; do not cancel or refund existing
 operations automatically. Merge, deploy and any provider/shared-state action need separate approval.
