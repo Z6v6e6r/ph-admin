@@ -925,10 +925,26 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
           ]
         }
       } as Filter<MongoCustomTournamentDocument>,
-      {
-        $push: { 'details.booking.pendingJoinPayments': pending },
-        $set: { updatedAt }
-      } as Document,
+      [{
+        $set: {
+          // Legacy imports can store a null parent. Initialize it while reserving the seat.
+          details: {
+            $mergeObjects: ['$details', {
+              booking: {
+                $mergeObjects: ['$details.booking', {
+                  pendingJoinPayments: {
+                    $concatArrays: [
+                      { $ifNull: ['$details.booking.pendingJoinPayments', []] },
+                      { $literal: [pending] }
+                    ]
+                  }
+                }]
+              }
+            }]
+          },
+          updatedAt
+        }
+      }],
       { returnDocument: 'after', writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } }
     );
     return document ? this.toCustomTournament(document) : null;

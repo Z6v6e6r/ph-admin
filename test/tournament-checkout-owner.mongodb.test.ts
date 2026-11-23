@@ -96,6 +96,42 @@ async function main() {
       assert.ok((await checkout(instance().service, 'join-flow-lookup', 'join-flow-key')).transactionId);
       assert.equal(postCount - before, 3);
     });
+    await check('physical Mongo: subscription admission reserves the final place with nullable booking details', async () => {
+      for (const [name, details] of [
+        ['null-details', null],
+        ['null-booking', { registrationNote: 'preserve', booking: null }]
+      ] as const) {
+        await seed(name, 2);
+        const exerciseId = `exercise-${name}`;
+        await collection.updateOne({ id: name }, { $set: {
+          exerciseId, studioId: 'synthetic-studio', details,
+          sourceTournamentSnapshot: { id: `source-${name}`, exerciseId },
+          participants: [{ phone: actor(99).phoneNorm, name: 'Existing', status: 'REGISTERED' }]
+        } });
+        const before = postCount;
+        const requests = [1, 2].map(n => {
+          const { service, tournaments } = instance(n);
+          tournaments.vivaEndUserWidgetId = 'fixture-tenant';
+          return { service, body: { operationId: `nullable-key-${n}`, clientSubscriptionId: `subscription-${n}` } };
+        });
+        const outcomes = await Promise.allSettled(requests.map(({ service, body }) =>
+          service.subscriptionAdmission(exerciseId, 'Bearer synthetic-token', body)));
+        const winner = outcomes.findIndex(outcome => outcome.status === 'fulfilled');
+        const failures = outcomes.filter(outcome => outcome.status === 'rejected');
+        assert.notEqual(winner, -1, failures.map(outcome =>
+          JSON.stringify(outcome.reason.getResponse?.() ?? outcome.reason.message)).join('; '));
+        assert.equal(outcomes.filter(outcome => outcome.status === 'fulfilled').length, 1);
+        const picked = requests[winner];
+        const replay = await picked.service.subscriptionAdmission(exerciseId, 'Bearer synthetic-token', picked.body);
+        assert.equal(replay.state, 'ADMITTED');
+        assert.equal(replay.requestOperationId, picked.body.operationId);
+        const row = await collection.findOne({ id: name });
+        assert.equal(row?.details.booking.pendingJoinPayments.length, 1);
+        assert.equal(row?.details.registrationNote, details?.registrationNote);
+        assert.equal(row?.participants.length, 1);
+        assert.equal(postCount, before);
+      }
+    });
     await check('same-timestamp changes to legacy target binding fence provider dispatch', async () => {
       await seed('mapping-drift');
       const f = instance(), before = postCount;
