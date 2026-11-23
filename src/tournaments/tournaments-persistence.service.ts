@@ -668,6 +668,36 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     return saved.acknowledged && saved.matchedCount === 1;
   }
 
+  async bindTournamentSubscriptionCopay(id: string, operation: Record<string, any>, receipt: {
+    kind: string; bookingId: string; transactionId: string; amountMinor: number;
+  }): Promise<'PAYMENT_PENDING' | 'COMPLETED' | null> {
+    const collection = await this.collection(false);
+    const binding = { transactionId: operation.transactionId, clientId: operation.clientId,
+      phone: operation.phone, exerciseId: operation.exerciseId, studioId: operation.studioId,
+      widgetId: operation.widgetId, ownerCommand: operation.ownerCommand };
+    const result = await collection.updateOne({
+      ...this.buildIdFilter(id),
+      $nor: [{ 'details.booking.pendingJoinPayments': { $elemMatch: {
+        transactionId: { $ne: operation.transactionId }, providerTransactionId: receipt.transactionId
+      } } }],
+      'details.booking.pendingJoinPayments': { $elemMatch: {
+        ...binding, state: 'PROVIDER_CREATE_PENDING', providerBookingId: { $exists: false },
+        providerTransactionId: { $exists: false }, ownerReceipt: { $exists: false }
+      } }
+    }, { $set: {
+      'details.booking.pendingJoinPayments.$.ownerReceipt': receipt,
+      'details.booking.pendingJoinPayments.$.providerTransactionId': receipt.transactionId
+    } }, { writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } });
+    if (result.acknowledged && result.matchedCount === 1) return 'PAYMENT_PENDING';
+    const current = await this.readTournamentCheckoutOperation(id, operation.phone, { transactionId: operation.transactionId });
+    const sameReceipt = !!current && ['PROVIDER_CREATE_PENDING', 'OWNER_COMPLETED'].includes(current.state)
+      && current.clientId === operation.clientId && current.ownerReceipt?.kind === receipt.kind
+      && current.ownerReceipt.bookingId === receipt.bookingId && current.providerTransactionId === receipt.transactionId
+      && current.ownerReceipt.transactionId === receipt.transactionId && current.ownerReceipt.amountMinor === receipt.amountMinor;
+    if (!sameReceipt) return null;
+    return current.state === 'OWNER_COMPLETED' ? 'COMPLETED' : 'PAYMENT_PENDING';
+  }
+
   /** Provider cancellation proof has already bound this exact booking to the original operation. */
   async cancelTournamentCheckout(id: string, operation: Record<string, any>, bookingId: string): Promise<boolean> {
     const collection = await this.collection(false);
@@ -682,6 +712,10 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       'details.booking.pendingJoinPayments': { $elemMatch: { ...original,
         $or: [
           { state: 'OWNER_COMPLETED', providerBookingId: bookingId },
+          ...(operation.ownerCommand?.kind === 'SUBSCRIPTION' && operation.ownerReceipt?.kind === 'COPAY'
+            && operation.ownerReceipt.bookingId === bookingId
+            ? [{ state: 'PROVIDER_CREATE_PENDING', providerBookingId: { $exists: false },
+              providerTransactionId: operation.ownerReceipt.transactionId }] : []),
           ...(operation.ownerCommand?.kind === 'CHECKOUT' && operation.ownerReceipt?.transactionId
             ? [{ state: 'PROVIDER_RESULT_UNKNOWN', providerBookingId: { $exists: false },
               providerTransactionId: operation.ownerReceipt.transactionId }] : [])
@@ -717,6 +751,10 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       'details.booking.pendingJoinPayments': { $elemMatch: {
       transactionId: operation.transactionId, phone: operation.phone, clientId: operation.clientId,
       ownerCommand: operation.ownerCommand,
+      ...(operation.ownerCommand?.kind === 'SUBSCRIPTION' ? {
+        ownerReceipt: paid && operation.ownerReceipt?.kind === 'COPAY' && operation.ownerReceipt.bookingId === bookingId
+          ? operation.ownerReceipt : { $exists: false }
+      } : {}),
       state: { $in: ['PROVIDER_CREATE_PENDING', 'PROVIDER_RESULT_UNKNOWN'] },
       providerBookingId: { $exists: false }
     } } }, [{ $set: {

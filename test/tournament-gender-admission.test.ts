@@ -94,6 +94,36 @@ async function main() {
     assert.equal(f.counters.waitlist, 1); assert.equal(f.counters.provider, 0);
   }
   {
+    const previousMode = process.env.TOURNAMENT_OWNER_RECOVERY_ONLY;
+    process.env.TOURNAMENT_OWNER_RECOVERY_ONLY = 'true';
+    try {
+      const paused = (error: any) => error.getStatus?.() === 503
+        && error.getResponse?.().code === 'TOURNAMENT_NEW_OPERATIONS_PAUSED';
+      for (const method of ['registerPublicParticipant', 'addPublicParticipantToWaitlist']) {
+        const f = fixture('MIXED', null);
+        f.tournament.participants = Array.from({ length: 4 }, (_, n) => ({ phone: `7900000000${n + 2}` }));
+        let publications = 0;
+        f.service.publishTournamentToSelectedCommunities = async () => { publications++; };
+        await assert.rejects(f.service[method]('cup', f.input), paused, method);
+        assert.equal(f.tournament.waitlist.length, 0);
+        assert.equal(publications + f.counters.waitlist + f.counters.append + f.counters.reserve + f.counters.provider, 0);
+        f.tournament.waitlist.push({ phone: PHONE });
+        assert.equal((await f.service[method]('cup', f.input)).code, 'ALREADY_WAITLISTED');
+        f.tournament.participants.push({ phone: PHONE });
+        assert.equal((await f.service[method]('cup', f.input)).code, 'ALREADY_REGISTERED');
+        assert.equal(publications + f.counters.waitlist + f.counters.append + f.counters.reserve + f.counters.provider, 0);
+      }
+      const open = fixture('MIXED', null);
+      open.service.resolveSourceTournamentProvider = () => 'NON_VIVA';
+      await assert.rejects(open.service.registerPublicParticipant('cup', open.input), paused);
+      assert.equal(open.counters.provider + open.counters.append + open.counters.reserve, 0);
+    } finally {
+      if (previousMode === undefined) delete process.env.TOURNAMENT_OWNER_RECOVERY_ONLY;
+      else process.env.TOURNAMENT_OWNER_RECOVERY_ONLY = previousMode;
+    }
+    console.log('PASS recovery-only rejects new register/waitlist writes and preserves existing responses');
+  }
+  {
     const f = fixture(); f.persistence.appendPublicWaitlistWithAdmission = async () => null;
     assert.equal((await f.service.addPublicParticipantToWaitlist('cup', f.input)).code, 'TOURNAMENT_RULE_CHANGED');
   }

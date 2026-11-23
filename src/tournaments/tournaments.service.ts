@@ -38,6 +38,7 @@ import { CommunityFeedItem } from '../communities/communities.types';
 import { GamesService } from '../games/games.service';
 import { LkPadelHubClientService } from '../integrations/lk-padelhub/lk-padelhub-client.service';
 import { LkIdentityService } from '../lk-identity/lk-identity.service';
+import type { LkIdentityActor } from '../lk-identity/lk-identity.types';
 import { PlayerRatingsService } from '../player-ratings/player-ratings.service';
 import {
   VivaAdminService,
@@ -127,8 +128,12 @@ interface CustomEnergyCheckoutInput {
   tenantKeyHeader?: string;
 }
 
+type TournamentActorIdentity = { clientId?: string; phone: string; tenantKey?: string };
+type ConfirmedTournamentActor = LkIdentityActor & { clientId: string };
+
 interface LkCheckoutAuthProfile {
   clientId?: string;
+  userInfoClientId?: string;
   phone: string;
   name?: string;
   tenantKey?: string;
@@ -178,6 +183,8 @@ interface PendingJoinPayment {
   /** Stable local logical attempt identity. Legacy rows use the provider transaction id here. */
   transactionId: string;
   providerTransactionId?: string;
+  ownerSubscription?: boolean;
+  copayBookingId?: string;
   state?:
     | 'PROVIDER_CREATE_PENDING'
     | 'PROVIDER_RESULT_UNKNOWN'
@@ -688,10 +695,12 @@ export class TournamentsService {
     return { ...common, status: 'RESOLVED', owner, binding: { ...binding, mappingSha256 }, reason: null };
   }
 
-  private readonly trustedRegistrationIdentities = new WeakMap<object, { clientId?: string; phone: string }>();
+  private readonly trustedRegistrationIdentities = new WeakMap<object, TournamentActorIdentity & {
+    actor?: ConfirmedTournamentActor;
+  }>();
 
-  private rememberRegistrationIdentity<T extends { clientId?: string; phone: string }>(client: T): T {
-    this.trustedRegistrationIdentities.set(client, { clientId: client.clientId, phone: client.phone });
+  private rememberRegistrationIdentity<T extends TournamentActorIdentity>(client: T, actor?: ConfirmedTournamentActor): T {
+    this.trustedRegistrationIdentities.set(client, { clientId: client.clientId, phone: client.phone, tenantKey: client.tenantKey, actor });
     return client;
   }
 
@@ -715,8 +724,8 @@ export class TournamentsService {
     try {
       let identity = input.trustedIdentity && this.trustedRegistrationIdentities.get(input.trustedIdentity);
       if (!identity && input.vivaAuthorizationHeader && this.lkIdentityService) {
-        const verified = await this.lkIdentityService.verifyTrustedBearer(input.vivaAuthorizationHeader);
-        identity = { clientId: verified.actor.clientId, phone: verified.actor.phoneNorm };
+        const actor = await this.resolveTournamentActor(input.vivaAuthorizationHeader);
+        identity = { clientId: actor.clientId, phone: actor.phoneNorm, tenantKey: actor.tenantKey };
       }
       if (!identity?.clientId || this.normalizePhone(input.phone) !== identity.phone
         || (input.clientId !== undefined && input.clientId !== identity.clientId)
@@ -737,15 +746,14 @@ export class TournamentsService {
 
   async resolveTrustedLkRegistrationClient(
     authorizationHeader?: string
-  ): Promise<{ clientId?: string; name: string; phone: string; levelLabel?: string }> {
+  ): Promise<TournamentActorIdentity & { name: string; levelLabel?: string }> {
     if (!this.lkIdentityService || !this.playerRatingsService) {
       throw new ServiceUnavailableException({
         code: 'TOURNAMENT_ELIGIBILITY_NOT_CONFIGURED',
         message: 'Trusted tournament identity and rating services are unavailable'
       });
     }
-    const verification = await this.lkIdentityService.verifyTrustedBearer(authorizationHeader);
-    const actor = verification.actor;
+    const actor = await this.resolveTournamentActor(authorizationHeader);
     const canonicalLevel = await this.playerRatingsService.resolveCanonicalLevelByIdentity({
       clientId: actor.clientId,
       phone: actor.phoneNorm
@@ -754,8 +762,9 @@ export class TournamentsService {
       clientId: actor.clientId,
       name: actor.name || actor.phoneNorm,
       phone: actor.phoneNorm,
+      tenantKey: actor.tenantKey,
       ...(canonicalLevel ? { levelLabel: canonicalLevel.levelLabel } : {})
-    });
+    }, actor);
   }
 
   async resolveCanonicalLkRegistrationClientByVerifiedPhone(input: {
@@ -1542,7 +1551,9 @@ export class TournamentsService {
     }
   ): Promise<TournamentJoinFlowResponse> {
     this.ensurePersistenceEnabled();
-    const tournament = await this.enrichTournamentVivaProfiles(await this.requireCustomBySlug(slug));
+    const stored = await this.requireCustomBySlug(slug);
+    this.assertTrustedRegistrationBinding(stored, client[TRUSTED_TOURNAMENT_CLIENT]);
+    const tournament = await this.enrichTournamentVivaProfiles(stored);
     const publicTournament = this.toPublicView(tournament);
     const normalizedPhone = this.normalizePhone(client.phone) ?? undefined;
     const normalizedLevel = this.normalizeLevel(client.levelLabel) ?? undefined;
@@ -1798,6 +1809,7 @@ export class TournamentsService {
       };
     }
 
+    this.assertTrustedRegistrationBinding(tournament, input.trustedIdentity);
     const registered = this.findParticipantByPhone(tournament.participants, normalizedPhone);
     if (registered) return { ok: true, code: 'ALREADY_REGISTERED', message: 'Игрок уже записан в турнир.',
       tournamentId: tournament.id, tournamentSlug: tournament.slug, participant: registered };
@@ -1809,7 +1821,7 @@ export class TournamentsService {
       if (original?.ownerCommand?.kind === 'FREE_BOOKING' && original.state === 'PROVIDER_RESULT_UNKNOWN') {
         const bookingId = this.pickString(original.ownerReceipt?.bookingId);
         if (bookingId) {
-          const identity = await this.resolveCheckoutIdentity(String(original.exerciseId), input.vivaAuthorizationHeader);
+          const identity = await this.resolveCheckoutIdentity(String(original.exerciseId), input.vivaAuthorizationHeader, input.trustedIdentity);
           if (identity.tournament.id === tournament.id && identity.actor.clientId === original.clientId
               && identity.actor.phoneNorm === original.phone && identity.tenantKey === original.widgetId
               && identity.studioId === original.studioId
@@ -1941,6 +1953,7 @@ export class TournamentsService {
       (item) => this.isCapacityHoldingPendingJoinPayment(item)
     ).length;
     if (!pendingFree && tournament.participants.length + reservedPaymentSeats >= maxPlayers) {
+      this.assertTournamentOwnerNewOperationsOpen();
       const nextWaitlist: TournamentParticipant[] = [
         ...tournament.waitlist,
         {
@@ -1969,7 +1982,7 @@ export class TournamentsService {
     const sourceProvider = this.resolveSourceTournamentProvider(tournament);
     if (isTournamentLevelRestricted(tournament) && sourceProvider === 'VIVA'
         && this.vivaAdminService && input.vivaAuthorizationHeader) {
-      return this.registerRestrictedFreeViva(tournament, participant, gender.decision, input.vivaAuthorizationHeader, pendingFree);
+      return this.registerRestrictedFreeViva(tournament, participant, gender.decision, input, pendingFree);
     }
     if ((gender.decision.gender !== 'MIXED' || isTournamentLevelRestricted(tournament)) && sourceProvider !== 'NON_VIVA') {
       return { ok: false, code: 'TOURNAMENT_SECURE_JOIN_REQUIRED', tournamentId: tournament.id,
@@ -2035,18 +2048,20 @@ export class TournamentsService {
   }
 
   private async registerRestrictedFreeViva(
-    tournament: CustomTournament, participant: TournamentParticipant, rule: TournamentAdmissionRule, auth: string,
-    original: Record<string, any> | null
+    tournament: CustomTournament, participant: TournamentParticipant, rule: TournamentAdmissionRule,
+    input: RegistrationInput, original: Record<string, any> | null
   ): Promise<TournamentRegistrationResponse> {
+    const auth = input.vivaAuthorizationHeader;
     const response = { tournamentId: tournament.id, tournamentSlug: tournament.slug };
     const pending: TournamentRegistrationResponse = { ...response, ok: false, code: 'BOOKING_FAILED',
       message: 'Подтверждение записи ожидается. Повторная запись не создана.' };
     const exerciseId = this.resolveBookingConfig(tournament, true).vivaExerciseId;
-    if (!exerciseId || !this.vivaAdminService) return pending;
+    if (!exerciseId || !this.vivaAdminService || !auth) return pending;
     if (!original) this.assertTournamentOwnerNewOperationsOpen();
-    const identity = await this.resolveCheckoutIdentity(exerciseId, auth);
+    const identity = await this.resolveCheckoutIdentity(exerciseId, auth, input.trustedIdentity);
     const { clientId, phoneNorm } = identity.actor;
-    if (!clientId || !phoneNorm || identity.tournament.id !== tournament.id || phoneNorm !== participant.phone) {
+    if (identity.tournament.id !== tournament.id || phoneNorm !== participant.phone
+      || (input.clientId !== undefined && input.clientId !== clientId)) {
       throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
     }
     const operationId = `tournament-owner:${randomUUID()}`;
@@ -2069,7 +2084,7 @@ export class TournamentsService {
       return { ...response, ok: false, code: 'PURCHASE_REQUIRED', message: 'Условия турнира требуют оплаты или абонемента.' };
     }
     if (!original && !await this.tournamentsPersistence.reservePublicJoinPayment(tournament.id, operation, rule)) return pending;
-    const current = await this.resolveCheckoutIdentity(exerciseId, auth);
+    const current = await this.refreshCheckoutIdentity(exerciseId, identity.actor);
     if (current.tournament.id !== tournament.id || current.actor.clientId !== operation.clientId
         || current.actor.phoneNorm !== operation.phone || current.studioId !== operation.studioId
         || current.tenantKey !== operation.widgetId) return pending;
@@ -2100,9 +2115,11 @@ export class TournamentsService {
 
   async getPublicRegistrationByTournamentRef(
     tournamentRef: string,
-    phone?: string
+    phone?: string,
+    actor?: TournamentActorIdentity
   ): Promise<{
-    status: 'NONE' | 'REGISTERED' | 'WAITLIST';
+    status: 'NONE' | 'REGISTERED' | 'WAITLIST' | 'PAYMENT_PENDING';
+    bookingId?: string;
     placeNumber?: number;
     waitlistNumber?: number;
     canRegister: boolean;
@@ -2111,6 +2128,7 @@ export class TournamentsService {
   }> {
     this.ensurePersistenceEnabled();
     const tournament = await this.requireCustomByPublicRefReadModel(tournamentRef);
+    if (actor) this.assertTournamentActorBinding(tournament, actor);
     const normalizedPhone = this.normalizePhone(phone);
     if (!normalizedPhone) {
       return {
@@ -2121,12 +2139,22 @@ export class TournamentsService {
       };
     }
 
+    const pendingCopay = this.getPendingJoinPayments(tournament).find(payment =>
+      payment.ownerSubscription && payment.phone === normalizedPhone && payment.copayBookingId
+      && this.isCapacityHoldingPendingJoinPayment(payment));
+    if (pendingCopay) {
+      return { status: 'PAYMENT_PENDING', bookingId: pendingCopay.copayBookingId,
+        canRegister: false, canCancel: true, message: 'Ожидается оплата.' };
+    }
+
     const participantIndex = tournament.participants.findIndex(
       (item) => this.normalizePhone(item.phone) === normalizedPhone
     );
     if (participantIndex >= 0) {
+      const copayBookingId = this.completedCopayBookings(tournament).get(tournament.participants[participantIndex].id ?? '');
       return {
         status: 'REGISTERED',
+        ...(copayBookingId ? { bookingId: copayBookingId } : {}),
         placeNumber: participantIndex + 1,
         canRegister: false,
         canCancel: true,
@@ -2186,7 +2214,8 @@ export class TournamentsService {
 
   async cancelPublicRegistrationByTournamentRef(
     tournamentRef: string,
-    phone?: string
+    phone?: string,
+    actor?: TournamentActorIdentity
   ): Promise<{
     status: 'NONE';
     canRegister: boolean;
@@ -2195,6 +2224,7 @@ export class TournamentsService {
   }> {
     this.ensurePersistenceEnabled();
     const tournament = await this.requireCustomByPublicRef(tournamentRef);
+    if (actor) this.assertTournamentActorBinding(tournament, actor);
     const normalizedPhone = this.normalizePhone(phone);
     if (!normalizedPhone) {
       return {
@@ -2275,6 +2305,15 @@ export class TournamentsService {
       tenantKey
     });
 
+    const needsVivaProfile = !authProfile.clientId;
+    if (needsVivaProfile) {
+      const actor = await this.resolveTournamentActor(input.authorizationHeader);
+      if (actor.tenantKey !== tenantKey || actor.phoneNorm !== clientPhone
+        || (authProfile.userInfoClientId && authProfile.userInfoClientId !== actor.clientId)) {
+        throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+      }
+      authProfile.clientId = actor.clientId;
+    }
     const pricing = this.readCustomEnergyPricing(body);
     const productRecord = this.toRecord(body.product) ?? {};
     this.assertCustomEnergyProduct(productRecord);
@@ -2285,6 +2324,7 @@ export class TournamentsService {
       routeExerciseId,
       tournamentPayload
     );
+    this.assertTournamentActorBinding(tournament, { clientId: authProfile.clientId, phone: clientPhone, tenantKey });
     const rule = await this.tournamentsPersistence.readPublicAdmissionRule(tournament.id);
     if (!rule || rule.gender !== 'MIXED' || !this.sameAdmissionRule(rule, tournament)) {
       throw new ForbiddenException({ code: 'TOURNAMENT_SECURE_JOIN_REQUIRED',
@@ -2294,7 +2334,7 @@ export class TournamentsService {
     if (!authProfile.clientId || (suppliedClientId && suppliedClientId !== authProfile.clientId)) {
       throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH', message: 'Не удалось подтвердить игрока.' });
     }
-    if (this.tournamentLevelMode() === 'ENFORCE' && isTournamentLevelRestricted(tournament)) {
+    if (this.tournamentLevelMode() === 'ENFORCE' && (needsVivaProfile || isTournamentLevelRestricted(tournament))) {
       // Level comes only from CUP canonical state for the verified actor; body fields are ignored.
       const levelDecision = this.decideTournamentLevel(
         tournament,
@@ -2387,6 +2427,7 @@ export class TournamentsService {
       };
     }
 
+    this.assertTrustedRegistrationBinding(tournament, input.trustedIdentity);
     const existingPending = this.findPendingJoinPayment(tournament, normalizedPhone);
     if (existingPending) {
       const payment: TournamentJoinPaymentState = { required: true, code: 'PURCHASE_REQUIRED',
@@ -2662,6 +2703,7 @@ export class TournamentsService {
     slug: string,
     input: {
       phone?: string;
+      trustedIdentity?: object;
       fallbackName?: string;
       fallbackLevelLabel?: string;
       vivaAuthorizationHeader?: string;
@@ -2669,6 +2711,7 @@ export class TournamentsService {
   ): Promise<TournamentRegistrationResponse> {
     this.ensurePersistenceEnabled();
     const tournament = await this.requireCustomBySlug(slug);
+    this.assertTrustedRegistrationBinding(tournament, input.trustedIdentity);
     const normalizedPhone = this.normalizePhone(input.phone);
     if (!normalizedPhone) {
       return {
@@ -2821,6 +2864,7 @@ export class TournamentsService {
       notes: this.pickString(input.notes) ?? undefined
     });
 
+    this.assertTournamentOwnerNewOperationsOpen();
     const nextWaitlist: TournamentParticipant[] = [...tournament.waitlist, participant];
     const appended = await this.tournamentsPersistence.appendPublicWaitlistWithAdmission(
       tournament.id, normalizedPhone, participant, gender.decision
@@ -2904,7 +2948,8 @@ export class TournamentsService {
     // Decoded fallback claims may deny an expired token, but never grant identity.
     // Successful authenticated userinfo is the sole authority when signature verification failed.
     if (verifiedClaims && userInfo) {
-      for (const extract of [this.extractLkAuthPhone, this.extractLkAuthClientId, this.extractLkAuthTenantKey]) {
+      for (const extract of [this.extractLkAuthPhone, this.extractLkAuthClientId, this.extractLkAuthTenantKey,
+        (profile: Record<string, unknown>) => this.pickString(profile.sub)]) {
         const signed = extract.call(this, verifiedClaims);
         const observed = extract.call(this, userInfo);
         if (signed && observed && signed !== observed) {
@@ -2929,7 +2974,8 @@ export class TournamentsService {
     }
 
     return {
-      clientId: this.extractLkAuthClientId(merged),
+      clientId: this.extractLkAuthClientId(verifiedClaims ?? userInfo ?? {}),
+      userInfoClientId: this.extractLkAuthClientId(userInfo ?? {}),
       phone,
       name: this.extractLkAuthName(merged),
       tenantKey: tokenTenant
@@ -2995,8 +3041,12 @@ export class TournamentsService {
   }
 
   private async fetchTournamentHostingAccess(token: string): Promise<boolean> {
+    return this.hasTournamentHostingAccess(await this.fetchVivaOwnProfile(token, this.vivaEndUserWidgetId));
+  }
+
+  private async fetchVivaOwnProfile(token: string, tenantKey: string): Promise<unknown> {
     const profileUrl = new URL(
-      `/end-user/api/v1/${encodeURIComponent(this.vivaEndUserWidgetId)}/profile`,
+      `/end-user/api/v1/${encodeURIComponent(tenantKey)}/profile`,
       `${this.vivaEndUserApiBaseUrl}/`
     );
     let response: globalThis.Response;
@@ -3007,21 +3057,85 @@ export class TournamentsService {
           Authorization: `Bearer ${token}`,
           'User-Agent': this.vivaEndUserUserAgent
         },
+        redirect: 'error',
         signal: this.buildAbortSignal(this.vivaEndUserRequestTimeoutMs)
       });
     } catch (_error) {
-      throw new ServiceUnavailableException('Viva profile is temporarily unavailable');
+      throw this.tournamentProfileUnavailable();
     }
 
     if (response.status === 401 || response.status === 403) {
       throw new UnauthorizedException('LK auth token is invalid');
     }
-    if (!response.ok) {
-      throw new ServiceUnavailableException('Viva profile is temporarily unavailable');
+    if (response.status !== 200) {
+      throw this.tournamentProfileUnavailable();
     }
 
-    const profile = await response.json().catch(() => null);
-    return this.hasTournamentHostingAccess(profile);
+    return response.json().catch(() => null);
+  }
+
+  private tournamentProfileUnavailable(): ServiceUnavailableException {
+    return new ServiceUnavailableException({ code: 'TOURNAMENT_PROFILE_UNAVAILABLE',
+      message: 'Профиль Viva временно недоступен. Повторите попытку позже.' });
+  }
+
+  private async confirmTournamentActor(actor: LkIdentityActor, auth?: string): Promise<ConfirmedTournamentActor> {
+    if (!actor.phoneNorm) throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+    if (actor.clientId) return { ...actor, clientId: actor.clientId };
+
+    const token = this.extractBearerToken(auth);
+    if (!token || !actor.verified || !/^[A-Za-z0-9_-]+$/.test(actor.tenantKey)) {
+      throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+    }
+    const profile = this.toRecord(await this.fetchVivaOwnProfile(token, actor.tenantKey));
+    if (!profile) throw this.tournamentProfileUnavailable();
+
+    const client = this.toRecord(profile.client);
+    const { id: clientId } = profile;
+    const ids = [profile.uuid, client?.id, client?.uuid, ...this.lkClientIdValues(profile)];
+    const phones = [profile, client].flatMap(row =>
+      [row?.phone, row?.phoneNumber, row?.phone_number, row?.mobile, row?.mobilePhone, row?.mobile_phone]
+    ).filter(value => value != null);
+    const tenants = [profile.tenantKey, profile.tenant_key, profile.tenant, profile.widgetId, profile.widget_id];
+    if (typeof clientId !== 'string' || !/^[A-Za-z0-9._:-]{1,200}$/.test(clientId)
+      || ids.some(value => value != null && value !== clientId)
+      || !phones.length || phones.some(value => typeof value !== 'string' || !/^[+0-9 ().-]+$/.test(value)
+        || this.normalizePhone(value) !== actor.phoneNorm)
+      || tenants.some(value => value != null && value !== actor.tenantKey)) {
+      throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH',
+        message: 'Не удалось подтвердить игрока.' });
+    }
+    return { ...actor, clientId };
+  }
+
+  private async resolveTournamentActor(auth?: string): Promise<ConfirmedTournamentActor> {
+    if (!this.lkIdentityService) throw new ServiceUnavailableException({ code: 'TOURNAMENT_ELIGIBILITY_NOT_CONFIGURED' });
+    const { actor } = await this.lkIdentityService.verifyTrustedBearer(auth);
+    return this.confirmTournamentActor(actor, auth);
+  }
+
+  private assertTrustedRegistrationBinding(tournament: CustomTournament, trustedIdentity?: object): void {
+    const identity = trustedIdentity && this.trustedRegistrationIdentities.get(trustedIdentity);
+    if (identity) this.assertTournamentActorBinding(tournament, identity);
+  }
+
+  private assertTournamentActorBinding(tournament: CustomTournament, actor: TournamentActorIdentity): void {
+    const widgetId = this.resolveBookingConfig(tournament, true).vivaWidgetId;
+    if (actor.tenantKey && widgetId && widgetId !== actor.tenantKey) {
+      throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+    }
+    if (!actor.clientId) return;
+
+    const rows = this.toRecord(this.toRecord(tournament.details)?.booking)?.pendingJoinPayments;
+    for (const item of Array.isArray(rows) ? rows : []) {
+      const row = this.toRecord(item);
+      const clientId = this.pickString(row?.clientId);
+      const phone = this.normalizePhone(row?.phone);
+      if (!clientId || !phone || ['FAILED', 'EXPIRED', 'OWNER_CANCELLED'].includes(String(row?.state))) continue;
+      if ((clientId === actor.clientId) !== (phone === actor.phone)) {
+        throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+      }
+    }
   }
 
   private pruneTournamentHostingAccessCache(): void {
@@ -3528,40 +3642,39 @@ export class TournamentsService {
   }
 
   private extractLkAuthPhone(profile: Record<string, unknown>): string | undefined {
-    const client = this.toRecord(profile.client) ?? {};
-    return (
-      this.normalizePhone(profile.phone_number)
-      ?? this.normalizePhone(profile.phone)
-      ?? this.normalizePhone(profile.mobile)
-      ?? this.normalizePhone(profile.preferred_username)
-      ?? this.normalizePhone(client.phone_number)
-      ?? this.normalizePhone(client.phone)
-      ?? this.normalizePhone(client.mobile)
-    ) ?? undefined;
+    const client = this.toRecord(profile.client);
+    const values: unknown[] = [profile.phone_number, profile.phone, profile.mobile, client?.phone_number,
+      client?.phone, client?.mobile].filter(value => value != null);
+    if (/^7\d{10}$/.test(this.normalizePhone(profile.preferred_username) ?? '')) values.push(profile.preferred_username);
+    const phones = values.map(value => this.normalizePhone(value));
+    if (phones.includes(null) || new Set(phones).size > 1) {
+      throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+    }
+    return phones[0] ?? undefined;
+  }
+
+  private lkClientIdValues(profile: Record<string, unknown>): unknown[] {
+    const client = this.toRecord(profile.client);
+    return [profile, client].flatMap(row =>
+      [row?.clientId, row?.client_id, row?.vivaClientId, row?.viva_client_id]);
   }
 
   private extractLkAuthClientId(profile: Record<string, unknown>): string | undefined {
-    const client = this.toRecord(profile.client) ?? {};
-    return (
-      this.pickString(profile.clientId)
-      ?? this.pickString(profile.client_id)
-      ?? this.pickString(profile.userId)
-      ?? this.pickString(profile.user_id)
-      ?? this.pickString(profile.sub)
-      ?? this.pickString(profile.id)
-      ?? this.pickString(client.id)
-      ?? this.pickString(client.clientId)
-      ?? undefined
-    );
+    const ids = [...this.lkClientIdValues(profile), this.toRecord(profile.client)?.id]
+      .filter(value => value != null).map(value => this.pickString(value));
+    if (ids.includes(undefined) || new Set(ids).size > 1) {
+      throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+    }
+    return ids[0];
   }
 
   private extractLkAuthTenantKey(profile: Record<string, unknown>): string | undefined {
-    return (
-      this.pickString(profile.tenantKey)
-      ?? this.pickString(profile.tenant_key)
-      ?? this.pickString(profile.tenant)
-      ?? undefined
-    );
+    const tenants = [profile.tenantKey, profile.tenant_key, profile.tenant]
+      .filter(value => value != null).map(value => this.pickString(value));
+    if (tenants.includes(undefined) || new Set(tenants).size > 1) {
+      throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+    }
+    return tenants[0];
   }
 
   private extractLkAuthName(profile: Record<string, unknown>): string | undefined {
@@ -5435,12 +5548,30 @@ export class TournamentsService {
     const sourceTournamentSnapshot = sourceTournament
       ? this.buildSourceTournamentSnapshot(sourceTournament)
       : this.getSourceTournamentSnapshot(tournament);
-    const sourceParticipants = Array.isArray(sourceTournament?.participants)
+    const sourceRoster = Array.isArray(sourceTournament?.participants)
       ? sourceTournament.participants
       : this.readSnapshotParticipants(sourceTournamentSnapshot);
-    const customParticipants = Array.isArray(tournament.participants)
-      ? tournament.participants
-      : [];
+    const customParticipants = Array.isArray(tournament.participants) ? tournament.participants : [];
+    const reserved = this.getPendingJoinPayments(tournament).filter(payment =>
+      payment.ownerSubscription && this.isCapacityHoldingPendingJoinPayment(payment));
+    const completedCopays = this.completedCopayBookings(tournament);
+    const paidCopay = customParticipants.filter(p => p.paymentStatus === 'PAID' && completedCopays.has(p.id ?? ''));
+    const sourceParticipants: TournamentParticipant[] = [];
+    const emittedPaid = new Set<string>();
+    for (const participant of sourceRoster) {
+      const phone = this.normalizePhone(participant.phone);
+      const bookingId = this.pickString(this.toRecord(participant)?.vivaBookingId);
+      if (reserved.some(payment => bookingId && payment.copayBookingId
+        ? payment.copayBookingId === bookingId : payment.phone === phone)) continue;
+      const settled = paidCopay.find(player => bookingId
+        ? completedCopays.get(player.id ?? '') === bookingId : this.normalizePhone(player.phone) === phone);
+      if (!settled) sourceParticipants.push(participant);
+      else if (!emittedPaid.has(settled.id ?? '')) {
+        emittedPaid.add(settled.id ?? '');
+        sourceParticipants.push(settled);
+      }
+    }
+    const hiddenCarriers = sourceRoster.length - sourceParticipants.length;
     const sourceParticipantsCount =
       this.pickNumber(sourceTournament?.participantsCount)
       ?? this.pickNumber(sourceTournamentSnapshot.participantsCount);
@@ -5457,8 +5588,8 @@ export class TournamentsService {
     const paidParticipantsCount = participants.filter((item) => item.paymentStatus === 'PAID').length;
     const participantsCount = Math.max(
       participants.length,
-      sourceParticipantsCount ?? 0,
-      sourceProvidesParticipantState ? 0 : Number(tournament.participantsCount || 0) || 0
+      (sourceParticipantsCount ?? 0) - hiddenCarriers,
+      sourceProvidesParticipantState ? 0 : (Number(tournament.participantsCount || 0) || 0) - hiddenCarriers
     );
     const waitlist = Array.isArray(tournament.waitlist) ? tournament.waitlist : [];
 
@@ -5498,7 +5629,9 @@ export class TournamentsService {
       waitlistCount: waitlist.length,
       details: {
         ...(tournament.details && typeof tournament.details === 'object' ? tournament.details : {}),
-        sourceTournamentSnapshot
+        sourceTournamentSnapshot: hiddenCarriers ? { ...sourceTournamentSnapshot,
+          participants: sourceParticipants, participantsCount: Math.max(0, (sourceParticipantsCount ?? 0) - hiddenCarriers)
+        } : sourceTournamentSnapshot
       }
     };
   }
@@ -5860,24 +5993,18 @@ export class TournamentsService {
       return { ok: false, code: 'TOURNAMENT_RULE_CHANGED', message: 'Правила турнира изменились. Повторите запись.',
         tournamentSlug: tournament.slug, accessLevels: tournament.accessLevels };
     }
-    let evidence: PlayerLevelEvidence = { status: 'UNAVAILABLE' };
-    {
-      // Subscription compatibility needs canonical evidence even for unrestricted tournaments.
-      try {
-        let identity = input.trustedIdentity && this.trustedRegistrationIdentities.get(input.trustedIdentity);
-        if (!identity && input.vivaAuthorizationHeader && this.lkIdentityService) {
-          const verified = await this.lkIdentityService.verifyTrustedBearer(input.vivaAuthorizationHeader);
-          identity = { clientId: verified.actor.clientId, phone: verified.actor.phoneNorm };
-        }
-        if (!identity || this.normalizePhone(input.phone) !== this.normalizePhone(identity.phone)
-          || (input.clientId !== undefined && input.clientId !== identity.clientId)) {
-          throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
-        }
-        evidence = await this.resolveTournamentAdmissionLevel(identity);
-      } catch (error) {
-        if (error instanceof ForbiddenException) throw error;
-      }
+    let identity = input.trustedIdentity && this.trustedRegistrationIdentities.get(input.trustedIdentity);
+    if (!identity && input.vivaAuthorizationHeader) {
+      const actor = await this.resolveTournamentActor(input.vivaAuthorizationHeader);
+      identity = { clientId: actor.clientId, phone: actor.phoneNorm, tenantKey: actor.tenantKey };
     }
+    if (!identity || this.normalizePhone(input.phone) !== this.normalizePhone(identity.phone)
+      || (input.clientId !== undefined && input.clientId !== identity.clientId)) {
+      throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+    }
+    this.assertTournamentActorBinding(tournament, identity);
+    // Subscription compatibility needs canonical evidence even for unrestricted tournaments.
+    const evidence = await this.resolveTournamentAdmissionLevel(identity);
     return this.levelAccessResponse(tournament, this.decideTournamentLevel(tournament, evidence));
   }
 
@@ -5957,6 +6084,10 @@ export class TournamentsService {
         ? { status: 'OK', ratingNumeric: canonical.ratingNumeric }
         : { status: 'UNKNOWN' };
     } catch (error) {
+      if (identity.clientId && phone && error instanceof ConflictException
+        && this.toRecord(error.getResponse())?.code === 'RATING_IDENTITY_CONFLICT') {
+        throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+      }
       return error instanceof ConflictException ? { status: 'UNKNOWN' } : { status: 'UNAVAILABLE' };
     }
   }
@@ -5970,15 +6101,30 @@ export class TournamentsService {
   async verifyCheckoutOwner(auth?: string, token?: string) {
     if (!this.lkIdentityService) throw new ServiceUnavailableException({ code: 'TOURNAMENT_OWNER_AUTH_UNAVAILABLE' });
     const { actor } = await this.lkIdentityService.verify(auth, token);
-    if (!actor.verified || !actor.clientId || !actor.phoneNorm || !actor.tenantKey) throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
-    return actor;
+    if (!actor.verified || !actor.tenantKey) throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+    return this.confirmTournamentActor(actor, auth);
   }
 
-  async resolveCheckoutIdentity(exerciseRef: string, auth?: string) {
-    this.ensurePersistenceEnabled();
+  async resolveCheckoutIdentity(exerciseRef: string, auth?: string, trustedIdentity?: object) {
+    const registered = trustedIdentity && this.trustedRegistrationIdentities.get(trustedIdentity)?.actor;
+    if (registered) return this.refreshCheckoutIdentity(exerciseRef, registered);
     if (!this.lkIdentityService) throw new ServiceUnavailableException({ code: 'TOURNAMENT_ELIGIBILITY_NOT_CONFIGURED' });
     const { actor } = await this.lkIdentityService.verifyTrustedBearer(auth);
-    if (!actor.clientId || !actor.phoneNorm) throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+    const target = await this.readCheckoutTarget(exerciseRef, actor.tenantKey);
+    return this.bindCheckoutActor(target, await this.confirmTournamentActor(actor, auth));
+  }
+
+  async refreshCheckoutIdentity(exerciseRef: string, actor: ConfirmedTournamentActor) {
+    return this.bindCheckoutActor(await this.readCheckoutTarget(exerciseRef, actor.tenantKey), actor);
+  }
+
+  private bindCheckoutActor(target: Awaited<ReturnType<TournamentsService['readCheckoutTarget']>>, actor: ConfirmedTournamentActor) {
+    this.assertTournamentActorBinding(target.tournament, { clientId: actor.clientId, phone: actor.phoneNorm });
+    return { ...target, actor };
+  }
+
+  private async readCheckoutTarget(exerciseRef: string, actorTenantKey: string) {
+    this.ensurePersistenceEnabled();
     const target = await this.tournamentsPersistence.findCheckoutTournamentByExerciseId(exerciseRef);
     if (!target) throw new NotFoundException({ code: 'TOURNAMENT_TARGET_UNMAPPED' });
     const { tournament, mappingChecks } = target;
@@ -5986,8 +6132,8 @@ export class TournamentsService {
     const exerciseId = this.pickString(booking.vivaExerciseId), studioId = this.pickString(booking.vivaStudioId);
     const tenantKey = this.pickString(booking.vivaWidgetId) ?? this.vivaEndUserWidgetId;
     if (exerciseId !== exerciseRef || !studioId || !tenantKey) throw new ConflictException({ code: 'TOURNAMENT_TARGET_UNMAPPED' });
-    if (tenantKey !== actor.tenantKey) throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
-    return { actor, tournament, exerciseId, studioId, tenantKey, mappingChecks };
+    if (tenantKey !== actorTenantKey) throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+    return { tournament, exerciseId, studioId, tenantKey, mappingChecks };
   }
 
   async checkCheckoutAdmission(context: Awaited<ReturnType<TournamentsService['resolveCheckoutIdentity']>>, auth?: string) {
@@ -6004,22 +6150,25 @@ export class TournamentsService {
   /** Level decision for the authenticated LK player; the decision clients and gateways consume. */
   async getLevelDecisionByTournamentRef(
     tournamentRef: string,
-    authorizationHeader?: string
+    authorizationHeader?: string,
+    registrationIdentity?: object
   ): Promise<TournamentLevelDecision & { tournamentId: string; exerciseId: string | null; actorClientId: string }> {
     this.ensurePersistenceEnabled();
-    if (!this.lkIdentityService) {
-      throw new ServiceUnavailableException({ code: 'TOURNAMENT_ELIGIBILITY_NOT_CONFIGURED' });
-    }
     const tournament = await this.requireCustomByPublicRef(tournamentRef);
-    const { actor } = await this.lkIdentityService.verifyTrustedBearer(authorizationHeader);
-    if (!actor.clientId || !actor.phoneNorm) throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+    const registered = registrationIdentity && this.trustedRegistrationIdentities.get(registrationIdentity);
+    let identity;
+    if (registered?.clientId) {
+      identity = { ...registered, clientId: registered.clientId };
+    } else {
+      const actor = await this.resolveTournamentActor(authorizationHeader);
+      identity = { clientId: actor.clientId, phone: actor.phoneNorm, tenantKey: actor.tenantKey };
+    }
     const access = await this.checkFreshTournamentLevel(tournament, {
-      phone: actor.phoneNorm, clientId: actor.clientId,
-      trustedIdentity: this.rememberRegistrationIdentity({ phone: actor.phoneNorm, clientId: actor.clientId })
+      ...identity, trustedIdentity: this.rememberRegistrationIdentity(identity)
     });
     if (!access.levelDecision) throw new ConflictException({ code: access.code, message: access.message });
     return { ...access.levelDecision, tournamentId: tournament.id,
-      exerciseId: this.resolveBookingConfig(tournament).vivaExerciseId ?? null, actorClientId: actor.clientId };
+      exerciseId: this.resolveBookingConfig(tournament).vivaExerciseId ?? null, actorClientId: identity.clientId };
   }
 
   /**
@@ -6032,21 +6181,24 @@ export class TournamentsService {
     authorizationHeader?: string
   ): Promise<TournamentServerBookingAdmission> {
     this.ensurePersistenceEnabled();
-    if (!this.lkIdentityService) {
-      throw new ServiceUnavailableException({ code: 'TOURNAMENT_ELIGIBILITY_NOT_CONFIGURED' });
-    }
+    const actor = await this.resolveTournamentActor(authorizationHeader);
+    return {
+      ...await this.evaluateServerBookingAdmission(tournamentRef, actor),
+      refresh: () => this.evaluateServerBookingAdmission(tournamentRef, actor)
+    };
+  }
+
+  private async evaluateServerBookingAdmission(
+    tournamentRef: string,
+    actor: ConfirmedTournamentActor
+  ): Promise<TournamentServerBookingAdmission> {
     const tournament = await this.requireCustomByPublicRef(tournamentRef);
-    const { actor } = await this.lkIdentityService.verifyTrustedBearer(authorizationHeader);
-    const phone = this.normalizePhone(actor.phoneNorm);
-    if (!actor.clientId || !phone) {
-      throw new ForbiddenException({ code: 'TOURNAMENT_SERVER_BOOKING_ACTOR_INVALID' });
-    }
-    const player: PlayerLevelEvidence = isTournamentLevelRestricted(tournament)
-      ? await this.resolveTournamentAdmissionLevel({ clientId: actor.clientId, phone })
-      : { status: 'UNAVAILABLE' };
+    const identity = { phone: actor.phoneNorm, clientId: actor.clientId, tenantKey: actor.tenantKey };
+    this.assertTournamentActorBinding(tournament, identity);
+    const player = await this.resolveTournamentAdmissionLevel(identity);
     const decision = this.decideTournamentLevel(tournament, player);
     const gender = await this.checkGenderAdmission(tournament, {
-      phone, clientId: actor.clientId, vivaAuthorizationHeader: authorizationHeader
+      ...identity, trustedIdentity: this.rememberRegistrationIdentity(identity)
     });
     const booking = this.resolveBookingConfig(tournament);
     const details = this.toRecord(tournament.details) ?? {};
@@ -6057,7 +6209,7 @@ export class TournamentsService {
       studioId: booking.vivaStudioId ?? null,
       levelMode: decision.mode,
       decision,
-      actor: { clientId: actor.clientId, phone },
+      actor: { clientId: actor.clientId, phone: actor.phoneNorm },
       price: parseTournamentServerBookingPrice(rawBooking.serverBooking),
       otherRefusal: !this.isTournamentRegistrationOpen(tournament)
         ? { code: 'TOURNAMENT_LOCAL_CLOSED', message: 'Запись на турнир закрыта.' }
@@ -7008,6 +7160,12 @@ export class TournamentsService {
     if (!transactionId || !phone) {
       return null;
     }
+    // Public profile enrichment normalizes the holds before the display projection reads them again.
+    const ownerSubscription = this.toRecord(record.ownerCommand)?.kind === 'SUBSCRIPTION' || record.ownerSubscription === true;
+    const receipt = this.toRecord(record.ownerReceipt);
+    const copayBookingId = ownerSubscription
+      ? this.pickString(receipt?.kind === 'COPAY' ? receipt.bookingId : record.copayBookingId)
+      : undefined;
     const rawSnapshot = this.toRecord(record.eligibilitySnapshot);
     const snapshotResult = this.pickString(rawSnapshot?.result);
     const snapshotActivityType = this.pickString(rawSnapshot?.activityType);
@@ -7101,6 +7259,7 @@ export class TournamentsService {
     return {
       ...(this.toRecord(record.purchaseOptionSnapshot) ? { purchaseOptionSnapshot: record.purchaseOptionSnapshot as TournamentPurchaseOption } : {}),
       transactionId,
+      ...(ownerSubscription ? { ownerSubscription: true, copayBookingId } : {}),
       ...(state === 'PROVIDER_CREATE_PENDING'
         || state === 'PROVIDER_RESULT_UNKNOWN'
         || state === 'PENDING_PAYMENT'
@@ -8316,7 +8475,7 @@ export class TournamentsService {
     });
 
     this.getPendingJoinPayments(tournament)
-      .filter((payment) => this.isCapacityHoldingPendingJoinPayment(payment))
+      .filter((payment) => !payment.ownerSubscription && this.isCapacityHoldingPendingJoinPayment(payment))
       .forEach((payment, index) => {
         const participant = this.pendingJoinPaymentToParticipant(payment, index);
         const participantKey = this.buildParticipantKey(participant);
@@ -8337,6 +8496,19 @@ export class TournamentsService {
       });
 
     return participants;
+  }
+
+  private completedCopayBookings(tournament: CustomTournament): Map<string, string> {
+    const rows = this.toRecord(this.toRecord(tournament.details)?.booking)?.pendingJoinPayments;
+    const result = new Map<string, string>();
+    for (const row of Array.isArray(rows) ? rows : []) {
+      if (row?.state === 'OWNER_COMPLETED' && row.ownerCommand?.kind === 'SUBSCRIPTION'
+        && row.ownerReceipt?.kind === 'COPAY' && typeof row.providerBookingId === 'string'
+        && row.providerBookingId === row.ownerReceipt.bookingId) {
+        result.set(`owner:${row.transactionId}`, row.providerBookingId);
+      }
+    }
+    return result;
   }
 
   private getPendingJoinPayments(tournament: CustomTournament): PendingJoinPayment[] {

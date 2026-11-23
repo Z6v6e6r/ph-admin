@@ -40,7 +40,7 @@ function memoryCollection() {
   };
 }
 
-function build(row: CustomTournament, rating: number | null) {
+function build(row: CustomTournament, rating: number | null, clientIdInToken = true) {
   const viva = { listed: 0, checkouts: 0, bookings: [] as unknown[] };
   const vivaAdmin = {
     createExerciseBooking: async (input: unknown) => { viva.bookings.push(input); return { outcome: 'CREATED', bookingId: 'booking-1' }; },
@@ -70,7 +70,8 @@ function build(row: CustomTournament, rating: number | null) {
     undefined,
     { verifyTrustedBearer: async (header?: string) => {
       if (header !== 'Bearer synthetic') throw new Error('unauthenticated');
-      return { actor: { clientId: 'client-1', phoneNorm: PHONE, name: 'Synthetic' } };
+      return { actor: { clientId: clientIdInToken ? 'client-1' : undefined, phoneNorm: PHONE,
+        name: 'Synthetic', tenantKey: 'iSkq6G', verified: true } };
     } } as never,
     { resolveCanonicalLevelByIdentity: async () => (rating === null ? null
       : { playerKey: 'p', clientId: 'client-1', levelLabel: String(rating), ratingNumeric: rating }) } as never
@@ -168,6 +169,31 @@ async function main() {
     assert.equal(JSON.stringify(stored).includes(PHONE), false, 'attempt does not store the phone');
     const current = await allowed.service.status('level-cup', 'Bearer synthetic');
     assert.equal(current.state, 'PAYMENT_PENDING');
+  });
+  await withEnv({ TOURNAMENT_SERVER_BOOKING_MODE: 'enabled', VIVA_END_USER_API_BASE_URL: 'https://viva.example' }, async () => {
+    const h = build(tournament(price), 3.31, false);
+    const originalFetch = globalThis.fetch;
+    let reads = 0;
+    let reachable = false;
+    globalThis.fetch = async (url, init) => {
+      reads++;
+      assert.equal(String(url), 'https://viva.example/end-user/api/v1/iSkq6G/profile');
+      assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer synthetic');
+      return reachable ? Response.json({ id: 'client-1', phone: PHONE }) : new Response(null, { status: 503 });
+    };
+    try {
+      const join = () => h.service.join('level-cup', 'Bearer synthetic', 'fixture-profile-key');
+      await status(join(), 503, 'TOURNAMENT_PROFILE_UNAVAILABLE');
+      assert.equal(h.collection.rows.size, 0);
+      assert.equal(h.viva.bookings.length, 0);
+      reachable = true;
+      assert.equal((await join()).state, 'PAYMENT_PENDING');
+      assert.equal(reads, 2, 'the pre-dispatch rule refresh reuses the verified profile');
+      assert.equal(h.collection.rows.size, 1);
+      assert.deepEqual(h.viva.bookings, [{ exerciseId: 'exercise-level-1', clientId: 'client-1', phone: PHONE }]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
   // An absent rollout variable still enforces the owner gate.
   await withEnv({ TOURNAMENT_SERVER_BOOKING_MODE: 'enabled', TOURNAMENT_LEVEL_ADMISSION_MODE: undefined }, async () => {

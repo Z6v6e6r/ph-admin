@@ -256,7 +256,8 @@ export class TournamentsController {
     @Req() request: Request,
     @CurrentUser() user?: RequestUser
   ): Promise<{
-    status: 'NONE' | 'REGISTERED' | 'WAITLIST';
+    status: 'NONE' | 'REGISTERED' | 'WAITLIST' | 'PAYMENT_PENDING';
+    bookingId?: string;
     placeNumber?: number;
     waitlistNumber?: number;
     canRegister: boolean;
@@ -265,12 +266,13 @@ export class TournamentsController {
     levelDecision?: TournamentLevelDecision;
   }> {
     const client = await this.resolveLkClient(request, user);
-    const registration = await this.tournamentsService.getPublicRegistrationByTournamentRef(id, client.phone);
+    const registration = await this.tournamentsService.getPublicRegistrationByTournamentRef(id, client.phone, client);
     if (registration.status !== 'NONE' || !registration.canRegister) return registration;
     // Existing registrations are never re-evaluated; only a new registration is gated.
     const levelDecision = await this.tournamentsService.getLevelDecisionByTournamentRef(
       id,
-      this.pickString(request.headers.authorization)
+      this.pickString(request.headers.authorization),
+      client
     );
     if (levelDecision.enforced && !levelDecision.allowed) {
       return { ...registration, canRegister: false, message: levelDecision.message, levelDecision };
@@ -344,6 +346,7 @@ export class TournamentsController {
 
     const outcome = await this.tournamentsService.registerPublicParticipantByTournamentRef(id, {
       trustedIdentity: client,
+      clientId: client.clientId,
       name: client.name || client.phone,
       phone: client.phone,
       levelLabel: client.levelLabel,
@@ -366,7 +369,7 @@ export class TournamentsController {
     message: string;
   }> {
     const client = await this.resolveLkClient(request, user);
-    return this.tournamentsService.cancelPublicRegistrationByTournamentRef(id, client.phone);
+    return this.tournamentsService.cancelPublicRegistrationByTournamentRef(id, client.phone, client);
   }
 
   @Post(':id/checkout')
@@ -390,6 +393,14 @@ export class TournamentsController {
     if (!this.checkoutService) throw new ServiceUnavailableException();
     return this.checkoutService.abortSubscription(id, this.pickString(request.headers.authorization),
       this.pickString(request.headers['x-cup-integration-token']), body);
+  }
+
+  @Post(':id/subscription-admission/copay')
+  @Roles()
+  recordSubscriptionCopay(@Param('id') id: string, @Req() request: Request, @Body() body: unknown) {
+    if (!this.checkoutService) throw new ServiceUnavailableException();
+    return this.checkoutService.completeSubscription(id, this.pickString(request.headers.authorization),
+      this.pickString(request.headers['x-cup-integration-token']), body, true);
   }
 
   @Post(':id/subscription-admission/complete')
@@ -539,7 +550,7 @@ export class TournamentsController {
     request: Request,
     _user?: RequestUser,
     _body?: Record<string, unknown>
-  ): Promise<{ name: string; phone: string; levelLabel?: string }> {
+  ) {
     return this.tournamentsService.resolveTrustedLkRegistrationClient(
       this.pickString(request.headers.authorization)
     );

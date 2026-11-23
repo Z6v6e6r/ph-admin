@@ -53,8 +53,8 @@ export const TOURNAMENT_LEVEL_GRID: ReadonlyArray<{ token: string; scaled: numbe
  * (D+ 2.0–3.0). A wider tolerance would admit a whole additional grade on one side.
  */
 export const LEVEL_TOLERANCE_MAX = Math.max(...TOURNAMENT_LEVEL_GRID_BANDS.map((band) => band.max - band.min));
-/** Default suggested for newly created tournaments; absent field on existing rows means 0. */
-export const LEVEL_TOLERANCE_NEW_TOURNAMENT_DEFAULT = 0;
+/** Default for numeric ranges on newly created tournaments and existing rows without an override. */
+export const LEVEL_TOLERANCE_NEW_TOURNAMENT_DEFAULT = 0.15;
 
 export type TournamentLevelRule =
   | { kind: 'NONE' }
@@ -87,9 +87,9 @@ export function normalizeLevelToleranceInput(value: unknown): number {
   return fromScaled(scaled);
 }
 
-/** Stored value: absent/null means 0 for existing tournaments; anything else invalid is reported. */
+/** Missing/null means the current default. An explicit tolerance, including zero, is preserved. */
 export function readStoredLevelTolerance(value: unknown): number | 'INVALID' {
-  if (value === undefined || value === null) return 0;
+  if (value === undefined || value === null) return LEVEL_TOLERANCE_NEW_TOURNAMENT_DEFAULT;
   try {
     return normalizeLevelToleranceInput(value);
   } catch {
@@ -198,8 +198,11 @@ export function tournamentLevelRuleVersion(input: TournamentLevelRuleInput): str
   const levels = Array.isArray(input.accessLevels)
     ? input.accessLevels.map((item) => String(item ?? '').trim().toUpperCase()).sort()
     : input.accessLevels ?? null;
+  const defaultTolerance = parseTournamentLevelRule(input.accessLevels).kind === 'RANGE'
+    ? LEVEL_TOLERANCE_NEW_TOURNAMENT_DEFAULT
+    : null;
   const digest = createHash('sha256')
-    .update(JSON.stringify({ id: input.id, levels, tolerance: input.levelTolerance ?? null, updatedAt: input.updatedAt ?? null }))
+    .update(JSON.stringify({ id: input.id, levels, tolerance: input.levelTolerance ?? defaultTolerance, updatedAt: input.updatedAt ?? null }))
     .digest('hex')
     .slice(0, 16);
   return `${TOURNAMENT_LEVEL_POLICY_VERSION}:${digest}`;

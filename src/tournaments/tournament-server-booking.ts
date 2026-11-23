@@ -79,6 +79,8 @@ export interface TournamentServerBookingAdmission {
   price: TournamentServerBookingPrice | null;
   /** Non-level admission refusal (gender, rule changed), evaluated by the existing CUP checks. */
   otherRefusal: { code: string; message: string } | null;
+  /** Refreshes rules against the actor already confirmed for this request. */
+  refresh?: () => Promise<TournamentServerBookingAdmission>;
 }
 
 export interface DecisionSnapshot {
@@ -243,6 +245,7 @@ export class TournamentServerBookingCoordinator {
         'SERVER_BOOKING_REQUIRES_LEVEL_ENFORCE', 503, 'Серверная запись доступна только при включённой проверке уровня.'
       );
     }
+    const refresh = admission.refresh ?? (() => this.ports.admission.admit(tournamentRef, authorizationHeader));
     const id = `${admission.tournamentId}:${admission.actor.clientId}`;
     const existing = await this.ports.store.find(id);
     if (existing && !TERMINAL.has(existing.state)) {
@@ -250,7 +253,7 @@ export class TournamentServerBookingCoordinator {
       if (existing.idempotencyKey !== idempotencyKey && existing.state === 'BOOKING' && !this.leaseExpired(existing)) {
         throw new TournamentServerBookingError('SERVER_BOOKING_IN_PROGRESS', 409, 'Запись уже выполняется.');
       }
-      return this.view(await this.resume(existing, admission, () => this.ports.admission.admit(tournamentRef, authorizationHeader)));
+      return this.view(await this.resume(existing, admission, refresh));
     }
     this.ports.assertNewOperationsOpen();
     if (!admission.decision.allowed || admission.otherRefusal) return this.refusal(admission);
@@ -287,10 +290,10 @@ export class TournamentServerBookingCoordinator {
       const current = await this.ports.store.find(id);
       if (!current) throw new TournamentServerBookingError('SERVER_BOOKING_STORE_CONFLICT', 409, 'Повторите попытку.');
       if (TERMINAL.has(current.state)) return this.view(current);
-      return this.view(await this.resume(current, admission, () => this.ports.admission.admit(tournamentRef, authorizationHeader)));
+      return this.view(await this.resume(current, admission, refresh));
     }
     this.log('tournament_server_booking_admitted', { tournamentId: doc.tournamentId, generation: doc.generation, ruleVersion: doc.startDecision.ruleVersion });
-    return this.view(await this.resume(doc, admission, () => this.ports.admission.admit(tournamentRef, authorizationHeader)));
+    return this.view(await this.resume(doc, admission, refresh));
   }
 
   /** Read-only status plus the same read-based recovery as a join retry. */
@@ -372,7 +375,7 @@ export class TournamentServerBookingCoordinator {
         // Fresh decision immediately before the only provider write of this generation.
         const checked = await refresh();
         if (checked.tournamentId !== doc.tournamentId || checked.actor.clientId !== doc.clientId
-          || checked.exerciseId !== doc.exerciseId || checked.studioId !== doc.studioId
+          || checked.actor.phone !== admission.actor.phone || checked.exerciseId !== doc.exerciseId || checked.studioId !== doc.studioId
           || JSON.stringify(checked.price) !== JSON.stringify(doc.price)) {
           return this.transition(doc, { state: 'REJECTED', errorCode: 'TOURNAMENT_RULE_CHANGED' });
         }
