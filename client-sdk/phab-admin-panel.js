@@ -1802,6 +1802,7 @@
         margin-top:4px;
       }
       .phab-admin-tournament-levels{
+        --level-thumb-size:16px;
         display:flex;
         flex-direction:column;
         gap:12px;
@@ -1812,22 +1813,20 @@
       }
       .phab-admin-tournament-levels-rail{
         position:absolute;
-        left:0;
-        right:0;
-        top:24px;
+        left:calc(var(--level-thumb-size) / 2);
+        right:calc(var(--level-thumb-size) / 2);
+        top:23px;
         height:6px;
         pointer-events:none;
       }
       .phab-admin-tournament-levels-sections{
         display:grid;
         grid-template-columns:repeat(7,minmax(0,1fr));
-        gap:8px;
         height:100%;
       }
       .phab-admin-tournament-levels-section{
         position:relative;
         height:100%;
-        border-radius:999px;
         background:
           linear-gradient(
             90deg,
@@ -1839,6 +1838,12 @@
             rgba(97,7,136,.14) 100%
           );
         box-shadow:inset 0 0 0 1px rgba(255,255,255,.28);
+      }
+      .phab-admin-tournament-levels-section:first-child{
+        border-radius:999px 0 0 999px;
+      }
+      .phab-admin-tournament-levels-section:last-child{
+        border-radius:0 999px 999px 0;
       }
       .phab-admin-tournament-levels-marker{
         position:absolute;
@@ -1866,9 +1871,16 @@
         left:0;
         top:12px;
         width:100%;
+        height:28px;
         margin:0;
         background:transparent;
         pointer-events:none;
+      }
+      .phab-admin-tournament-levels-range input[type=range]:focus-visible{
+        z-index:1;
+        outline:2px solid #6f38d3;
+        outline-offset:3px;
+        border-radius:999px;
       }
       .phab-admin-tournament-levels-range input[type=range]::-webkit-slider-runnable-track{
         height:28px;
@@ -1882,9 +1894,9 @@
       .phab-admin-tournament-levels-range input[type=range]::-webkit-slider-thumb{
         -webkit-appearance:none;
         appearance:none;
-        width:16px;
-        height:16px;
-        margin-top:6px;
+        width:var(--level-thumb-size);
+        height:var(--level-thumb-size);
+        margin-top:calc((28px - var(--level-thumb-size)) / 2);
         border:none;
         border-radius:50%;
         background:#6f38d3;
@@ -1893,8 +1905,8 @@
         cursor:pointer;
       }
       .phab-admin-tournament-levels-range input[type=range]::-moz-range-thumb{
-        width:16px;
-        height:16px;
+        width:var(--level-thumb-size);
+        height:var(--level-thumb-size);
         border:none;
         border-radius:50%;
         background:#6f38d3;
@@ -1909,7 +1921,7 @@
       .phab-admin-tournament-levels-labels{
         display:grid;
         grid-template-columns:repeat(7,minmax(0,1fr));
-        gap:6px;
+        margin-inline:calc(var(--level-thumb-size) / 2);
         font-size:11px;
         font-weight:800;
         color:rgba(51,0,32,.72);
@@ -26215,7 +26227,7 @@
           }
           TOURNAMENT_LEVEL_OPTIONS.push({
             token: token,
-            base: band.base,
+            base: resolveTournamentLevelBaseByScore(score),
             numericValue: score,
             label: token,
             rangeLabel: band.display,
@@ -27596,7 +27608,6 @@
     function createTournamentAccessLevelsControl(initialValues) {
       var root = document.createElement('div');
       root.className = 'phab-admin-tournament-levels';
-      var sectionCount = TOURNAMENT_BASE_LEVEL_OPTIONS.length;
       var divisionCount = TOURNAMENT_LEVEL_DIVISION_COUNT;
       var sectionNodes = [];
       var markerNodes = [];
@@ -27635,12 +27646,14 @@
       minInput.type = 'range';
       minInput.min = '0';
       minInput.max = String(Math.max(0, TOURNAMENT_LEVEL_OPTIONS.length - 1));
+      minInput.setAttribute('aria-label', 'Минимальный уровень участников');
       rangeWrap.appendChild(minInput);
 
       var maxInput = document.createElement('input');
       maxInput.type = 'range';
       maxInput.min = '0';
       maxInput.max = String(Math.max(0, TOURNAMENT_LEVEL_OPTIONS.length - 1));
+      maxInput.setAttribute('aria-label', 'Максимальный уровень участников');
       rangeWrap.appendChild(maxInput);
 
       var hiddenInput = document.createElement('input');
@@ -27689,24 +27702,20 @@
           return item.token;
         });
         var fullRange = values.length === TOURNAMENT_LEVEL_OPTIONS.length;
+        var minLabel = formatTournamentLevelSelectionLabel(values[0]);
+        var maxLabel = formatTournamentLevelSelectionLabel(values[values.length - 1]);
+        minInput.setAttribute('aria-valuetext', minLabel);
+        maxInput.setAttribute('aria-valuetext', maxLabel);
         hiddenInput.value = fullRange ? '' : values.join(', ');
         note.textContent = fullRange
           ? 'Без ограничений по уровню.'
-          : 'Выбрано: ' +
-            formatTournamentLevelSelectionLabel(values[0]) +
-            ' - ' +
-            formatTournamentLevelSelectionLabel(values[values.length - 1]);
+          : 'Выбрано: ' + (left === right ? minLabel : minLabel + ' – ' + maxLabel);
         var leftUnits = left / divisionCount;
         var rightUnits = right / divisionCount;
 
         sectionNodes.forEach(function (sectionNode, sectionIndex) {
           var fillFrom = clampLevelSectionValue(leftUnits - sectionIndex);
           var fillTo = clampLevelSectionValue(rightUnits - sectionIndex);
-          if (fillTo < fillFrom) {
-            var swap = fillFrom;
-            fillFrom = fillTo;
-            fillTo = swap;
-          }
           sectionNode.style.setProperty('--segment-fill-from', String(fillFrom));
           sectionNode.style.setProperty('--segment-fill-to', String(fillTo));
         });
