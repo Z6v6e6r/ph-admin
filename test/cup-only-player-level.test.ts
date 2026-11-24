@@ -3,6 +3,8 @@ import { RolesGuard } from '../src/common/rbac/roles.guard';
 import { PlayerRatingRepository } from '../src/player-ratings/player-ratings.repository';
 import 'reflect-metadata';
 import * as assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { join } from 'node:path';
 import { PlayerRatingsService } from '../src/player-ratings/player-ratings.service';
 import { PlayerRatingsController } from '../src/player-ratings/player-ratings.controller';
 import { PlayerLevelProjectionService } from '../src/player-ratings/player-level-projection.service';
@@ -56,5 +58,6 @@ async function main() {
   viva.fetchAdminJson = async () => ({ firstName: 'Synthetic' });
   await assert.rejects(viva.getClientProfile('synthetic-client', true), (error: any) => error.status === 400);
   console.log('CUP-only initial assignment, idempotency, strict identity, permissions and LK2 compatibility passed');
+  execFileSync(process.execPath, ['--test', join(__dirname, 'player-rating-viva-selection.test.mjs')], { stdio: 'inherit' });
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
