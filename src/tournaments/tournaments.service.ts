@@ -415,6 +415,30 @@ export class TournamentsService {
     return actor;
   }
 
+  async readLocalTournamentPlayerGender(authorization?: string, token?: string) {
+    const actor = await this.localOperationActor(authorization, token);
+    return this.tournamentsPersistence.readLocalPlayerGender(
+      digest('tournament-local-actor:v1', [actor.tenantKey, actor.clientId])
+    );
+  }
+
+  async writeLocalTournamentPlayerGender(authorization: string | undefined, token: string | undefined,
+    key: unknown, input: unknown) {
+    const actor = await this.localOperationActor(authorization, token);
+    if (typeof key !== 'string' || !/^[A-Za-z0-9._:-]{8,128}$/.test(key)
+      || !object(input) || Object.keys(input).sort().join(',') !== 'expectedVersion,gender'
+      || typeof input.expectedVersion !== 'number' || !Number.isSafeInteger(input.expectedVersion)
+      || input.expectedVersion < 0 || input.expectedVersion >= Number.MAX_SAFE_INTEGER
+      || (input.gender !== null && input.gender !== 'FEMALE' && input.gender !== 'MALE')) {
+      throw new BadRequestException({ code: 'TOURNAMENT_LOCAL_PROFILE_INVALID' });
+    }
+    const profileKey = digest('tournament-local-actor:v1', [actor.tenantKey, actor.clientId]);
+    const commandKey = digest('tournament-local-profile-command:v1', [profileKey, key]);
+    const requestHash = digest('tournament-local-profile-update:v1', [commandKey, input.expectedVersion, input.gender]);
+    return this.tournamentsPersistence.writeLocalPlayerGender(profileKey, input.expectedVersion, input.gender,
+      commandKey, requestHash);
+  }
+
   async readLocalTournamentOperation(authorization: string | undefined, token: string | undefined, input: unknown) {
     const actor = await this.localOperationActor(authorization, token);
     if (!object(input) || Object.keys(input).sort().join(',') !== 'operationId,schemaVersion,tournamentId'
@@ -462,7 +486,10 @@ export class TournamentsService {
         const admissionRefusals = ['LEVEL_NOT_ALLOWED', 'PLAYER_LEVEL_REQUIRED', 'PLAYER_LEVEL_UNKNOWN', 'ACTIVITY_LEVEL_INVALID'];
         if (!access.ok && !admissionRefusals.includes(access.code)) throw new ServiceUnavailableException({ code: access.code });
         const trusted = this.rememberRegistrationIdentity({ clientId: actor.clientId, phone: actor.phoneNorm });
-        const gender = await this.checkGenderAdmission(row as CustomTournament, { ...trusted, trustedIdentity: trusted });
+        const gender = await this.checkGenderAdmission(row as CustomTournament, {
+          ...trusted, trustedIdentity: trusted,
+          localGender: () => this.tournamentsPersistence.readLocalPlayerGender(identity.actorHash)
+        });
         if (!gender.ok && gender.code === 'TOURNAMENT_RULE_CHANGED') throw new ConflictException({ code: gender.code });
         eligibility = { gender: row.gender, playerGender: gender.ok ? gender.decision.playerGender : null, levelLabel: level?.levelLabel ?? null, accessLevels: [...row.accessLevels], ruleUpdatedAt: row.updatedAt };
         if (!access.ok || !gender.ok) {
@@ -711,6 +738,7 @@ export class TournamentsService {
 
   private async checkGenderAdmission(tournament: CustomTournament, input: {
     phone?: string; clientId?: string; trustedIdentity?: object; vivaAuthorizationHeader?: string;
+    localGender?: () => Promise<{ gender: 'MALE' | 'FEMALE' | null; version: number }>;
   }): Promise<{ ok: true; decision: TournamentGenderDecision } | {
     ok: false; code: 'PLAYER_GENDER_REQUIRED' | 'GENDER_NOT_ALLOWED' | 'TOURNAMENT_RULE_CHANGED'; message: string;
   }> {
@@ -726,6 +754,8 @@ export class TournamentsService {
       playerGender: null, evaluatedAt: new Date().toISOString() } };
     const unknown = { ok: false as const, code: 'PLAYER_GENDER_REQUIRED' as const,
       message: 'Не удалось подтвердить пол в профиле. Укажите его в личном кабинете и повторите запись.' };
+    // A profile-store outage is retryable and must not become a durable player refusal.
+    const saved = await input.localGender?.();
     try {
       let identity = input.trustedIdentity && this.trustedRegistrationIdentities.get(input.trustedIdentity);
       if (!identity && input.vivaAuthorizationHeader && this.lkIdentityService) {
@@ -733,9 +763,8 @@ export class TournamentsService {
         identity = { clientId: actor.clientId, phone: actor.phoneNorm, tenantKey: actor.tenantKey };
       }
       if (!identity?.clientId || this.normalizePhone(input.phone) !== identity.phone
-        || (input.clientId !== undefined && input.clientId !== identity.clientId)
-        || !this.vivaAdminService) return unknown;
-      const gender = await this.vivaAdminService.readTournamentProfileSex({
+        || (input.clientId !== undefined && input.clientId !== identity.clientId)) return unknown;
+      const gender = saved?.version ? saved.gender : await this.vivaAdminService?.readTournamentProfileSex({
         clientId: identity.clientId, phone: identity.phone
       });
       if (!gender) return unknown;

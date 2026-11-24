@@ -22,4 +22,17 @@ export class TournamentsLocalOwnerController {
     @Headers('x-cup-integration-token') token: string | undefined, @Body() body: TournamentLocalOperationReadDto) {
     return this.service.readLocalTournamentOperation(authorization, token, body);
   }
+  @Post('profile/gender/read') @HttpCode(200) @SkipAdminMutationAudit()
+  @Header('Cache-Control', 'no-store')
+  readPlayerGender(@Headers('authorization') authorization: string | undefined,
+    @Headers('x-cup-integration-token') token: string | undefined) {
+    return this.service.readLocalTournamentPlayerGender(authorization, token);
+  }
+  @Post('profile/gender') @HttpCode(200) @SkipAdminMutationAudit()
+  @Header('Cache-Control', 'no-store')
+  writePlayerGender(@Headers('authorization') authorization: string | undefined,
+    @Headers('x-cup-integration-token') token: string | undefined,
+    @Headers('idempotency-key') key: string | undefined, @Body() body: unknown) {
+    return this.service.writeLocalTournamentPlayerGender(authorization, token, key, body);
+  }
 }

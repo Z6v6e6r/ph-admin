@@ -17,8 +17,17 @@ function fixture() {
   let commits=0, reads=0, prepares=0, auth=0, loseAck=false, beforeCommit: (()=>void)|undefined;
   let actor:any={verified:true,tenantKey:'synthetic-tenant',clientId:'actor-A',phoneNorm:'12025550101',name:'Synthetic'};
   const service = Object.create(TournamentsService.prototype) as any;
+  const genders = new Map<string, { gender: string | null; version: number }>();
   const persistence:any={
     readLocalParticipationTarget:async()=>{reads++;return clone(row);},
+    readLocalPlayerGender: async (key: string) => genders.get(key) ?? { gender: null, version: 0 },
+    writeLocalPlayerGender: async (key: string, expectedVersion: number, gender: string | null) => {
+      const current = genders.get(key);
+      assert.equal(current?.version ?? 0, expectedVersion);
+      const next = { gender, version: expectedVersion + 1 };
+      genders.set(key, next);
+      return next;
+    },
     readPublicAdmissionRule:async()=>({gender:row.gender,updatedAt:row.updatedAt}),
     commitLocalParticipation:async(before:any,op:any,participants:any)=>{
       beforeCommit?.(); beforeCommit=undefined;
@@ -95,6 +104,25 @@ test('canonical refusal is durably replayed without roster mutation; MIXED needs
   assert.deepEqual((await f.command()).operation,refused.operation);assert.equal(f.counts.commits,1);
  }
  const h=fixture();h.service.vivaAdminService.readTournamentProfileSex=()=>{throw Error('MIXED cannot query sex');};await h.command();
+});
+test('player settings are scoped by verified tenant and actor and apply to a fresh local JOIN', async () => {
+  const f = fixture();
+  f.row.gender = 'FEMALE';
+  f.service.vivaAdminService.readTournamentProfileSex = async () => null;
+  const read = () => f.service.readLocalTournamentPlayerGender('Bearer fixture', 'integration-fixture');
+  const save = (body: unknown) => f.service.writeLocalTournamentPlayerGender('Bearer fixture', 'integration-fixture', 'profile-key', body);
+  assert.deepEqual(await read(), { gender: null, version: 0 });
+  const rejected = await f.command();
+  assert.equal(rejected.operation.reason, 'PLAYER_GENDER_REQUIRED');
+  await assert.rejects(save({ actorId: 'other', gender: 'FEMALE', expectedVersion: 0 }), code('TOURNAMENT_LOCAL_PROFILE_INVALID'));
+  assert.deepEqual(await save({ gender: 'FEMALE', expectedVersion: 0 }), { gender: 'FEMALE', version: 1 });
+  assert.deepEqual(await read(), { gender: 'FEMALE', version: 1 });
+  assert.deepEqual((await f.command()).operation, rejected.operation);
+  assert.equal((await f.command('profile-set-key')).operation.outcome, 'REGISTERED');
+  f.actor({ clientId: 'different-actor' });
+  assert.deepEqual(await read(), { gender: null, version: 0 });
+  f.actor({ clientId: 'actor-A', tenantKey: 'different-tenant' });
+  assert.deepEqual(await read(), { gender: null, version: 0 });
 });
 test('operation corruption and bounded ledger are closed, not evicted',async()=>{
  const f=fixture();await f.command();f.row.localParticipationOperations[0].requestHash='b'.repeat(64);await assert.rejects(f.command(),code('TOURNAMENT_LOCAL_STATE_INVALID'));
