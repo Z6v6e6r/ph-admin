@@ -38488,28 +38488,31 @@
       dom.playerRatingsLoadMoreBtn.classList.toggle('phab-admin-hidden', !state.playerRatingsCursor);
       if (canManagePlayerRatings(cfg) && !dom.playerRatingAssignmentEntry) {
         var assign = document.createElement('button'); assign.type = 'button'; assign.className = 'phab-admin-btn-secondary';
-        assign.textContent = 'Назначить первый уровень'; dom.playerRatingAssignmentEntry = assign;
+        assign.textContent = 'Найти игрока в Viva'; dom.playerRatingAssignmentEntry = assign;
         dom.playerRatingsSearchState.parentNode.insertBefore(assign, dom.playerRatingsSearchState.nextSibling);
         assign.addEventListener('click', async function () {
           var query = String(dom.playerRatingsSearchInput.value || '').trim();
           if (query.length < 3) { dom.playerRatingsSearchState.textContent = 'Введите телефон, имя или clientId игрока — не менее 3 символов.'; return; }
           assign.disabled = true; clearNode(dom.playerRatingAssignmentCandidates || document.createElement('div'));
           if (!dom.playerRatingAssignmentCandidates) { dom.playerRatingAssignmentCandidates = document.createElement('div'); assign.parentNode.insertBefore(dom.playerRatingAssignmentCandidates, assign.nextSibling); }
-          dom.playerRatingsSearchState.textContent = 'Ищем клиента для первоначального назначения…';
+          dom.playerRatingsSearchState.textContent = 'Ищем клиента в Viva…';
           try {
             var response = await api.searchPlayerRatingAssignmentCandidates(query), candidates = response && response.items || [];
-            dom.playerRatingsSearchState.textContent = candidates.length ? 'Выберите клиента. Уровень появится только после сохранения.' : 'Клиент не найден.';
+            if (!isCurrentPlayerRatingCandidateSearch(query)) return;
+            dom.playerRatingsSearchState.textContent = candidates.length ? 'Выберите клиента Viva.' : 'Клиент в Viva не найден.';
             candidates.forEach(function (candidate) {
               var choose = document.createElement('button'); choose.type = 'button'; choose.className = 'phab-admin-btn-secondary';
               choose.textContent = candidate.name + ' · ' + candidate.clientId;
               choose.addEventListener('click', function () {
-                state.playerRatingAssignmentPrevious = state.selectedPlayerRating;
-                state.selectedPlayerRating = { playerKey: 'client:' + candidate.clientId, clientId: candidate.clientId, name: candidate.name,
-                  ratingNumeric: null, rating: null, initialAssignment: true };
-                openPlayerRatingEdit(choose);
-              }); dom.playerRatingAssignmentCandidates.appendChild(choose);
+                openVivaPlayerRatingCandidate(candidate, choose, query).catch(handleError);
+              });
+              dom.playerRatingAssignmentCandidates.appendChild(choose);
             });
-          } catch (error) { dom.playerRatingsSearchState.textContent = error && error.message || 'Не удалось найти клиента.'; }
+          } catch (error) {
+            if (isCurrentPlayerRatingCandidateSearch(query)) {
+              dom.playerRatingsSearchState.textContent = error && error.message || 'Не удалось найти клиента.';
+            }
+          }
           finally { assign.disabled = false; }
         });
       }
@@ -38622,9 +38625,63 @@
       try { var result = await api.searchPlayerRatings({ q: query, limit: 20, cursor: append ? state.playerRatingsCursor : undefined }, { signal: playerRatingsSearchAbort.signal }); if (state.playerRatingsQuery !== query) return; var items = Array.isArray(result && result.items) ? result.items : []; state.playerRatings = append ? state.playerRatings.concat(items) : items; state.playerRatingsCursor = result && result.nextCursor ? result.nextCursor : null; dom.playerRatingsSearchState.textContent = items.length || append ? 'Найдено: ' + state.playerRatings.length : 'По текущему состоянию ЦУП ничего не найдено.'; renderPlayerRatingsList(); } catch (error) { if (error && error.name === 'AbortError') return; dom.playerRatingsSearchState.textContent = 'Не удалось загрузить результаты: ' + (error && error.message ? error.message : 'ошибка'); renderPlayerRatingsList(); } finally { state.playerRatingsLoading = false; if (requestId) {} }
     }
 
-    async function selectPlayerRating(playerKey) {
+    function isCurrentPlayerRatingCandidateSearch(query) {
+      return state.activeTab === 'playerRatings' && String(dom.playerRatingsSearchInput.value || '').trim() === query;
+    }
+
+    var playerRatingCandidateCheck;
+    async function openVivaPlayerRatingCandidate(candidate, trigger, query) {
+      if (!isCurrentPlayerRatingCandidateSearch(query) ||
+        !dom.playerRatingEditModal.classList.contains('phab-admin-hidden')) return;
+      var previous = state.selectedPlayerRating;
+      var previousKey = state.selectedPlayerRatingKey;
+      var check = {};
+      playerRatingCandidateCheck = check;
+      var playerKey = 'client:' + candidate.clientId;
+      function isCurrent() {
+        return playerRatingCandidateCheck === check && trigger.isConnected && isCurrentPlayerRatingCandidateSearch(query) &&
+          dom.playerRatingEditModal.classList.contains('phab-admin-hidden') &&
+          state.selectedPlayerRating === previous && state.selectedPlayerRatingKey === previousKey;
+      }
+      trigger.disabled = true;
+      dom.playerRatingsSearchState.textContent = 'Проверяем карточку в ЦУП…';
+      try {
+        var player;
+        try {
+          player = await api.getPlayerRating(playerKey);
+          if (!player || !player.playerKey) throw new Error('ЦУП не вернул карточку игрока.');
+        } catch (error) {
+          if (!isCurrent()) return;
+          if (!error || error.status !== 404 || (error.code !== 'PLAYER_RATING_STATE_NOT_FOUND' &&
+            (!error.payload || error.payload.message !== 'Player rating state not found'))) {
+            dom.playerRatingsSearchState.textContent = 'Не удалось проверить карточку в ЦУП: ' + (error && error.message || 'ошибка');
+            return;
+          }
+          state.playerRatingAssignmentPrevious = previous;
+          state.selectedPlayerRating = { playerKey: playerKey, clientId: candidate.clientId, name: candidate.name,
+            ratingNumeric: null, rating: null, initialAssignment: true };
+          dom.playerRatingsSearchState.textContent = 'Выберите клиента Viva.';
+          openPlayerRatingEdit(trigger);
+          return;
+        }
+        if (!isCurrent()) return;
+        dom.playerRatingsSearchState.textContent = 'Открыта текущая карточка ЦУП.';
+        await selectPlayerRating(player.playerKey, player);
+      } finally {
+        trigger.disabled = false;
+        if (playerRatingCandidateCheck === check) playerRatingCandidateCheck = null;
+      }
+    }
+
+    async function selectPlayerRating(playerKey, prefetchedPlayer) {
       state.selectedPlayerRatingKey = playerKey; state.selectedPlayerRating = null; state.selectedPlayerRatingEvents = []; renderPlayerRatingsList(); renderPlayerRatingDetail(); dom.playerRatingDetail.textContent = 'Загружаем карточку игрока…';
-      var player = await api.getPlayerRating(playerKey); if (state.selectedPlayerRatingKey !== playerKey) return; state.selectedPlayerRating = player; state.playerRatingEventsCursor = null; renderPlayerRatingsList(); await loadPlayerRatingEvents();
+      var player = prefetchedPlayer || await api.getPlayerRating(playerKey);
+      if (state.selectedPlayerRatingKey !== playerKey) return;
+      state.selectedPlayerRating = player;
+      state.playerRatingEventsCursor = null;
+      renderPlayerRatingsList();
+      renderPlayerRatingDetail();
+      await loadPlayerRatingEvents();
     }
 
     async function loadPlayerRatingEvents(append) {
@@ -38814,7 +38871,16 @@
     }
 
     function closePlayerRatingEdit() { if (state.playerRatingEditSubmitting) return; state.playerRatingEditRequest = null; dom.playerRatingEditModal.classList.add('phab-admin-hidden'); if (state.selectedPlayerRating && state.selectedPlayerRating.initialAssignment) { state.selectedPlayerRating = state.playerRatingAssignmentPrevious || null; renderPlayerRatingDetail(); } state.playerRatingAssignmentPrevious = null; dom.playerRatingEditError.classList.add('phab-admin-hidden'); if (state.playerRatingEditReturnFocus && state.playerRatingEditReturnFocus.focus) state.playerRatingEditReturnFocus.focus(); state.playerRatingEditReturnFocus = null; }
-    function openPlayerRatingEdit(trigger) { var player = state.selectedPlayerRating; if (!player || !canManagePlayerRatings(cfg)) return; state.playerRatingEditReturnFocus = trigger || document.activeElement; dom.playerRatingEditCurrent.textContent = player.initialAssignment ? player.name + ' · Уровень не определён' : 'Сейчас: ' + formatPlayerRatingNumeric(player.ratingNumeric) + ' · ' + player.rating; dom.playerRatingEditNumericInput.value = player.initialAssignment ? '' : String(player.ratingNumeric); dom.playerRatingEditReasonInput.value = ''; var writeStations = playerRatingWriteStations(cfg); clearNode(dom.playerRatingEditStationSelect); writeStations.forEach(function (stationId) { var option = document.createElement('option'); option.value = stationId; option.textContent = stationId; dom.playerRatingEditStationSelect.appendChild(option); }); dom.playerRatingEditStationSelect.required = writeStations.length > 1; dom.playerRatingEditStationLabel.classList.toggle('phab-admin-hidden', writeStations.length < 2); dom.playerRatingEditGrade.textContent = player.initialAssignment ? 'Выберите уровень от 1 до 7' : 'Уровень: ' + player.rating; dom.playerRatingEditConfirm.textContent = player.initialAssignment ? '' : 'Будет: ' + formatPlayerRatingNumeric(player.ratingNumeric) + ' · ' + player.rating; dom.playerRatingEditModal.classList.remove('phab-admin-hidden'); dom.playerRatingEditNumericInput.focus(); }
+    function openPlayerRatingEdit(trigger) {
+      var player = state.selectedPlayerRating;
+      if (!player || !canManagePlayerRatings(cfg)) return;
+      if (playerRatingCandidateCheck) {
+        playerRatingCandidateCheck = null;
+        if (dom.playerRatingsSearchState.textContent === 'Проверяем карточку в ЦУП…') {
+          dom.playerRatingsSearchState.textContent = 'Выберите клиента Viva.';
+        }
+      }
+      state.playerRatingEditReturnFocus = trigger || document.activeElement; dom.playerRatingEditCurrent.textContent = player.initialAssignment ? player.name + ' · Уровень не определён' : 'Сейчас: ' + formatPlayerRatingNumeric(player.ratingNumeric) + ' · ' + player.rating; dom.playerRatingEditNumericInput.value = player.initialAssignment ? '' : String(player.ratingNumeric); dom.playerRatingEditReasonInput.value = ''; var writeStations = playerRatingWriteStations(cfg); clearNode(dom.playerRatingEditStationSelect); writeStations.forEach(function (stationId) { var option = document.createElement('option'); option.value = stationId; option.textContent = stationId; dom.playerRatingEditStationSelect.appendChild(option); }); dom.playerRatingEditStationSelect.required = writeStations.length > 1; dom.playerRatingEditStationLabel.classList.toggle('phab-admin-hidden', writeStations.length < 2); dom.playerRatingEditGrade.textContent = player.initialAssignment ? 'Выберите уровень от 1 до 7' : 'Уровень: ' + player.rating; dom.playerRatingEditConfirm.textContent = player.initialAssignment ? '' : 'Будет: ' + formatPlayerRatingNumeric(player.ratingNumeric) + ' · ' + player.rating; dom.playerRatingEditModal.classList.remove('phab-admin-hidden'); dom.playerRatingEditNumericInput.focus(); }
     function updatePlayerRatingEditPreview() { var player = state.selectedPlayerRating; var value = Number(dom.playerRatingEditNumericInput.value); var grade = mapPlayerRatingGradeV1(value); dom.playerRatingEditGrade.textContent = 'Grade: ' + grade; dom.playerRatingEditConfirm.textContent = player && grade !== '-' ? (player.initialAssignment ? 'Первый уровень: ' : 'Подтвердите: ' + formatPlayerRatingNumeric(player.ratingNumeric) + ' → ') + formatPlayerRatingNumeric(value) : 'Укажите значение от 1 до 7'; }
     function replacePlayerRatingInList(player) { if (!state.playerRatings.some(function (item) { return item.playerKey === player.playerKey; })) state.playerRatings.push(player); state.playerRatings = state.playerRatings.map(function (item) { return item.playerKey === player.playerKey ? Object.assign({}, item, player) : item; }); renderPlayerRatingsList(); }
     async function savePlayerRatingEdit() { if (state.playerRatingEditSubmitting) return; var player = state.selectedPlayerRating; var ratingNumeric = Number(dom.playerRatingEditNumericInput.value); var reason = String(dom.playerRatingEditReasonInput.value || '').trim(); if (!player || mapPlayerRatingGradeV1(ratingNumeric) === '-' || reason.length < 10) { dom.playerRatingEditError.textContent = 'Укажите рейтинг от 1 до 7 и причину не короче 10 символов.'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); return; } state.playerRatingEditSubmitting = true; dom.playerRatingEditSaveBtn.disabled = true; try { var writeStations = playerRatingWriteStations(cfg); var stationId = writeStations.length > 1 ? String(dom.playerRatingEditStationSelect.value || '') : writeStations[0]; var signature = JSON.stringify([player.playerKey, player.clientId, player.lastEventId, ratingNumeric, reason, stationId || null]); var pending = state.playerRatingEditRequest; if (!pending || pending.signature !== signature) { pending = { signature: signature, key: window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + '-' + Math.random() }; state.playerRatingEditRequest = pending; } var key = pending.key; var result = player.initialAssignment ? await api.assignPlayerRating(Object.assign({ clientId: player.clientId, ratingNumeric: ratingNumeric, reason: reason, idempotencyKey: key }, stationId ? { stationId: stationId } : {})) : await api.changePlayerRating(player.playerKey, Object.assign({ ratingNumeric: ratingNumeric, reason: reason, expectedLastEventId: player.lastEventId, idempotencyKey: key }, stationId ? { stationId: stationId } : {})); state.selectedPlayerRatingKey = result.state.playerKey; state.selectedPlayerRating = result.state; replacePlayerRatingInList(result.state); state.playerRatingEditSubmitting = false; closePlayerRatingEdit(); dom.playerRatingJournal.dispatchEvent(new Event('rating-updated')); await loadPlayerRatingEvents(); setStatus('Уровень сохранён в ЦУП.', false); } catch (error) { if (error && error.status === 409 && !player.initialAssignment) { dom.playerRatingEditError.textContent = 'Карточка устарела. Актуальное изменение загружено — повторите корректировку.'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); await selectPlayerRating(player.playerKey); } else { dom.playerRatingEditError.textContent = error && error.message ? error.message : 'Не удалось сохранить уровень'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); } } finally { state.playerRatingEditSubmitting = false; dom.playerRatingEditSaveBtn.disabled = false; } }

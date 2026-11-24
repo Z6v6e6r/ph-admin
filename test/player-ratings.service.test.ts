@@ -1,10 +1,11 @@
 import * as assert from 'node:assert/strict';
 import { PlayerRatingsService } from '../src/player-ratings/player-ratings.service';
 import { PlayerRatingStateDocument } from '../src/player-ratings/player-ratings.types';
+import { planNameSearchUpdate } from '../scripts/plan-player-rating-name-search';
 
 const actor = { id: 'admin-1', login: 'chief', roles: ['SUPER_ADMIN'] as never[], stationIds: [], connectorRoutes: [], permissions: ['*'], authSource: 'token' };
 const state: PlayerRatingStateDocument = {
-  playerKey: 'player:1', clientId: 'client-1', phoneNorm: '79990000000', name: 'Анна Тест', nameSearch: 'анна тест',
+  playerKey: 'player:1', clientId: 'client-1', phoneNorm: '79990000000', name: 'Анна Тест',
   ratingNumeric: 3.2, rating: 'C', ownership: 'CUP_CANONICAL', source: 'CUP', schemaVersion: 1,
   createdAt: '2026-07-12T10:00:00.000Z', updatedAt: '2026-07-12T10:00:00.000Z', lastEventId: 'rating_evt:old',
   lastEventAt: '2026-07-12T10:00:00.000Z', lastEventType: 'RATING_INITIAL_IMPORTED', lastSource: 'IMPORT',
@@ -20,6 +21,11 @@ async function main(): Promise<void> {
     connect: async () => undefined,
     close: async () => undefined,
     stateByKey: async (key: string) => key === state.playerKey ? (written?.nextState ?? state) : null,
+    statesByVivaClientId: async (id: string) => {
+      if (id === 'client-1' || id === 'previous-client-1') return [state];
+      if (id === 'ambiguous-client') return [state, { ...state, playerKey: 'player:2' }];
+      return [];
+    },
     eventById: async (id: string) => events.find((event) => event.id === id) ?? null,
     eventByIdempotencyKey: async (key: string) => events.find((event) => event.idempotencyKey === key) ?? null,
     latestOutbox: async () => written?.outbox ?? null,
@@ -36,6 +42,30 @@ async function main(): Promise<void> {
   const found = await service.search('Анна');
   assert.equal(found.items.length, 1, 'search reads canonical local state');
   assert.equal(found.items[0].ratingNumeric, 3.2);
+
+  for (const key of ['player:1', 'client:client-1', 'client:previous-client-1']) {
+    const card = await service.get(key);
+    assert.deepEqual([card.playerKey, card.ratingNumeric], ['player:1', 3.2]);
+  }
+  await assert.rejects(service.get('client:missing-client'), (error: any) => error.status === 404);
+  await assert.rejects(service.get('client:ambiguous-client'), (error: any) => error.status === 409);
+  await assert.rejects(service.events('client:previous-client-1', {}), (error: any) => error.status === 404);
+
+  const legacy = { _id: 'synthetic-name', name: '  АННА\t  Тест ', ratingNumeric: 3.2 };
+  const plan = planNameSearchUpdate(legacy);
+  assert.equal(plan.kind, 'missing');
+  assert.ok('operation' in plan);
+  assert.deepEqual(plan.operation.update, { $set: { nameSearch: 'анна тест' } });
+  assert.deepEqual(plan.operation.filter, {
+    _id: legacy._id,
+    ownership: 'CUP_CANONICAL',
+    nameSearch: { $exists: false },
+    $expr: { $eq: ['$name', { $literal: legacy.name }] }
+  });
+  for (const [nameSearch, kind] of [['другое имя', 'stale'], [null, 'invalid'], ['анна тест', 'unchanged']]) {
+    assert.equal(planNameSearchUpdate({ ...legacy, nameSearch }).kind, kind);
+  }
+  assert.equal(planNameSearchUpdate({ _id: 'blank-name', name: '  ' }).kind, 'unusableName');
 
   const canonicalLevel = await service.resolveCanonicalLevelByIdentity({
     clientId: 'client-1',
@@ -68,6 +98,7 @@ async function main(): Promise<void> {
   assert.equal(changed.event.gradeBefore, 'C');
   assert.equal(changed.event.gradeAfter, 'C');
   assert.equal(changed.state.ratingNumeric, 3.45);
+  assert.equal(written.nextState.nameSearch, 'анна тест', 'editing a historical rating also restores its search field');
   assert.equal(written.outbox, undefined, 'CUP-only changes never enqueue a Viva write');
   assert.equal(changed.projection.status, 'NOT_REQUIRED');
   assert.equal(written.nextState.padlHubProjectionRevision, 1);

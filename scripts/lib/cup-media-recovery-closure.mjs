@@ -36,6 +36,8 @@ export const MEDIA_CUP_LEVEL_STATION_CANDIDATE_SDK_SHA256 = '8eeb4c8d6f3ddf26ddb
 export const MEDIA_CUP_MECHANICS_ROSTER_CANDIDATE_SDK_SHA256 = '49c9a53ba18a04010f4ff9b9c16b949126dbd0a3f445eb00fca7994d1292c06e';
 // The 147 release preserves the already deployed tournament scale overlay.
 const MEDIA_CUP_147_MECHANICS_ROSTER_SDK_SHA256 = '10ab675d206af455ec0e91bae1fe5c6e5326909a4e910b32f6d5ad6fc6cdc532';
+// Viva selection opens the current CUP rating in the candidate SDK.
+const MEDIA_CUP_VIVA_RATING_CARD_SDK_SHA256 = '8608e0052bbadd80b40825b1a907e57525e1e78c7298906134a3f135eadedae3';
 const digest = body => createHash('sha256').update(body).digest('hex');
 
 export function verifyMediaRecoveryCandidateHash(name, candidateSha256, recoverySha256) {
@@ -45,7 +47,8 @@ export function verifyMediaRecoveryCandidateHash(name, candidateSha256, recovery
       MEDIA_CUP_LEVEL_CANDIDATE_SDK_SHA256, MEDIA_CUP_LEVEL_AUDIT_CANDIDATE_SDK_SHA256,
       MEDIA_CUP_LEVEL_STATION_CANDIDATE_SDK_SHA256,
       MEDIA_CUP_MECHANICS_ROSTER_CANDIDATE_SDK_SHA256,
-      MEDIA_CUP_147_MECHANICS_ROSTER_SDK_SHA256].includes(candidateSha256), 'Unreviewed candidate SDK drift');
+      MEDIA_CUP_147_MECHANICS_ROSTER_SDK_SHA256,
+      MEDIA_CUP_VIVA_RATING_CARD_SDK_SHA256].includes(candidateSha256), 'Unreviewed candidate SDK drift');
     return;
   }
   assert.equal(candidateSha256, recoverySha256, 'Candidate/media recovery compiled closure mismatch');
