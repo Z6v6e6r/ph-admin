@@ -1248,11 +1248,10 @@ export class TournamentsService {
     }
     const active = this.vivaMechanicsRosterInFlight.get(exerciseId);
     if (active) return active;
-    if (this.vivaMechanicsRosterInFlight.size >= 12) {
-      throw new ServiceUnavailableException({ code: 'VIVA_ROSTER_BUSY' });
-    }
+    if (!this.vivaAdminService) throw new ServiceUnavailableException({ code: 'VIVA_ROSTER_UNAVAILABLE' });
+    if (this.vivaMechanicsRosterInFlight.size >= 12) throw new ServiceUnavailableException({ code: 'VIVA_ROSTER_BUSY' });
     const fetchedAt = new Date(now).toISOString();
-    const run = this.vivaTournamentsService.readMechanicsParticipants(exerciseId)
+    const run = this.vivaAdminService.readMechanicsParticipants(exerciseId)
       .then(participants => {
         const roster = { exerciseId, fetchedAt, participants };
         if (this.vivaMechanicsRosterCache.size >= 500) {

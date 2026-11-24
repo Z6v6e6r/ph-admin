@@ -1,7 +1,6 @@
 import assert = require('node:assert/strict');
 import { test } from 'node:test';
 import { VivaAdminService } from '../src/integrations/viva/viva-admin.service';
-import { VivaTournamentsService } from '../src/integrations/viva/viva-tournaments.service';
 import { TournamentsService } from '../src/tournaments/tournaments.service';
 import { TournamentsPersistenceService } from '../src/tournaments/tournaments-persistence.service';
 
@@ -41,16 +40,17 @@ test('active bookings use the exact exercise and require a complete, consistent 
 });
 
 test('active blank names and duplicate display names retain distinct Viva client IDs', async () => {
-  const viva = Object.create(VivaTournamentsService.prototype) as VivaTournamentsService;
+  const viva = Object.create(VivaAdminService.prototype) as VivaAdminService;
   const records = [
     { id: firstBooking, exerciseId, client: { id: firstClient, firstName: '' } },
     { id: secondBooking, exerciseId, client: { id: secondClient, firstName: 'Synthetic' },
       transactionStatus: { transactionStatus: 'PAID' } },
-    { id: thirdBooking, exerciseId, client: { id: thirdClient, firstName: 'Synthetic' } },
+    { id: thirdBooking, exerciseId, clientId: thirdClient, firstName: 'Synthetic', ratingNumeric: 3.25,
+      photo: '/synthetic/avatar.png' },
     { id: 'cancelled', status: 'CANCELLED', client: { id: 'unused' } },
     { id: 'waiting', state: 'WAITLIST', client: { id: 'unused' } }
   ];
-  Object.assign(viva, { vivaAdminService: { readActiveExerciseBookings: async () => records } });
+  Object.assign(viva, { readActiveExerciseBookings: async () => records });
   const roster = await viva.readMechanicsParticipants(exerciseId);
   assert.deepEqual(roster.map(row => [row.id, row.vivaBookingId, row.name]), [
     [firstClient, firstBooking, 'Участник №1'],
@@ -59,6 +59,8 @@ test('active blank names and duplicate display names retain distinct Viva client
   ]);
   assert.ok(roster.every(row => !('phone' in row)));
   assert.equal(roster[1]?.paymentStatus, 'PAID');
+  assert.equal(roster[2]?.levelLabel, '3.25');
+  assert.equal(roster[2]?.avatarUrl, '/synthetic/avatar.png');
   records.push({ id: 'wrong-target', exerciseId: firstClient, client: { id: firstClient, firstName: '' } });
   await assert.rejects(viva.readMechanicsParticipants(exerciseId), { status: 503 });
 });
@@ -94,7 +96,7 @@ test('mechanics reads preserve active players while refresh persists exactly one
     vivaMechanicsRosterCache: new Map(),
     vivaMechanicsRosterInFlight: new Map(),
     getPendingJoinPayments: () => holds,
-    vivaTournamentsService: { readMechanicsParticipants: async (id: string) => {
+    vivaAdminService: { readMechanicsParticipants: async (id: string) => {
       assert.equal(id, exerciseId);
       readCount += 1;
       return [
