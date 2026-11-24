@@ -1,7 +1,7 @@
 import { readJoinTransition, readOrganizerTransition } from './tournament-chat-read.contract';
 import { ORGANIZER_CAS_BUDGET_MS, OrganizerState } from './tournament-organizer.contract';
 import { publicTournamentId, LocalOperation } from './tournament-local-operation.contract';
-import { TournamentAdmissionRule } from './tournaments.types';
+import { LocalTournamentPlayerGender, TournamentAdmissionRule } from './tournaments.types';
 import {
   LEVEL_TOLERANCE_NEW_TOURNAMENT_DEFAULT,
   describeTournamentLevelRule,
@@ -629,6 +629,59 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
   async tournamentChatCollections() {
     const tournaments = await this.collection(false);
     return { tournaments, requests: this.requireDb().collection('tournament_chat_requests_v1'), db: this.requireDb() };
+  }
+
+  private async localPlayerGenderCollection() {
+    await this.collection(false);
+    return this.requireDb().collection<LocalTournamentPlayerGender & {
+      _id: string;
+      updatedAt: string;
+      changes: Array<{ key: string; requestHash: string; version: number; at: string }>;
+    }>(
+      'tournament_local_player_gender_v1'
+    );
+  }
+
+  async readLocalPlayerGender(key: string): Promise<LocalTournamentPlayerGender> {
+    const entry = await (await this.localPlayerGenderCollection()).findOne({ _id: key }, {
+      projection: { _id: 0, gender: 1, version: 1 }, readPreference: 'primary',
+      readConcern: { level: 'majority' }, maxTimeMS: 3000
+    });
+    if (!entry) return { gender: null, version: 0 };
+    if (!Number.isSafeInteger(entry.version) || entry.version < 1
+      || (entry.gender !== null && entry.gender !== 'FEMALE' && entry.gender !== 'MALE')) {
+      throw new ServiceUnavailableException({ code: 'TOURNAMENT_LOCAL_PROFILE_UNAVAILABLE' });
+    }
+    return { gender: entry.gender, version: entry.version };
+  }
+
+  async writeLocalPlayerGender(key: string, expectedVersion: number, gender: LocalTournamentPlayerGender['gender'],
+    commandKey: string, requestHash: string) {
+    const collection = await this.localPlayerGenderCollection();
+    const version = expectedVersion + 1;
+    const at = new Date().toISOString();
+    try {
+      const entry = await collection.findOneAndUpdate(
+        { _id: key, version: expectedVersion, 'changes.key': { $ne: commandKey } },
+        { $set: { gender, updatedAt: at, version },
+          $push: { changes: { $each: [{ key: commandKey, requestHash, version, at }], $slice: -32 } } },
+        { upsert: expectedVersion === 0, returnDocument: 'after', maxTimeMS: 3000,
+          writeConcern: { w: 'majority', j: true, wtimeoutMS: 4000 } }
+      );
+      if (entry) return { gender: entry.gender, version: entry.version };
+    } catch (error) {
+      if ((error as { code?: number })?.code !== 11000) throw error;
+    }
+    const previous = await collection.findOne({ _id: key, 'changes.key': commandKey }, {
+      projection: { _id: 0, 'changes.$': 1 }, readPreference: 'primary',
+      readConcern: { level: 'majority' }, maxTimeMS: 3000
+    });
+    const recorded = previous?.changes?.[0];
+    if (recorded) {
+      if (recorded.requestHash === requestHash && recorded.version === version) return { gender, version };
+      throw new ConflictException({ code: 'IDEMPOTENCY_KEY_REUSED' });
+    }
+    throw new ConflictException({ code: 'TOURNAMENT_LOCAL_PROFILE_VERSION_CONFLICT' });
   }
 
   /** No index creation: bounded raw identity lookup also works after discovery snapshot expiry. */

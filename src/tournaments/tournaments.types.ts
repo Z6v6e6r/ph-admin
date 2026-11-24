@@ -21,6 +21,10 @@ export interface TournamentGenderDecision extends TournamentAdmissionRule {
   playerGender: 'MALE' | 'FEMALE' | null; evaluatedAt: string;
 }
 export type TournamentGender = 'MALE' | 'FEMALE' | 'MIXED';
+export interface LocalTournamentPlayerGender {
+  gender: 'MALE' | 'FEMALE' | null;
+  version: number;
+}
 export type TournamentPaymentStatus = 'UNPAID' | 'PAID';
 export type TournamentParticipantStatus = 'REGISTERED' | 'WAITLIST';
 export type TournamentWaitlistReason = 'FULL' | 'LEVEL_MISMATCH' | 'MANUAL';
