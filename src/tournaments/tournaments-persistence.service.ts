@@ -1664,7 +1664,8 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
   private normalizeDetailsRecord(
     document: MongoCustomTournamentDocument
   ): Record<string, unknown> | undefined {
-    const details = this.toRecord(document.details) ?? {};
+    // Conditional writes compare against the original MongoDB document.
+    const details = { ...this.toRecord(document.details) };
     const sourceSnapshot = this.toRecord(document.sourceTournamentSnapshot);
     if (sourceSnapshot) {
       details.sourceTournamentSnapshot = sourceSnapshot;
