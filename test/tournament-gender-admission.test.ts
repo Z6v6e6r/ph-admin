@@ -54,6 +54,30 @@ function fixture(gender = 'MALE', sex: 'MALE' | 'FEMALE' | null = 'MALE') {
   return { service, tournament, input, counters, persistence, viva, setRaw: (r: any) => { raw = r; } };
 }
 async function main() {
+  {
+    const f = fixture('FEMALE', null);
+    const context = { tournament: f.tournament, actor: { clientId: 'client-1', phoneNorm: PHONE } };
+    const auth = 'Bearer synthetic';
+    const rule = await f.service.checkCheckoutAdmission(context, auth, 'LK1');
+    assert.deepEqual({ ...rule, evaluatedAt: NOW }, {
+      gender: 'FEMALE', updatedAt: NOW, accessLevels: [], playerGender: null, evaluatedAt: NOW
+    });
+    assert.equal(f.counters.profile, 0, 'LK1 does not read the Viva profile');
+    await assert.rejects(f.service.checkCheckoutAdmission(context, auth),
+      (error: any) => error.getResponse?.().code === 'PLAYER_GENDER_REQUIRED');
+    assert.equal(f.counters.profile, 1, 'public admission keeps the gender rule');
+
+    f.tournament.accessLevels = ['3', '3.125', '3.25'];
+    f.setRaw({ gender: 'FEMALE', updatedAt: NOW, accessLevels: f.tournament.accessLevels });
+    f.service.playerRatingsService = { resolveCanonicalLevelByIdentity: async () => ({ ratingNumeric: 5 }) };
+    await assert.rejects(f.service.checkCheckoutAdmission(context, auth, 'LK1'),
+      (error: any) => error.getResponse?.().code === 'LEVEL_NOT_ALLOWED');
+    f.setRaw({ gender: 'MALE', updatedAt: NOW, accessLevels: f.tournament.accessLevels });
+    f.service.playerRatingsService = { resolveCanonicalLevelByIdentity: async () => ({ ratingNumeric: 3.1 }) };
+    await assert.rejects(f.service.checkCheckoutAdmission(context, auth, 'LK1'),
+      (error: any) => error.getResponse?.().code === 'TOURNAMENT_RULE_CHANGED');
+    assert.equal(f.counters.profile, 1, 'failed LK1 admission still does not read Viva profiles');
+  }
   for (const rule of ['MALE', 'FEMALE']) {
     for (const sex of [null, rule === 'MALE' ? 'FEMALE' : 'MALE'] as const) {
       for (const method of ['registerPublicParticipant', 'addPublicParticipantToWaitlist', 'createPublicJoinPurchaseTransaction']) {

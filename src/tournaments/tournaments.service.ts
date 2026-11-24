@@ -711,7 +711,7 @@ export class TournamentsService {
 
   private async checkGenderAdmission(tournament: CustomTournament, input: {
     phone?: string; clientId?: string; trustedIdentity?: object; vivaAuthorizationHeader?: string;
-  }): Promise<{ ok: true; decision: TournamentGenderDecision } | {
+  }, checkPlayerGender = true): Promise<{ ok: true; decision: TournamentGenderDecision } | {
     ok: false; code: 'PLAYER_GENDER_REQUIRED' | 'GENDER_NOT_ALLOWED' | 'TOURNAMENT_RULE_CHANGED'; message: string;
   }> {
     const changed = { ok: false as const, code: 'TOURNAMENT_RULE_CHANGED' as const,
@@ -722,7 +722,7 @@ export class TournamentsService {
     if (!rule || rule.updatedAt !== tournament.updatedAt || rule.gender !== tournament.gender
       || (rule.accessLevels && (JSON.stringify(rule.accessLevels) !== JSON.stringify(tournament.accessLevels)
         || (rule.levelTolerance ?? 0) !== (tournament.levelTolerance ?? 0)))) return changed;
-    if (rule.gender === 'MIXED') return { ok: true, decision: { ...rule,
+    if (!checkPlayerGender || rule.gender === 'MIXED') return { ok: true, decision: { ...rule,
       playerGender: null, evaluatedAt: new Date().toISOString() } };
     const unknown = { ok: false as const, code: 'PLAYER_GENDER_REQUIRED' as const,
       message: 'Не удалось подтвердить пол в профиле. Укажите его в личном кабинете и повторите запись.' };
@@ -6308,13 +6308,17 @@ export class TournamentsService {
     return { tournament, exerciseId, studioId, tenantKey, mappingChecks };
   }
 
-  async checkCheckoutAdmission(context: Awaited<ReturnType<TournamentsService['resolveCheckoutIdentity']>>, auth?: string) {
+  async checkCheckoutAdmission(
+    context: Awaited<ReturnType<TournamentsService['resolveCheckoutIdentity']>>,
+    auth?: string,
+    channel: 'LK1' | 'PUBLIC_TOURNAMENT' = 'PUBLIC_TOURNAMENT'
+  ) {
     const { tournament, actor } = context;
     const input = { phone: actor.phoneNorm, clientId: actor.clientId, vivaAuthorizationHeader: auth,
       trustedIdentity: this.rememberRegistrationIdentity({ phone: actor.phoneNorm, clientId: actor.clientId }) };
     const access = await this.checkFreshTournamentLevel(tournament, input);
     if (!access.ok) throw new ForbiddenException({ code: access.code, message: access.message });
-    const gender = await this.checkGenderAdmission(tournament, input);
+    const gender = await this.checkGenderAdmission(tournament, input, channel !== 'LK1');
     if (!gender.ok) throw new ForbiddenException({ code: gender.code, message: gender.message });
     return gender.decision;
   }
