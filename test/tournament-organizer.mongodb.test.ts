@@ -75,6 +75,27 @@ test('CI Mongo7 actual organizer service and writer custody',async t=>{
   const pending=stale.updateCustomTournament(id,{name:'stale'});await reached;await send(service(repos[0]),id,command(1,'REVOKE'));release();await assert.rejects(pending);assert.equal((await repos[0].readOrganizerTarget(id))!.name,'Synthetic edited');
   const beforeEdit=(await repos[0].readOrganizerTarget(id))!;await repos[1].updateCustomTournament(id,{name:'new first'});assert.equal(await repos[0].commitOrganizerAssignment(beforeEdit,beforeEdit.tournamentOrganizerV1,null),null);
  });
+ await t.test('staff can update the skin of a Viva-linked tournament with an exact Mongo comparison', async () => {
+  const id = 'viva-linked-skin';
+  const sourceTournamentSnapshot = { id: 'viva-fixture', source: 'VIVA' };
+  await collection.insertOne({ ...raw(id), skin: { title: 'Original skin' } });
+  await send(service(repos[0]), id, command());
+  await collection.updateOne({ id }, { $set: { sourceTournamentSnapshot } });
+  const before = (await repos[0].readOrganizerTarget(id))!;
+
+  const updated = await repos[1].updateCustomTournament(id, {
+   skin: { title: 'Edited skin' },
+   maxPlayers: 2,
+   actor: { id: actor.id }
+  });
+
+  const stored = (await repos[0].readOrganizerTarget(id))!;
+  assert.equal(stored.skin.title, 'Edited skin');
+  assert.deepEqual(stored.tournamentOrganizerV1, before.tournamentOrganizerV1);
+  assert.deepEqual(stored.details, before.details);
+  assert.deepEqual(stored.sourceTournamentSnapshot, sourceTournamentSnapshot);
+  assert.deepEqual(updated?.details?.sourceTournamentSnapshot, sourceTournamentSnapshot);
+ });
  await t.test('unadopted stale generic edit cannot cross first organizer adoption; restore remains fenced',async()=>{
   const id='first-adoption';await collection.insertOne(raw(id));const rawCollection=clients[1].db(name).collection('custom_tournaments');let release!:()=>void,seen!:()=>void;
   const reached=new Promise<void>(r=>seen=r),resume=new Promise<void>(r=>release=r);
