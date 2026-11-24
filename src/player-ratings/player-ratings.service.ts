@@ -125,7 +125,7 @@ export class PlayerRatingsService implements OnModuleDestroy {
   }
 
   async get(playerKey: string): Promise<PlayerRatingStateDto & { lastEvent?: PlayerRatingEventDto; projection: { status: PlayerRatingProjectionStatus } }> {
-    const state = await this.findState(playerKey);
+    const state = await this.findState(playerKey, { resolveVivaClientId: true });
     const outbox = await this.call(() => this.repository.latestOutbox(state.playerKey));
     const lastEvent = await this.call(() => this.repository.eventById(state.lastEventId));
     return {
@@ -405,6 +405,7 @@ export class PlayerRatingsService implements OnModuleDestroy {
     const project = this.shouldProject(current);
     const nextState: PlayerRatingStateDocument = {
       ...current,
+      nameSearch: normalizePlayerName(current.name),
       ratingNumeric: nextNumeric,
       rating: afterGrade,
       lastEventId: eventId,
@@ -475,12 +476,21 @@ export class PlayerRatingsService implements OnModuleDestroy {
     return { status: 'PENDING' };
   }
 
-  private async findState(playerKey: string): Promise<PlayerRatingStateDocument> {
+  private async findState(playerKey: string, options?: { resolveVivaClientId: boolean }): Promise<PlayerRatingStateDocument> {
     const normalized = String(playerKey ?? '').trim();
     if (!normalized) throw new NotFoundException('Player rating state not found');
     const state = await this.call(() => this.repository.stateByKey(normalized));
-    if (!state) throw new NotFoundException('Player rating state not found');
-    return state;
+    if (state) return state;
+    const clientId = options?.resolveVivaClientId ? /^client:([a-zA-Z0-9._-]{1,128})$/.exec(normalized)?.[1] : undefined;
+    if (clientId) {
+      const matches = await this.call(() => this.repository.statesByVivaClientId(clientId));
+      if (matches.length > 1) throw new ConflictException('В ЦУП найдены несколько карточек этого клиента Viva.');
+      if (matches.length === 1) return matches[0];
+    }
+    if (options?.resolveVivaClientId) {
+      throw new NotFoundException({ code: 'PLAYER_RATING_STATE_NOT_FOUND', message: 'Player rating state not found' });
+    }
+    throw new NotFoundException('Player rating state not found');
   }
 
   private shouldProject(state: Pick<PlayerRatingStateDocument, 'playerKey' | 'clientId'>): boolean {

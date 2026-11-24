@@ -80,6 +80,16 @@ export class PlayerRatingRepository {
     return this.states().findOne({ playerKey }, { projection: { _id: 0 } });
   }
 
+  async statesByVivaClientId(clientId: string): Promise<PlayerRatingStateDocument[]> {
+    return this.states().find({
+      $or: [
+        { clientId },
+        { 'identityAliases.clientIds': clientId },
+        { 'identityAliases.playerKeys': `client:${clientId}` }
+      ]
+    }, { projection: { _id: 0 }, maxTimeMS: 5000 }).limit(2).toArray();
+  }
+
   async statesByIdentity(input: {
     clientId?: string;
     phoneNorm?: string;
