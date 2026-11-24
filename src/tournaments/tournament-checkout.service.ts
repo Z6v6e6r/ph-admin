@@ -191,7 +191,7 @@ export class TournamentCheckoutService {
       ...(failUrl ? { failUrl, failRedirectUrl: failUrl, failureRedirectUrl: failUrl } : {}) };
     let rule;
     try {
-      rule = await this.tournaments.checkCheckoutAdmission(context, auth);
+      rule = await this.tournaments.checkCheckoutAdmission(context, auth, 'LK1');
     } catch (error) {
       if (!(error instanceof ForbiddenException) || (error.getResponse() as Row)?.code !== 'TOURNAMENT_RULE_CHANGED') throw error;
       // The first writer can advance updatedAt by reserving the same actor's
@@ -231,7 +231,7 @@ export class TournamentCheckoutService {
       return this.view(previous);
     }
     this.tournaments.assertTournamentOwnerNewOperationsOpen();
-    const rule = await this.tournaments.checkCheckoutAdmission(context, auth);
+    const rule = await this.tournaments.checkCheckoutAdmission(context, auth, 'LK1');
     const operation = this.operation(context, body.operationId, { kind: 'SUBSCRIPTION',
       requestOperationId: body.operationId, clientSubscriptionId: body.clientSubscriptionId });
     const saved = await this.persistence.reservePublicJoinPayment(context.tournament.id, operation, rule);
@@ -416,7 +416,7 @@ export class TournamentCheckoutService {
     if (currentContext.tournament.id !== context.tournament.id
       || !this.boundToContext(operation, currentContext)) throw new ConflictException({ code: 'TOURNAMENT_TARGET_CHANGED' });
     let rule;
-    try { rule = await this.tournaments.checkCheckoutAdmission(currentContext, auth); }
+    try { rule = await this.tournaments.checkCheckoutAdmission(currentContext, auth, 'LK1'); }
     catch (error) {
       const code = (error as any)?.getResponse?.()?.code;
       if (['LEVEL_NOT_ALLOWED', 'PLAYER_LEVEL_REQUIRED', 'PLAYER_LEVEL_UNKNOWN', 'ACTIVITY_LEVEL_INVALID',

@@ -58,6 +58,28 @@ async function main() {
   const checkout = (service: TournamentCheckoutService, name: string, key: string) => service.checkout("exercise-" + name, 'Bearer synthetic-token', { productId: 'one-time', source: 'one-time' }, key);
   const check = async (name: string, run: () => Promise<void>) => { await run(); console.log(`PASS ${name}`); };
   try {
+    await check('LK1 paid and subscription admission skip only the player gender check', async () => {
+      await seed('lk1-gender-policy');
+      await collection.updateOne({ id: 'lk1-gender-policy' }, { $set: { gender: 'FEMALE' } });
+      const paid = instance(101), subscriber = instance(102);
+      let profileReads = 0;
+      for (const f of [paid, subscriber]) {
+        f.tournaments.vivaAdminService = { readTournamentProfileSex: async () => {
+          profileReads++;
+          throw Error('profile requires phone confirmation');
+        } };
+      }
+      const before = postCount;
+      assert.ok((await checkout(paid.service, 'lk1-gender-policy', 'paid-key')).transactionId);
+      const reply = await subscriber.service.subscriptionAdmission('exercise-lk1-gender-policy',
+        'Bearer synthetic-token', { operationId: 'subscription-key', clientSubscriptionId: 'subscription-synthetic' });
+      assert.equal(reply.state, 'ADMITTED');
+      assert.equal(postCount - before, 1, 'subscription admission alone does not dispatch a provider write');
+      assert.equal(profileReads, 0);
+      const stored = await collection.findOne({ id: 'lk1-gender-policy' });
+      assert.equal(stored?.gender, 'FEMALE');
+      assert.equal(stored?.details.booking.pendingJoinPayments.length, 2);
+    });
     await check('legacy nested exercise mapping works with distinct CUP and source IDs and no level rule', async () => {
       await seed('legacy-lookup');
       await collection.updateOne({ id: 'legacy-lookup' }, {
