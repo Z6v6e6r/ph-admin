@@ -1,5 +1,8 @@
 import { LocalOperation, commandInput, commandIdentity, digest, object, uuid, assertLocalOnly, operations, operationView, LOCAL_OPERATION_LIMIT } from './tournament-local-operation.contract';
-import { TRUSTED_TOURNAMENT_CLIENT, TournamentGenderDecision, TournamentAdmissionRule } from './tournaments.types';
+import {
+  TRUSTED_TOURNAMENT_CLIENT, TournamentGenderDecision, TournamentAdmissionRule,
+  type VivaTournamentMechanicsRoster, type TournamentMechanicsRosterView
+} from './tournaments.types';
 import { PrepareTournamentOwnerDto } from './dto/prepare-tournament-owner.dto';
 import {
   PlayerLevelEvidence,
@@ -377,6 +380,8 @@ export class TournamentsService {
   );
   private readonly publicDirectoryCache = new Map<string, PublicDirectoryCacheEntry>();
   private readonly publicDirectoryInFlight = new Map<string, Promise<TournamentPublicDirectoryResponse>>();
+  private readonly vivaMechanicsRosterCache = new Map<string, VivaTournamentMechanicsRoster>();
+  private readonly vivaMechanicsRosterInFlight = new Map<string, Promise<VivaTournamentMechanicsRoster>>();
   private readonly tournamentHostingAccessCache = new Map<
     string,
     TournamentHostingAccessCacheEntry
@@ -1147,7 +1152,163 @@ export class TournamentsService {
     }
     const hydrated = await this.enrichTournamentVivaProfiles(await this.hydrateCustomTournament(tournament));
     this.ensureTournamentVisibleForUser(hydrated, user);
-    return hydrated;
+    const exerciseId = this.resolveRosterExerciseId(tournament);
+    if (!exerciseId || this.resolveRosterExerciseId(hydrated) !== exerciseId) return hydrated;
+    try {
+      const roster = await this.loadVivaMechanicsRoster(tournament.id, exerciseId, false);
+      return { ...hydrated, mechanicsParticipants: this.toMechanicsRosterView(tournament, roster, '').participants };
+    } catch {
+      const last = await this.tournamentsPersistence.readVivaMechanicsRoster(tournament.id, exerciseId).catch(() => null);
+      return {
+        ...hydrated, mechanicsRosterStale: true,
+        ...(last ? { mechanicsParticipants: this.toMechanicsRosterView(tournament, last, '').participants } : {})
+      };
+    }
+  }
+
+  async getVivaMechanicsRoster(input: {
+    exerciseId: string;
+    refresh: boolean;
+    authorizationHeader?: string;
+    tenantKeyHeader?: string;
+  }): Promise<TournamentMechanicsRosterView> {
+    const exerciseId = input.exerciseId.toLowerCase();
+    if (!uuid(exerciseId)) throw new BadRequestException({ code: 'EXERCISE_ID_INVALID' });
+    this.assertCheckoutTenant(input.tenantKeyHeader);
+    const token = await this.requireTournamentLkAccessToken(input.authorizationHeader);
+    const profile = this.toRecord(await this.fetchVivaOwnProfile(token, this.vivaEndUserWidgetId));
+    const profileId = this.pickString(profile?.id);
+    if (!profileId) throw new ForbiddenException({ code: 'TOURNAMENT_ROSTER_FORBIDDEN' });
+    const hasHostingAccess = this.hasTournamentHostingAccess(profile);
+    if (input.refresh && !hasHostingAccess) throw new ForbiddenException({ code: 'TOURNAMENT_ROSTER_FORBIDDEN' });
+    const target = await this.tournamentsPersistence.findCheckoutTournamentByExerciseId(exerciseId);
+    if (!target) {
+      const archived = await this.tournamentsPersistence.findCheckoutTournamentByExerciseId(exerciseId, true);
+      if (archived) throw new ForbiddenException({ code: 'TOURNAMENT_ROSTER_FORBIDDEN' });
+      throw new NotFoundException({ code: 'TOURNAMENT_ROSTER_UNLINKED' });
+    }
+    const { tournament, mappingChecks, rosterAccessChecks } = target;
+    const widgetId = this.resolveBookingConfig(tournament, true).vivaWidgetId;
+    if (widgetId && widgetId !== this.vivaEndUserWidgetId) {
+      throw new ForbiddenException({ code: 'TOURNAMENT_ROSTER_FORBIDDEN' });
+    }
+    const trainerId = tournament.trainerId ?? this.pickString(this.getSourceTournamentSnapshot(tournament).trainerId);
+    const hasAllowlist = tournament.allowedManagerPhones.length > 0;
+    const phone = hasAllowlist ? this.extractLkAuthPhone(profile ?? {}) : undefined;
+    const explicitlyAllowed = Boolean(phone && tournament.allowedManagerPhones.includes(phone));
+    if ((!hasHostingAccess && profileId !== trainerId)
+      || (hasAllowlist && !explicitlyAllowed)
+      || (tournament.isPublic === false && profileId !== trainerId && !explicitlyAllowed)) {
+      throw new ForbiddenException({ code: 'TOURNAMENT_ROSTER_FORBIDDEN' });
+    }
+    if (this.resolveRosterExerciseId(tournament) !== exerciseId) {
+      throw new ConflictException({ code: 'TOURNAMENT_ROSTER_BINDING_CHANGED' });
+    }
+    const cooldownMs = 30_000;
+    if (input.refresh) {
+      const saved = await this.tournamentsPersistence.readVivaMechanicsRoster(tournament.id, exerciseId);
+      const retryAfterMs = saved ? cooldownMs - (Date.now() - Date.parse(saved.fetchedAt)) : 0;
+      if (saved && retryAfterMs > 0) {
+        return { ...this.toMechanicsRosterView(tournament, saved, profileId), refreshed: false, retryAfterMs };
+      }
+    }
+    const roster = await this.loadVivaMechanicsRoster(tournament.id, exerciseId, input.refresh);
+    if (input.refresh && !await this.tournamentsPersistence.saveVivaMechanicsRoster(
+      tournament.id, [...mappingChecks, ...rosterAccessChecks], roster
+    )) {
+      throw new ConflictException({ code: 'TOURNAMENT_ROSTER_BINDING_CHANGED' });
+    }
+    const result = this.toMechanicsRosterView(tournament, roster, profileId);
+    return input.refresh ? { ...result, refreshed: true, retryAfterMs: cooldownMs } : result;
+  }
+
+  private resolveRosterExerciseId(tournament: CustomTournament): string | null {
+    const snapshot = this.getSourceTournamentSnapshot(tournament);
+    const source = this.pickString(snapshot.source)?.toUpperCase();
+    if (source && source !== 'VIVA') return null;
+    const links = ['booking', 'joinFlow'].flatMap(key => {
+      const details = this.toRecord(tournament.details?.[key]);
+      return [details?.vivaExerciseId, details?.exerciseId, this.toRecord(details?.viva)?.exerciseId];
+    });
+    const explicitIds = [tournament.exerciseId, snapshot.exerciseId, ...links]
+      .map(value => this.pickString(value)?.toLowerCase()).filter(Boolean);
+    const id = explicitIds[0] ?? this.pickString(tournament.sourceTournamentId ?? snapshot.id)?.toLowerCase();
+    return uuid(id) && explicitIds.every(value => value === id) ? id : null;
+  }
+
+  private async loadVivaMechanicsRoster(
+    tournamentId: string, exerciseId: string, refresh: boolean
+  ): Promise<VivaTournamentMechanicsRoster> {
+    const now = Date.now();
+    if (!refresh) {
+      const cached = this.vivaMechanicsRosterCache.get(exerciseId);
+      const saved = await this.tournamentsPersistence.readVivaMechanicsRoster(tournamentId, exerciseId);
+      const freshest = cached && (!saved || cached.fetchedAt > saved.fetchedAt) ? cached : saved;
+      if (freshest && now - Date.parse(freshest.fetchedAt) < 60_000) return freshest;
+    }
+    const active = this.vivaMechanicsRosterInFlight.get(exerciseId);
+    if (active) return active;
+    if (this.vivaMechanicsRosterInFlight.size >= 12) {
+      throw new ServiceUnavailableException({ code: 'VIVA_ROSTER_BUSY' });
+    }
+    const fetchedAt = new Date(now).toISOString();
+    const run = this.vivaTournamentsService.readMechanicsParticipants(exerciseId)
+      .then(participants => {
+        const roster = { exerciseId, fetchedAt, participants };
+        if (this.vivaMechanicsRosterCache.size >= 500) {
+          const oldest = this.vivaMechanicsRosterCache.keys().next().value;
+          if (oldest) this.vivaMechanicsRosterCache.delete(oldest);
+        }
+        this.vivaMechanicsRosterCache.set(exerciseId, roster);
+        return roster;
+      })
+      .finally(() => this.vivaMechanicsRosterInFlight.delete(exerciseId));
+    this.vivaMechanicsRosterInFlight.set(exerciseId, run);
+    return run;
+  }
+
+  private withRosterPaymentState(
+    tournament: CustomTournament, roster: VivaTournamentMechanicsRoster
+  ): VivaTournamentMechanicsRoster {
+    const pending = this.getPendingJoinPayments(tournament).filter(payment =>
+      payment.ownerSubscription && this.isCapacityHoldingPendingJoinPayment(payment));
+    const completedCopays = this.completedCopayBookings(tournament);
+    const paidBookings = new Set(tournament.participants.flatMap(participant => {
+      const bookingId = participant.paymentStatus === 'PAID' && participant.id
+        ? completedCopays.get(participant.id) : undefined;
+      return bookingId ? [bookingId] : [];
+    }));
+    return {
+      ...roster,
+      participants: roster.participants.map(participant => ({
+        ...participant,
+        paymentStatus: participant.paymentStatus ?? (paidBookings.has(participant.vivaBookingId) ? 'PAID' : undefined),
+        confirmationPending: pending.some(payment =>
+          payment.clientId?.toLowerCase() === participant.id
+          && (!payment.exerciseId || payment.exerciseId.toLowerCase() === roster.exerciseId)
+          && (!(payment.copayBookingId ?? payment.providerBookingId)
+            || (payment.copayBookingId ?? payment.providerBookingId) === participant.vivaBookingId))
+      }))
+    };
+  }
+
+  private toMechanicsRosterView(
+    tournament: CustomTournament, roster: VivaTournamentMechanicsRoster, profileId: string
+  ): TournamentMechanicsRosterView {
+    const source = this.withRosterPaymentState(tournament, roster);
+    const operations = this.toRecord(tournament.details?.booking)?.pendingJoinPayments;
+    return {
+      ...source,
+      participants: source.participants.map(({ vivaBookingId, ...participant }) => {
+        const ownedByCheckout = Array.isArray(operations) && operations.some(value => {
+          const operation = this.toRecord(value);
+          return operation?.providerBookingId === vivaBookingId || operation?.copayBookingId === vivaBookingId;
+        });
+        return participant.id === profileId.toLowerCase() && !participant.confirmationPending && !ownedByCheckout
+          ? { ...participant, vivaBookingId }
+          : participant;
+      })
+    };
   }
 
   async getResults(id: string, user?: RequestUser): Promise<TournamentResultsView> {
@@ -2983,6 +3144,15 @@ export class TournamentsService {
   }
 
   private async assertTournamentHostingAccess(authorizationHeader?: string): Promise<void> {
+    const token = await this.requireTournamentLkAccessToken(authorizationHeader);
+    const cacheKey = createHash('sha256').update(token).digest('base64url');
+    const hasAccess = await this.resolveTournamentHostingAccess(cacheKey, token);
+    if (!hasAccess) {
+      throw new ForbiddenException('Tournament hosting access is required');
+    }
+  }
+
+  private async requireTournamentLkAccessToken(authorizationHeader?: string): Promise<string> {
     const token = this.extractBearerToken(authorizationHeader);
     if (!token) {
       throw new UnauthorizedException('Bearer token is required');
@@ -2999,11 +3169,7 @@ export class TournamentsService {
       throw new ForbiddenException('LK auth tenant is not allowed');
     }
 
-    const cacheKey = createHash('sha256').update(token).digest('base64url');
-    const hasAccess = await this.resolveTournamentHostingAccess(cacheKey, token);
-    if (!hasAccess) {
-      throw new ForbiddenException('Tournament hosting access is required');
-    }
+    return token;
   }
 
   private async resolveTournamentHostingAccess(

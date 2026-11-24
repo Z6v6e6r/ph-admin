@@ -1,6 +1,7 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Injectable, Logger, Optional, ServiceUnavailableException } from '@nestjs/common';
 import {
   Tournament,
+  TournamentMechanicsParticipant,
   TournamentParticipant,
   TournamentPaymentStatus,
   TournamentStatus
@@ -193,6 +194,44 @@ export class VivaTournamentsService {
       participants,
       participantsCount: participants.length
     };
+  }
+
+  async readMechanicsParticipants(exerciseId: string): Promise<TournamentMechanicsParticipant[]> {
+    const unavailable = () => new ServiceUnavailableException({ code: 'VIVA_ROSTER_UNAVAILABLE' });
+    if (!this.vivaAdminService) throw unavailable();
+    const records = await this.vivaAdminService.readActiveExerciseBookings(exerciseId);
+    const participants = new Map<string, TournamentMechanicsParticipant>();
+    const bookingIds = new Set<string>();
+    for (const record of records) {
+      const status = (this.readString(record.status) ?? this.readString(record.state))?.toUpperCase();
+      if (record.isCancelled === true || record.isCanceled === true || record.cancelled === true
+        || record.canceled === true || record.waitlist === true || record.isWaitlist === true
+        || (status && ['CANCELED', 'CANCELLED', 'DELETED', 'REJECTED', 'REFUNDED', 'WAITLIST', 'WAITING_LIST'].includes(status))) continue;
+      const client = this.readRecord(record.client);
+      const clientId = (this.readString(client?.id) ?? this.readString(record.clientId)
+        ?? this.readString(record.client_id))?.toLowerCase();
+      const bookingId = this.readString(record.id) ?? this.readString(record.bookingId);
+      const rowExerciseId = this.readString(record.exerciseId ?? this.readRecord(record.exercise)?.id);
+      if (!clientId || !this.looksLikeUuid(clientId) || !bookingId || bookingIds.has(bookingId)
+        || (rowExerciseId && rowExerciseId.toLowerCase() !== exerciseId)) throw unavailable();
+      bookingIds.add(bookingId);
+      if (participants.has(clientId)) continue;
+      const normalized = this.toParticipant(record);
+      const spot = this.readPositiveInteger(record.spot);
+      const transactionStatus = (this.readString(record.transactionStatus)
+        ?? this.readString(this.readRecord(record.transactionStatus)?.transactionStatus))?.toUpperCase();
+      participants.set(clientId, {
+        id: clientId,
+        vivaBookingId: bookingId,
+        name: normalized?.name ?? `Участник №${participants.size + 1}`,
+        ...(spot && Number.isSafeInteger(spot) && spot > 0 ? { spot } : {}),
+        avatarUrl: normalized?.avatarUrl ?? this.readAvatarUrl(client),
+        levelLabel: normalized?.levelLabel ?? this.readParticipantLevelLabel(client, record),
+        paymentStatus: transactionStatus === 'PAID' || transactionStatus === 'COMPLETED'
+          ? 'PAID' : this.resolveParticipantPaymentStatus(record)
+      });
+    }
+    return [...participants.values()];
   }
 
   async createTournamentBooking(input: {

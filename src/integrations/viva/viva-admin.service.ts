@@ -506,6 +506,49 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  async readActiveExerciseBookings(exerciseId: string): Promise<Record<string, unknown>[]> {
+    const unavailable = () => new ServiceUnavailableException({ code: 'VIVA_ROSTER_UNAVAILABLE' });
+    const size = 100;
+    const records: Record<string, unknown>[] = [];
+    try {
+      const token = await this.resolveAccessToken();
+      if (!token) throw unavailable();
+      const { config } = await this.getResolvedSettings();
+      const path = `/api/v1/exercises/${encodeURIComponent(exerciseId)}/bookings`;
+      let expectedTotal: number | undefined;
+      let expectedPages: number | undefined;
+      // Bound the provider work and refuse partial snapshots.
+      for (let page = 0; page < 5; page += 1) {
+        const payload = await this.fetchAdminJson(
+          `${path}?showCancelled=false&page=${page}&size=${size}`, token, config.baseUrl
+        );
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw unavailable();
+        const { content, number, totalElements, totalPages } = payload as {
+          content?: unknown; number?: unknown; totalElements?: unknown; totalPages?: unknown;
+        };
+        if (!Array.isArray(content) || content.length > size
+          || content.some(row => !row || typeof row !== 'object' || Array.isArray(row))) {
+          throw unavailable();
+        }
+        records.push(...content);
+        if (number !== page || typeof totalElements !== 'number' || !Number.isSafeInteger(totalElements)
+          || totalElements < 0 || typeof totalPages !== 'number' || !Number.isSafeInteger(totalPages)
+          || totalPages < 0 || totalPages > 5 || (page > 0 && (totalPages !== expectedPages || totalElements !== expectedTotal))) {
+          throw unavailable();
+        }
+        expectedTotal = totalElements;
+        expectedPages = totalPages;
+        if (page + 1 >= totalPages) {
+          if (records.length !== totalElements) throw unavailable();
+          return records;
+        }
+      }
+    } catch {
+      throw unavailable();
+    }
+    throw unavailable();
+  }
+
   async getExerciseStatus(exerciseId?: string): Promise<VivaExerciseStatusSnapshot | null> {
     const normalizedExerciseId = this.normalizeOptional(exerciseId);
     if (!normalizedExerciseId) {
