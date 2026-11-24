@@ -43,9 +43,9 @@ test('active blank names and duplicate display names retain distinct Viva client
   const viva = Object.create(VivaAdminService.prototype) as VivaAdminService;
   const records = [
     { id: firstBooking, exerciseId, client: { id: firstClient, firstName: '' } },
-    { id: secondBooking, exerciseId, client: { id: secondClient, firstName: 'Synthetic' },
+    { id: secondBooking, exerciseId, client: { id: secondClient, firstName: 'Synthetic', ratingNumeric: 3.125 },
       transactionStatus: { transactionStatus: 'PAID' } },
-    { id: thirdBooking, exerciseId, clientId: thirdClient, firstName: 'Synthetic', ratingNumeric: 3.25,
+    { id: thirdBooking, exerciseId, clientId: thirdClient, firstName: 'Synthetic', ratingNumeric: '3,25',
       photo: '/synthetic/avatar.png' },
     { id: 'cancelled', status: 'CANCELLED', client: { id: 'unused' } },
     { id: 'waiting', state: 'WAITLIST', client: { id: 'unused' } }
@@ -59,6 +59,7 @@ test('active blank names and duplicate display names retain distinct Viva client
   ]);
   assert.ok(roster.every(row => !('phone' in row)));
   assert.equal(roster[1]?.paymentStatus, 'PAID');
+  assert.equal(roster[1]?.levelLabel, '3.125');
   assert.equal(roster[2]?.levelLabel, '3.25');
   assert.equal(roster[2]?.avatarUrl, '/synthetic/avatar.png');
   records.push({ id: 'wrong-target', exerciseId: firstClient, client: { id: firstClient, firstName: '' } });

@@ -582,6 +582,7 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       const levelKeys = ['levelScore', 'level_score', 'levelNumeric', 'level_numeric', 'ratingNumeric',
         'rating_numeric', 'ratingValue', 'rating_value', 'gameRating', 'game_rating', 'rating', 'level'];
       const numericLevel = [client, record].flatMap(row => levelKeys.map(key => row[key]))
+        .map(value => this.pickString(value)?.replace(',', '.') ?? value)
         .map(value => this.formatLevelScore(this.pickFiniteNumber(value) ?? Number.NaN)).find(Boolean);
       participants.set(clientId, {
         id: clientId,
