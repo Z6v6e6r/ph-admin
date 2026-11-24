@@ -1268,10 +1268,9 @@ export class TournamentsService {
   }
 
   private withRosterPaymentState(
-    tournament: CustomTournament, roster: VivaTournamentMechanicsRoster
+    tournament: CustomTournament, roster: VivaTournamentMechanicsRoster, holds: PendingJoinPayment[]
   ): VivaTournamentMechanicsRoster {
-    const pending = this.getPendingJoinPayments(tournament).filter(payment =>
-      payment.ownerSubscription && this.isCapacityHoldingPendingJoinPayment(payment));
+    const pending = holds.filter(payment => payment.ownerSubscription);
     const completedCopays = this.completedCopayBookings(tournament);
     const paidBookings = new Set(tournament.participants.flatMap(participant => {
       const bookingId = participant.paymentStatus === 'PAID' && participant.id
@@ -1295,16 +1294,24 @@ export class TournamentsService {
   private toMechanicsRosterView(
     tournament: CustomTournament, roster: VivaTournamentMechanicsRoster, profileId: string
   ): TournamentMechanicsRosterView {
-    const source = this.withRosterPaymentState(tournament, roster);
+    const holds = this.getPendingJoinPayments(tournament).filter(payment =>
+      this.isCapacityHoldingPendingJoinPayment(payment));
+    const source = this.withRosterPaymentState(tournament, roster, holds);
     const operations = this.toRecord(tournament.details?.booking)?.pendingJoinPayments;
     return {
       ...source,
       participants: source.participants.map(({ vivaBookingId, ...participant }) => {
         const ownedByCheckout = Array.isArray(operations) && operations.some(value => {
           const operation = this.toRecord(value);
-          return operation?.providerBookingId === vivaBookingId || operation?.copayBookingId === vivaBookingId;
+          return operation?.providerBookingId === vivaBookingId || operation?.copayBookingId === vivaBookingId
+            || this.toRecord(operation?.ownerReceipt)?.bookingId === vivaBookingId;
         });
-        return participant.id === profileId.toLowerCase() && !participant.confirmationPending && !ownedByCheckout
+        const awaitingBookingLink = holds.some(payment =>
+          payment.clientId?.toLowerCase() === participant.id
+          && (!payment.exerciseId || payment.exerciseId.toLowerCase() === roster.exerciseId)
+          && !payment.providerBookingId && !payment.copayBookingId);
+        return participant.id === profileId.toLowerCase()
+          && !participant.confirmationPending && !ownedByCheckout && !awaitingBookingLink
           ? { ...participant, vivaBookingId }
           : participant;
       })

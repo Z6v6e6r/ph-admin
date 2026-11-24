@@ -82,6 +82,10 @@ test('mechanics reads preserve active players while refresh persists exactly one
   let readCount = 0;
   let writes = 0;
   let saved: any = null;
+  const holds = [{
+    clientId: firstClient, copayBookingId: firstBooking, exerciseId,
+    ownerSubscription: true, state: 'PROVIDER_CREATE_PENDING'
+  }];
   Object.assign(service, {
     assertCheckoutTenant: (value: string) => assert.equal(value, 'synthetic-tenant'),
     requireTournamentLkAccessToken: async () => 'fixture',
@@ -89,10 +93,7 @@ test('mechanics reads preserve active players while refresh persists exactly one
     fetchVivaOwnProfile: async () => ({ id: player }),
     vivaMechanicsRosterCache: new Map(),
     vivaMechanicsRosterInFlight: new Map(),
-    getPendingJoinPayments: () => [{
-      clientId: firstClient, copayBookingId: firstBooking, exerciseId,
-      ownerSubscription: true, state: 'PROVIDER_CREATE_PENDING'
-    }],
+    getPendingJoinPayments: () => holds,
     vivaTournamentsService: { readMechanicsParticipants: async (id: string) => {
       assert.equal(id, exerciseId);
       readCount += 1;
@@ -135,6 +136,10 @@ test('mechanics reads preserve active players while refresh persists exactly one
   assert.equal((await service.getVivaMechanicsRoster({ ...input, refresh: false })).participants[0].vivaBookingId, undefined);
   player = secondClient;
   assert.equal((await service.getVivaMechanicsRoster({ ...input, refresh: false })).participants[1].vivaBookingId, secondBooking);
+  holds.push({ clientId: secondClient, copayBookingId: '', exerciseId,
+    ownerSubscription: false, state: 'PROVIDER_RESULT_UNKNOWN' });
+  assert.equal((await service.getVivaMechanicsRoster({ ...input, refresh: false })).participants[1].vivaBookingId, undefined);
+  holds.pop();
   fixture.allowedManagerPhones.push('synthetic-manager');
   await assert.rejects(service.getVivaMechanicsRoster(input), { status: 403 });
   fixture.allowedManagerPhones.length = 0;
