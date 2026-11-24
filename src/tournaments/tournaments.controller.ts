@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Optional,
   Param,
   Patch,
@@ -137,6 +138,29 @@ export class TournamentsController {
     @CurrentUser() user?: RequestUser
   ): ReturnType<TournamentsService['refreshVivaTournamentSnapshotAdminDay']> {
     return this.tournamentsService.refreshVivaTournamentSnapshotAdminDay(body?.date, user);
+  }
+
+  @Get(':exerciseId/mechanics-roster')
+  @Roles()
+  @Header('Cache-Control', 'private, no-store')
+  getMechanicsRoster(@Param('exerciseId') exerciseId: string, @Req() request: Request) {
+    return this.readMechanicsRoster(exerciseId, request, false);
+  }
+
+  @Post(':exerciseId/mechanics-roster')
+  @Roles()
+  @Header('Cache-Control', 'private, no-store')
+  refreshMechanicsRoster(@Param('exerciseId') exerciseId: string, @Req() request: Request) {
+    return this.readMechanicsRoster(exerciseId, request, true);
+  }
+
+  private readMechanicsRoster(exerciseId: string, request: Request, refresh: boolean) {
+    return this.tournamentsService.getVivaMechanicsRoster({
+      exerciseId,
+      refresh,
+      authorizationHeader: this.pickString(request.headers.authorization),
+      tenantKeyHeader: this.pickString(request.headers['x-padlhub-tenant-key'])
+    });
   }
 
   @Post('snapshot/admin-refresh-range')

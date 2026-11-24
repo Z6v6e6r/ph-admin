@@ -11,6 +11,7 @@ import { createHash } from 'crypto';
 import { Collection, Db, MongoClient } from 'mongodb';
 import { DEFAULT_DIALOGS_MONGODB_DB } from '../../common/constants/dialogs-mongo.constants';
 import { ensureMongoIndex, isMongoIndexReadinessError } from '../../common/mongo-index.guard';
+import type { TournamentMechanicsParticipant } from '../../tournaments/tournaments.types';
 
 export type VivaClientCabinetStatus = 'FOUND' | 'NOT_FOUND' | 'DISABLED';
 
@@ -504,6 +505,98 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       seen.add(key);
       return true;
     });
+  }
+
+  async readActiveExerciseBookings(exerciseId: string): Promise<Record<string, unknown>[]> {
+    const unavailable = () => new ServiceUnavailableException({ code: 'VIVA_ROSTER_UNAVAILABLE' });
+    const size = 100;
+    const records: Record<string, unknown>[] = [];
+    try {
+      const token = await this.resolveAccessToken();
+      if (!token) throw unavailable();
+      const { config } = await this.getResolvedSettings();
+      const path = `/api/v1/exercises/${encodeURIComponent(exerciseId)}/bookings`;
+      let expectedTotal: number | undefined;
+      let expectedPages: number | undefined;
+      // Bound the provider work and refuse partial snapshots.
+      for (let page = 0; page < 5; page += 1) {
+        const payload = await this.fetchAdminJson(
+          `${path}?showCancelled=false&page=${page}&size=${size}`, token, config.baseUrl
+        );
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw unavailable();
+        const { content, number, totalElements, totalPages } = payload as {
+          content?: unknown; number?: unknown; totalElements?: unknown; totalPages?: unknown;
+        };
+        if (!Array.isArray(content) || content.length > size
+          || content.some(row => !row || typeof row !== 'object' || Array.isArray(row))) {
+          throw unavailable();
+        }
+        records.push(...content);
+        if (number !== page || typeof totalElements !== 'number' || !Number.isSafeInteger(totalElements)
+          || totalElements < 0 || typeof totalPages !== 'number' || !Number.isSafeInteger(totalPages)
+          || totalPages < 0 || totalPages > 5 || (page > 0 && (totalPages !== expectedPages || totalElements !== expectedTotal))) {
+          throw unavailable();
+        }
+        expectedTotal = totalElements;
+        expectedPages = totalPages;
+        if (page + 1 >= totalPages) {
+          if (records.length !== totalElements) throw unavailable();
+          return records;
+        }
+      }
+    } catch {
+      throw unavailable();
+    }
+    throw unavailable();
+  }
+
+  async readMechanicsParticipants(exerciseId: string): Promise<TournamentMechanicsParticipant[]> {
+    const records = await this.readActiveExerciseBookings(exerciseId);
+    const participants = new Map<string, TournamentMechanicsParticipant>();
+    const bookingIds = new Set<string>();
+    for (const record of records) {
+      const status = this.normalizeStatus(this.pickString(record.status) ?? this.pickString(record.state));
+      if (record.isCancelled === true || record.isCanceled === true || record.cancelled === true
+        || record.canceled === true || record.waitlist === true || record.isWaitlist === true
+        || ['CANCELED', 'CANCELLED', 'DELETED', 'REJECTED', 'REFUNDED', 'WAITLIST', 'WAITING_LIST'].includes(status)) continue;
+      const client = this.isRecord(record.client) ? record.client : {};
+      const clientId = (this.pickString(client.id) ?? this.pickString(record.clientId)
+        ?? this.pickString(record.client_id))?.toLowerCase();
+      const bookingId = this.pickString(record.id) ?? this.pickString(record.bookingId);
+      const rowExerciseId = this.pickString(record.exerciseId)
+        ?? (this.isRecord(record.exercise) ? this.pickString(record.exercise.id) : undefined);
+      if (!clientId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(clientId)
+        || !bookingId || bookingIds.has(bookingId) || (rowExerciseId && rowExerciseId.toLowerCase() !== exerciseId)) {
+        throw new ServiceUnavailableException({ code: 'VIVA_ROSTER_UNAVAILABLE' });
+      }
+      bookingIds.add(bookingId);
+      if (participants.has(clientId)) continue;
+      const spot = this.pickFiniteNumber(record.spot);
+      const transactionStatus = this.normalizeStatus(this.pickString(record.transactionStatus)
+        ?? (this.isRecord(record.transactionStatus) ? this.pickString(record.transactionStatus.transactionStatus) : undefined));
+      const paymentStatus = this.normalizeStatus(this.pickString(record.paymentStatus)
+        ?? this.pickString(record.payment_status) ?? this.pickString(record.paymentState) ?? this.pickString(record.payment_state));
+      const paid = ['PAID', 'COMPLETED'].includes(transactionStatus)
+        || ['PAID', 'PAYED', 'SUCCESS', 'SUCCEEDED', 'COMPLETED'].includes(paymentStatus)
+        || [record.paid, record.isPaid, record.paymentReceived, record.payment_received].includes(true);
+      const levelKeys = ['levelScore', 'level_score', 'levelNumeric', 'level_numeric', 'ratingNumeric',
+        'rating_numeric', 'ratingValue', 'rating_value', 'gameRating', 'game_rating', 'rating', 'level'];
+      const numericLevel = [client, record].flatMap(row => levelKeys.map(key => row[key]))
+        .map(value => this.pickString(value)?.replace(',', '.') ?? value)
+        .map(value => this.formatLevelScore(this.pickFiniteNumber(value) ?? Number.NaN)).find(Boolean);
+      participants.set(clientId, {
+        id: clientId,
+        vivaBookingId: bookingId,
+        name: this.extractClientName(client) ?? this.pickString(record.clientName)
+          ?? this.pickString(record.client_name) ?? this.extractClientName(record) ?? `Участник №${participants.size + 1}`,
+        ...(spot && Number.isSafeInteger(spot) && spot > 0 ? { spot } : {}),
+        avatarUrl: this.extractClientAvatarUrl(client) ?? this.extractClientAvatarUrl(record),
+        levelLabel: numericLevel ?? this.extractClientLevelLabel(client) ?? this.extractClientLevelLabel(record),
+        paymentStatus: paid ? 'PAID'
+          : ['UNPAID', 'PENDING', 'NEW', 'CREATED', 'WAITING'].includes(paymentStatus) ? 'UNPAID' : undefined
+      });
+    }
+    return [...participants.values()];
   }
 
   async getExerciseStatus(exerciseId?: string): Promise<VivaExerciseStatusSnapshot | null> {

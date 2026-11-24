@@ -28422,6 +28422,9 @@
     }
 
     function buildTournamentEditorParticipants(tournament) {
+      if (Array.isArray(tournament && tournament.mechanicsParticipants)) {
+        return tournament.mechanicsParticipants;
+      }
       var participants = dedupeTournamentParticipants(tournament && tournament.participants);
       if (participants.length > 0) {
         return participants;
@@ -28563,7 +28566,10 @@
           side.appendChild(reasonChip);
         }
 
-        var paymentStatus = formatTournamentPaymentStatus(person.paymentStatus);
+        var paymentStatus = [
+          formatTournamentPaymentStatus(person.paymentStatus),
+          person.confirmationPending ? 'ЦУП проверяет подтверждение' : ''
+        ].filter(Boolean).join(' · ');
         if (paymentStatus) {
           var paymentChip = document.createElement('div');
           paymentChip.className = 'phab-admin-tournament-person-chip';
@@ -28829,7 +28835,16 @@
         showNotes: true,
         compactList: true
       });
-      appendCommunityFormField(form, 'Участники', participantsList, true);
+      var participantsLabel = Array.isArray(model && model.mechanicsParticipants)
+        ? 'Участники (' + model.mechanicsParticipants.length + ')'
+        : 'Участники';
+      appendCommunityFormField(form, participantsLabel, participantsList, true);
+      if (model && model.mechanicsRosterStale) {
+        var rosterNotice = document.createElement('div');
+        rosterNotice.className = 'phab-admin-tournament-empty';
+        rosterNotice.textContent = 'Viva временно недоступна. Показаны сохранённые данные.';
+        participantsList.prepend(rosterNotice);
+      }
 
       var waitlistList = createTournamentPersonList(normalizeArray(model && model.waitlist), {
         emptyText: 'Лист ожидания пуст.',
