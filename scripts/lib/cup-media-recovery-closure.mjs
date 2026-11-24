@@ -32,6 +32,8 @@ export const MEDIA_CUP_LEVEL_CANDIDATE_SDK_SHA256 = 'a8b2ed6c78ebd1c71c53b7e1a70
 export const MEDIA_CUP_LEVEL_AUDIT_CANDIDATE_SDK_SHA256 = '7290b3cc35883e93981aa6452290c5b8b07a7600b2f1dc97f48ab32cff2a3426';
 // Station-scoped rating edits add the acting station to the candidate SDK only.
 export const MEDIA_CUP_LEVEL_STATION_CANDIDATE_SDK_SHA256 = '8eeb4c8d6f3ddf26ddb85c8a300065ccd6520468e9aceefa20d0a3bcfa5a1257';
+// The tournament mechanics roster updates only the candidate SDK display.
+export const MEDIA_CUP_MECHANICS_ROSTER_CANDIDATE_SDK_SHA256 = '49c9a53ba18a04010f4ff9b9c16b949126dbd0a3f445eb00fca7994d1292c06e';
 const digest = body => createHash('sha256').update(body).digest('hex');
 
 export function verifyMediaRecoveryCandidateHash(name, candidateSha256, recoverySha256) {
@@ -39,7 +41,8 @@ export function verifyMediaRecoveryCandidateHash(name, candidateSha256, recovery
     assert.equal(recoverySha256, MEDIA_RECOVERY_SDK_SHA256, 'Media recovery SDK drift');
     assert.ok([MEDIA_RECOVERY_SDK_SHA256, MEDIA_FPR_CANDIDATE_SDK_SHA256,
       MEDIA_CUP_LEVEL_CANDIDATE_SDK_SHA256, MEDIA_CUP_LEVEL_AUDIT_CANDIDATE_SDK_SHA256,
-      MEDIA_CUP_LEVEL_STATION_CANDIDATE_SDK_SHA256].includes(candidateSha256), 'Unreviewed candidate SDK drift');
+      MEDIA_CUP_LEVEL_STATION_CANDIDATE_SDK_SHA256,
+      MEDIA_CUP_MECHANICS_ROSTER_CANDIDATE_SDK_SHA256].includes(candidateSha256), 'Unreviewed candidate SDK drift');
     return;
   }
   assert.equal(candidateSha256, recoverySha256, 'Candidate/media recovery compiled closure mismatch');

@@ -58,6 +58,29 @@ export interface TournamentParticipant {
   notes?: string;
 }
 
+export interface TournamentMechanicsParticipant {
+  id: string;
+  vivaBookingId: string;
+  name: string;
+  spot?: number;
+  avatarUrl?: string | null;
+  levelLabel?: string;
+  paymentStatus?: TournamentPaymentStatus;
+  confirmationPending?: boolean;
+}
+
+export interface VivaTournamentMechanicsRoster {
+  exerciseId: string;
+  fetchedAt: string;
+  participants: TournamentMechanicsParticipant[];
+}
+
+export interface TournamentMechanicsRosterView extends Omit<VivaTournamentMechanicsRoster, 'participants'> {
+  participants: Array<Omit<TournamentMechanicsParticipant, 'vivaBookingId'> & { vivaBookingId?: string }>;
+  refreshed?: boolean;
+  retryAfterMs?: number;
+}
+
 export interface TournamentSkin {
   title?: string;
   subtitle?: string;
@@ -292,6 +315,9 @@ export interface CustomTournament extends Tournament {
   gender: TournamentGender;
   maxPlayers: number;
   participants: TournamentParticipant[];
+  /** Read-only display of active Viva bookings. Never submitted as a checkout roster. */
+  mechanicsParticipants?: TournamentMechanicsRosterView['participants'];
+  mechanicsRosterStale?: boolean;
   waitlist: TournamentParticipant[];
   allowedManagerPhones: string[];
   publicationCommunityIds?: string[];

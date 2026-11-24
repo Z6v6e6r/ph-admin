@@ -47,6 +47,7 @@ import {
   TournamentStatusAuditEntry,
   TournamentSummerSubscriptionOffer
 } from './tournaments.types';
+import type { VivaTournamentMechanicsRoster } from './tournaments.types';
 
 type MongoCustomTournamentDocument = Document & {
   _id?: unknown;
@@ -274,10 +275,10 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     return document ? this.toCustomTournament(document) : null;
   }
 
-  async findCheckoutTournamentByExerciseId(exerciseId: string) {
+  async findCheckoutTournamentByExerciseId(exerciseId: string, archivedOnly = false) {
     const collection = await this.collection(false);
     const documents = await collection.find({
-      archived: { $ne: true },
+      archived: archivedOnly ? true : { $ne: true },
       $or: CHECKOUT_EXERCISE_PATHS.map(path => ({ [path]: exerciseId }))
     }, { readPreference: 'primary', readConcern: { level: 'majority' }, maxTimeMS: 5000 })
       .limit(2).toArray();
@@ -296,7 +297,46 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       mappingChecks.push({ $eq: [{ $eq: [{ $type: `$${path}` }, 'object'] }, Boolean(this.toRecord(readPath(path)))] });
     }
     const tournament = this.toCustomTournament(document);
-    return tournament ? { tournament, mappingChecks } : null;
+    const rosterAccessChecks = [
+      'allowedManagerPhones', 'isPublic', 'trainerId',
+      'details.sourceTournamentSnapshot.trainerId', 'sourceTournamentSnapshot.trainerId',
+      'details.sourceTournamentSnapshot.source', 'sourceTournamentSnapshot.source'
+    ].map(field => {
+      const value = readPath(field);
+      return value === undefined ? { $eq: [{ $type: `$${field}` }, 'missing'] }
+        : { $eq: [`$${field}`, { $literal: value }] };
+    });
+    return tournament ? { tournament, mappingChecks, rosterAccessChecks } : null;
+  }
+
+  async readVivaMechanicsRoster(id: string, exerciseId: string): Promise<VivaTournamentMechanicsRoster | null> {
+    const collection = await this.collection(false);
+    const row = await collection.findOne({
+      ...this.buildIdFilter(id),
+      archived: { $ne: true },
+      'vivaMechanicsRoster.exerciseId': exerciseId
+    }, { projection: { vivaMechanicsRoster: 1 }, maxTimeMS: 5000 });
+    return row?.vivaMechanicsRoster ?? null;
+  }
+
+  async saveVivaMechanicsRoster(
+    id: string,
+    mappingChecks: Document[],
+    roster: VivaTournamentMechanicsRoster
+  ): Promise<boolean> {
+    const collection = await this.collection(false);
+    const result = await collection.updateOne({
+      archived: { $ne: true },
+      $expr: { $and: mappingChecks },
+      $and: [
+        this.buildIdFilter(id),
+        { $or: [
+          { 'vivaMechanicsRoster.exerciseId': { $ne: roster.exerciseId } },
+          { 'vivaMechanicsRoster.fetchedAt': { $lte: roster.fetchedAt } }
+        ] }
+      ]
+    }, { $set: { vivaMechanicsRoster: roster } });
+    return result.acknowledged && result.matchedCount === 1;
   }
 
   async createCustomTournament(
@@ -925,10 +965,26 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
           ]
         }
       } as Filter<MongoCustomTournamentDocument>,
-      {
-        $push: { 'details.booking.pendingJoinPayments': pending },
-        $set: { updatedAt }
-      } as Document,
+      [{
+        $set: {
+          // Legacy imports can store a null parent. Initialize it while reserving the seat.
+          details: {
+            $mergeObjects: ['$details', {
+              booking: {
+                $mergeObjects: ['$details.booking', {
+                  pendingJoinPayments: {
+                    $concatArrays: [
+                      { $ifNull: ['$details.booking.pendingJoinPayments', []] },
+                      { $literal: [pending] }
+                    ]
+                  }
+                }]
+              }
+            }]
+          },
+          updatedAt
+        }
+      }],
       { returnDocument: 'after', writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } }
     );
     return document ? this.toCustomTournament(document) : null;
