@@ -1,14 +1,17 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { Collection, Db, Document, MongoClient } from 'mongodb';
 import {
   ensureMongoIndex,
   isMongoIndexReadinessError,
   isProductionRuntime
 } from '../../common/mongo-index.guard';
-import { Tournament } from '../../tournaments/tournaments.types';
+import { Tournament, TournamentStatus } from '../../tournaments/tournaments.types';
+import { VivaAdminService } from './viva-admin.service';
 import { VivaTournamentsService } from './viva-tournaments.service';
 
 export const VIVA_TOURNAMENT_SNAPSHOT_MANUAL_RANGE_MAX_DAYS = 31;
+const MAX_OMITTED_EXERCISE_LOOKUPS = 8;
+const OMITTED_EXERCISE_LOOKUP_CONCURRENCY = 2;
 
 export interface VivaTournamentSnapshotListOptions {
   date?: string;
@@ -84,6 +87,7 @@ export interface VivaTournamentSnapshotDayRefreshResult {
   date: string;
   snapshotAvailable: boolean;
   tournaments: Tournament[];
+  removedExerciseIds?: string[];
   refreshedAt?: string;
   retryAfterMs?: number;
   persisted?: boolean;
@@ -200,7 +204,10 @@ export class VivaTournamentSnapshotService implements OnModuleInit, OnModuleDest
   private lastManualRefreshAttemptAt?: number;
   private lastPublicDateRefreshAttemptAt?: number;
 
-  constructor(private readonly vivaTournamentsService: VivaTournamentsService) {
+  constructor(
+    private readonly vivaTournamentsService: VivaTournamentsService,
+    @Optional() private readonly vivaAdminService?: VivaAdminService
+  ) {
     if (this.refreshEnabled) {
       this.refreshTimer = setInterval(() => {
         this.scheduleRefreshIfDue('interval');
@@ -746,6 +753,7 @@ export class VivaTournamentSnapshotService implements OnModuleInit, OnModuleDest
     const windowTo = this.addDays(today, this.windowLookaheadDays);
 
     try {
+      const previousSnapshot = await this.getCurrentSnapshot();
       const tournaments = await this.vivaTournamentsService.listTournaments({
         from: windowFrom,
         to: windowTo
@@ -753,6 +761,9 @@ export class VivaTournamentSnapshotService implements OnModuleInit, OnModuleDest
       if (!tournaments) {
         throw new Error('Viva tournaments source returned no data');
       }
+      const reconciled = await this.reconcileOmittedTournaments(
+        previousSnapshot, tournaments, { from: windowFrom, to: windowTo, lookupDate: today, now: Date.now() }
+      );
 
       const generatedAt = new Date().toISOString();
       const snapshot: VivaTournamentSnapshot = {
@@ -761,8 +772,8 @@ export class VivaTournamentSnapshotService implements OnModuleInit, OnModuleDest
         lastSuccessfulAt: generatedAt,
         windowFrom,
         windowTo,
-        tournaments,
-        tournamentsCount: tournaments.length,
+        tournaments: reconciled.tournaments,
+        tournamentsCount: reconciled.tournaments.length,
         refreshReason: reason,
         dateLastSuccessfulAt: {}
       };
@@ -807,12 +818,15 @@ export class VivaTournamentSnapshotService implements OnModuleInit, OnModuleDest
       if (!tournaments) {
         throw new Error('Viva tournaments source returned no data');
       }
+      const reconciled = await this.reconcileOmittedTournaments(
+        previousSnapshot, tournaments, { from: date, to: date, lookupDate: date, now: Date.now() }
+      );
 
       const generatedAt = new Date().toISOString();
       const snapshot = this.mergeRefreshedDate(
         previousSnapshot,
         date,
-        tournaments,
+        reconciled.tournaments,
         generatedAt,
         reason
       );
@@ -828,7 +842,9 @@ export class VivaTournamentSnapshotService implements OnModuleInit, OnModuleDest
           reason: 'refreshed',
           date,
           snapshotAvailable: true,
-          tournaments,
+          tournaments: this.filterTournaments(snapshot.tournaments, { date }),
+          ...(reconciled.removedExerciseIds.length > 0
+            ? { removedExerciseIds: reconciled.removedExerciseIds } : {}),
           refreshedAt: generatedAt,
           persisted
         },
@@ -876,6 +892,7 @@ export class VivaTournamentSnapshotService implements OnModuleInit, OnModuleDest
     const refreshedDates: string[] = [];
     const failedDates: string[] = [];
     let tournamentsCount = 0;
+    let lookupBudget = MAX_OMITTED_EXERCISE_LOOKUPS;
     let nextSnapshot = previousSnapshot;
 
     for (const date of dates) {
@@ -887,15 +904,19 @@ export class VivaTournamentSnapshotService implements OnModuleInit, OnModuleDest
         if (!tournaments) {
           throw new Error('Viva tournaments source returned no data');
         }
+        const reconciled = await this.reconcileOmittedTournaments(
+          nextSnapshot, tournaments, { from: date, to: date, lookupDate: date, now: Date.now(), lookupBudget }
+        );
+        lookupBudget -= reconciled.lookups;
         nextSnapshot = this.mergeRefreshedDate(
           nextSnapshot,
           date,
-          tournaments,
+          reconciled.tournaments,
           refreshedAt,
           reason
         );
         refreshedDates.push(date);
-        tournamentsCount += tournaments.length;
+        tournamentsCount += this.filterTournaments(nextSnapshot.tournaments, { date }).length;
       } catch (error) {
         failedDates.push(date);
         this.logger.warn(
@@ -949,6 +970,100 @@ export class VivaTournamentSnapshotService implements OnModuleInit, OnModuleDest
       },
       snapshot: nextSnapshot ?? null
     };
+  }
+
+  private async reconcileOmittedTournaments(
+    previous: VivaTournamentSnapshot | undefined,
+    fresh: Tournament[],
+    scope: { from: string; to: string; lookupDate: string; now: number; lookupBudget?: number }
+  ) {
+    const { from, to, lookupDate, now, lookupBudget = MAX_OMITTED_EXERCISE_LOOKUPS } = scope;
+    const tournaments = new Map(fresh.map(tournament => [tournament.id, tournament]));
+    const freshExercises = new Set(fresh.map(tournament => tournament.exerciseId ?? tournament.id));
+    const removedExerciseIds: string[] = [];
+    const omitted = (previous?.tournaments ?? []).filter(tournament => {
+      const date = this.normalizeDateKey(tournament.startsAt);
+      return date && date >= from && date <= to && !tournaments.has(tournament.id)
+        && !freshExercises.has(tournament.exerciseId ?? tournament.id);
+    });
+    // Viva's day list omits started exercises. An exact lookup may confirm
+    // their current metadata, a cancellation, or a move to a different day.
+    omitted.filter(tournament => Date.parse(tournament.startsAt ?? '') <= now)
+      .forEach(tournament => tournaments.set(tournament.id, tournament));
+    const candidates = omitted
+      .filter(tournament => this.normalizeDateKey(tournament.startsAt) === lookupDate)
+      .filter(tournament => tournament.status !== TournamentStatus.CANCELED)
+      .sort((left, right) => {
+        const priority = (item: Tournament) => {
+          const start = Date.parse(item.startsAt ?? '');
+          const end = Date.parse(item.endsAt ?? '');
+          return start <= now && !(end <= now) ? 0 : start > now ? 1 : 2;
+        };
+        return priority(left) - priority(right);
+      })
+      .slice(0, lookupBudget);
+    const dayOnly = from === to;
+    const reachableFrom = dayOnly && previous && previous.windowFrom < from ? previous.windowFrom : from;
+    const reachableTo = dayOnly && previous && previous.windowTo > to ? previous.windowTo : to;
+    let confirmed = 0;
+    for (let index = 0; index < candidates.length; index += OMITTED_EXERCISE_LOOKUP_CONCURRENCY) {
+      const batch = candidates.slice(index, index + OMITTED_EXERCISE_LOOKUP_CONCURRENCY);
+      const details = await Promise.all(batch.map(tournament =>
+        this.vivaAdminService?.getExerciseStatus(
+          tournament.exerciseId ?? tournament.id, { scheduleRead: true }
+        ).catch(() => null)
+      ));
+      batch.forEach((tournament, offset) => {
+        const detail = details[offset];
+        if (!detail) return;
+        const startsAt = detail.canceled ? detail.timeFrom ?? tournament.startsAt : detail.timeFrom;
+        const start = Date.parse(startsAt ?? '');
+        const date = this.normalizeDateKey(startsAt);
+        if (!date || !Number.isFinite(start)) return;
+        const endsAt = detail.timeTo ?? (startsAt === tournament.startsAt ? tournament.endsAt : undefined);
+        const end = Date.parse(endsAt ?? '');
+        const finished = end <= now || ['FINISHED', 'COMPLETED', 'DONE', 'CLOSED']
+          .includes(detail.rawStatus?.trim().toUpperCase() ?? '');
+        const status = detail.canceled ? TournamentStatus.CANCELED
+          : finished ? TournamentStatus.FINISHED
+          : start <= now ? TournamentStatus.RUNNING
+          : TournamentStatus.REGISTRATION;
+        confirmed += 1;
+        if (date !== lookupDate) removedExerciseIds.push(tournament.exerciseId ?? tournament.id);
+        if (date < reachableFrom || date > reachableTo) {
+          tournaments.delete(tournament.id);
+          return;
+        }
+        const studioName = detail.studioName ?? tournament.studioName;
+        const courtName = detail.courtName ?? tournament.courtName;
+        tournaments.set(tournament.id, {
+          ...tournament,
+          startsAt,
+          endsAt,
+          status,
+          rawStatus: status === TournamentStatus.CANCELED || status === TournamentStatus.FINISHED
+            ? status : detail.rawStatus ?? status,
+          studioId: detail.studioId ?? tournament.studioId,
+          studioName,
+          courtName,
+          locationName: detail.studioName || detail.courtName
+            ? [studioName, courtName].filter(Boolean).join(' · ') : tournament.locationName,
+          participantsCount: detail.participantsCount ?? tournament.participantsCount,
+          maxPlayers: detail.maxPlayers ?? tournament.maxPlayers
+        });
+      });
+    }
+    if (omitted.length > 0) {
+      this.logger.debug(JSON.stringify({
+        type: 'viva_tournament_snapshot_omissions',
+        date: lookupDate,
+        omitted: omitted.length,
+        lookups: candidates.length,
+        confirmed,
+        movedOut: removedExerciseIds.length
+      }));
+    }
+    return { tournaments: Array.from(tournaments.values()), removedExerciseIds, lookups: candidates.length };
   }
 
   private mergeRefreshedDate(

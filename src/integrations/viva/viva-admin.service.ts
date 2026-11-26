@@ -160,6 +160,11 @@ export interface VivaExerciseStatusSnapshot {
   canceled: boolean;
   timeFrom?: string;
   timeTo?: string;
+  participantsCount?: number;
+  maxPlayers?: number;
+  studioId?: string;
+  studioName?: string;
+  courtName?: string;
 }
 
 export interface VivaSubscriptionProductEvidence {
@@ -599,7 +604,10 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     return [...participants.values()];
   }
 
-  async getExerciseStatus(exerciseId?: string): Promise<VivaExerciseStatusSnapshot | null> {
+  async getExerciseStatus(
+    exerciseId?: string,
+    options?: { scheduleRead?: boolean }
+  ): Promise<VivaExerciseStatusSnapshot | null> {
     const normalizedExerciseId = this.normalizeOptional(exerciseId);
     if (!normalizedExerciseId) {
       return null;
@@ -616,12 +624,20 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       `/api/v1/exercises/${encodedExerciseId}`,
       `/api/v1/group-exercises/${encodedExerciseId}`
     ];
+    const scheduleSignal = options?.scheduleRead
+      ? this.buildAbortSignal(Math.min(2500, this.requestTimeoutMs))
+      : undefined;
 
     for (const path of paths) {
       try {
-        const payload = await this.fetchAdminJson(path, token, resolved.config.baseUrl);
+        if (scheduleSignal?.aborted) break;
+        const payload = await this.fetchAdminJson(path, token, resolved.config.baseUrl, scheduleSignal);
         const record = this.unwrapRecord(payload);
         if (!record) {
+          continue;
+        }
+        if (options?.scheduleRead
+          && this.pickString(record.id)?.toLowerCase() !== normalizedExerciseId.toLowerCase()) {
           continue;
         }
         const rawStatus =
@@ -629,12 +645,21 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
           this.pickString(record.state) ??
           this.pickString(record.bookingStatus) ??
           this.pickString(record.booking_status);
+        const studio = this.isRecord(record.studio) ? record.studio : undefined;
+        const room = this.isRecord(record.room) ? record.room : undefined;
         return {
           id: normalizedExerciseId,
           rawStatus,
           canceled: this.resolveExerciseCanceledFlag(record, rawStatus),
           timeFrom: this.pickString(record.timeFrom) ?? this.pickString(record.startsAt),
-          timeTo: this.pickString(record.timeTo) ?? this.pickString(record.endsAt)
+          timeTo: this.pickString(record.timeTo) ?? this.pickString(record.endsAt),
+          ...(options?.scheduleRead ? {
+            participantsCount: this.pickFiniteNumber(record.clientsCount),
+            maxPlayers: this.pickFiniteNumber(record.maxClientsCount),
+            studioId: this.pickString(studio?.id) ?? this.pickString(record.studioId),
+            studioName: this.pickString(studio?.name),
+            courtName: this.pickString(room?.name) ?? this.pickString(record.courtName)
+          } : {})
         };
       } catch {
         continue;
@@ -1766,7 +1791,8 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
   private async fetchAdminJson(
     path: string,
     token: string,
-    baseUrl: string
+    baseUrl: string,
+    signal = this.buildAbortSignal()
   ): Promise<unknown> {
     const cleanPath = String(path || '').replace(/^\/+/, '');
     const response = await fetch(new URL(`/${cleanPath}`, `${baseUrl}/`).toString(), {
@@ -1774,7 +1800,7 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
         Accept: 'application/json',
         Authorization: `Bearer ${token}`
       },
-      signal: this.buildAbortSignal()
+      signal
     });
 
     if (!response.ok) {
@@ -2611,13 +2637,13 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     return phone ? `phone:${phone}` : undefined;
   }
 
-  private buildAbortSignal(): AbortSignal | undefined {
+  private buildAbortSignal(timeoutMs = this.requestTimeoutMs): AbortSignal | undefined {
     const abortSignalTimeout = (AbortSignal as typeof AbortSignal & {
       timeout?: (delay: number) => AbortSignal;
     }).timeout;
 
     return typeof abortSignalTimeout === 'function'
-      ? abortSignalTimeout(this.requestTimeoutMs)
+      ? abortSignalTimeout(timeoutMs)
       : undefined;
   }
 
