@@ -195,27 +195,6 @@ export class VivaTournamentsService {
     };
   }
 
-  async readScheduleTournamentById(id: string): Promise<Tournament | null> {
-    const path = `exercises/${encodeURIComponent(id)}`;
-    const deadline = Date.now() + Math.min(2500, this.requestTimeoutMs);
-    for (const widgetId of this.widgetIds) {
-      const timeoutMs = deadline - Date.now();
-      if (timeoutMs <= 0) break;
-      const record = await this.fetchJson(path, undefined, widgetId, { priority: 'detail', timeoutMs })
-        .then(payload => this.unwrapFirstRecord(payload))
-        .catch(() => null);
-      if (!record) continue;
-      const tournament = this.toTournament(record, new Map(), new Map(), new Map());
-      if (tournament && (tournament.exerciseId ?? tournament.id) === id
-        && tournament.startsAt && Number.isFinite(Date.parse(tournament.startsAt))) {
-        delete tournament.participants;
-        delete tournament.waitlist;
-        return tournament;
-      }
-    }
-    return null;
-  }
-
   async createTournamentBooking(input: {
     exerciseId?: string;
     phone?: string;
@@ -630,19 +609,18 @@ export class VivaTournamentsService {
   private async fetchJson(
     path: string,
     query?: Record<string, string>,
-    widgetId?: string,
-    options?: { priority?: 'catalog' | 'detail' | 'reference'; timeoutMs?: number }
+    widgetId?: string
   ): Promise<unknown> {
     const url = this.buildUrl(path, query, widgetId);
     const resolvedWidgetId = widgetId ?? this.widgetIds[0] ?? 'default';
-    const priority = options?.priority ?? this.resolveRequestPriority(path);
+    const priority = this.resolveRequestPriority(path);
     const execute = async (signal?: AbortSignal): Promise<unknown> => {
       const response = await fetch(url, {
         headers: {
           Accept: 'application/json',
           'User-Agent': this.endUserUserAgent
         },
-        signal: signal ?? this.buildAbortSignal(options?.timeoutMs)
+        signal: signal ?? this.buildAbortSignal()
       });
 
       if (!response.ok) {
@@ -656,7 +634,7 @@ export class VivaTournamentsService {
         key: `GET ${url}`,
         bucket: `viva:${resolvedWidgetId}:${priority}`,
         priority,
-        timeoutMs: options?.timeoutMs ?? this.requestTimeoutMs,
+        timeoutMs: this.requestTimeoutMs,
         execute
       });
     }
@@ -2056,13 +2034,13 @@ export class VivaTournamentsService {
     return nextDate;
   }
 
-  private buildAbortSignal(timeoutMs = this.requestTimeoutMs): AbortSignal | undefined {
+  private buildAbortSignal(): AbortSignal | undefined {
     const abortSignalTimeout = (AbortSignal as typeof AbortSignal & {
       timeout?: (delay: number) => AbortSignal;
     }).timeout;
 
     return typeof abortSignalTimeout === 'function'
-      ? abortSignalTimeout(timeoutMs)
+      ? abortSignalTimeout(this.requestTimeoutMs)
       : undefined;
   }
 

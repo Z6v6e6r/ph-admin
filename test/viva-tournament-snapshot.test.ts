@@ -171,16 +171,18 @@ async function testManualDayRefreshReconcilesOmittedVivaExercises(): Promise<voi
         calls += 1;
         lastOptions = options;
         return [createTournament('fresh-day', '2026-07-04T20:00:00+03:00')];
-      },
-      readScheduleTournamentById: async (id: string) => {
+      }
+    } as never, {
+      getExerciseStatus: async (id: string, options: { scheduleRead: boolean }) => {
+        assert.equal(options.scheduleRead, true);
         exactLookups.push(id);
         if (id === 'retained-exercise') return null;
-        if (id === 'moved-exercise') {
-          return createTournament(id, '2026-07-06T19:00:00+03:00');
-        }
+        const day = id === 'moved-exercise' ? '2026-07-06' : '2026-07-04';
         return {
-          ...createTournament(id, '2026-07-04T19:00:00+03:00'),
-          status: id === 'canceled-exercise' ? TournamentStatus.CANCELED : TournamentStatus.RUNNING,
+          id,
+          timeFrom: `${day}T19:00:00+03:00`,
+          timeTo: `${day}T21:00:00+03:00`,
+          canceled: id === 'canceled-exercise',
           participantsCount: 8
         };
       }
@@ -217,7 +219,7 @@ async function testManualDayRefreshReconcilesOmittedVivaExercises(): Promise<voi
         new Set(['active-exercise', 'moved-exercise', 'canceled-exercise', 'retained-exercise']));
       const recovered = refreshed.tournaments.find(item => item.id === 'omitted-day');
       assert.equal(recovered?.exerciseId, 'active-exercise');
-      assert.equal(recovered?.status, TournamentStatus.RUNNING);
+      assert.equal(recovered?.status, TournamentStatus.FINISHED);
       assert.equal(recovered?.participantsCount, 8);
       assert.equal(recovered?.isPublic, false);
       assert.equal(refreshed.tournaments.find(item => item.id === 'canceled-exercise')?.status,
@@ -264,8 +266,9 @@ async function testFullRefreshPreservesOmissionsFromHydratedSnapshot(): Promise<
     let maxInFlight = 0;
     let lookups = 0;
     const service = new VivaTournamentSnapshotService({
-      listTournaments: async () => [],
-      readScheduleTournamentById: async () => {
+      listTournaments: async () => []
+    } as never, {
+      getExerciseStatus: async () => {
         lookups += 1;
         inFlight += 1;
         maxInFlight = Math.max(maxInFlight, inFlight);
@@ -302,9 +305,8 @@ async function testDayRefreshRetainsAnExerciseStartedDuringTheProviderRead(): Pr
       listTournaments: async () => {
         now += 2;
         return [];
-      },
-      readScheduleTournamentById: async () => null
-    } as never);
+      }
+    } as never, { getExerciseStatus: async () => null } as never);
     (service as any).getCurrentSnapshot = async () => ({
       windowFrom: date,
       windowTo: date,

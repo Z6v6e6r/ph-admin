@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { Collection, Db, Document, MongoClient } from 'mongodb';
 import {
   ensureMongoIndex,
@@ -6,6 +6,7 @@ import {
   isProductionRuntime
 } from '../../common/mongo-index.guard';
 import { Tournament, TournamentStatus } from '../../tournaments/tournaments.types';
+import { VivaAdminService } from './viva-admin.service';
 import { VivaTournamentsService } from './viva-tournaments.service';
 
 export const VIVA_TOURNAMENT_SNAPSHOT_MANUAL_RANGE_MAX_DAYS = 31;
@@ -203,7 +204,10 @@ export class VivaTournamentSnapshotService implements OnModuleInit, OnModuleDest
   private lastManualRefreshAttemptAt?: number;
   private lastPublicDateRefreshAttemptAt?: number;
 
-  constructor(private readonly vivaTournamentsService: VivaTournamentsService) {
+  constructor(
+    private readonly vivaTournamentsService: VivaTournamentsService,
+    @Optional() private readonly vivaAdminService?: VivaAdminService
+  ) {
     if (this.refreshEnabled) {
       this.refreshTimer = setInterval(() => {
         this.scheduleRefreshIfDue('interval');
@@ -1005,25 +1009,47 @@ export class VivaTournamentSnapshotService implements OnModuleInit, OnModuleDest
     for (let index = 0; index < candidates.length; index += OMITTED_EXERCISE_LOOKUP_CONCURRENCY) {
       const batch = candidates.slice(index, index + OMITTED_EXERCISE_LOOKUP_CONCURRENCY);
       const details = await Promise.all(batch.map(tournament =>
-        this.vivaTournamentsService.readScheduleTournamentById(tournament.exerciseId ?? tournament.id)
+        this.vivaAdminService?.getExerciseStatus(
+          tournament.exerciseId ?? tournament.id, { scheduleRead: true }
+        ).catch(() => null)
       ));
       batch.forEach((tournament, offset) => {
         const detail = details[offset];
-        const date = this.normalizeDateKey(detail?.startsAt);
-        if (!detail || !date) return;
+        if (!detail) return;
+        const startsAt = detail.canceled ? detail.timeFrom ?? tournament.startsAt : detail.timeFrom;
+        const start = Date.parse(startsAt ?? '');
+        const date = this.normalizeDateKey(startsAt);
+        if (!date || !Number.isFinite(start)) return;
+        const endsAt = detail.timeTo ?? (startsAt === tournament.startsAt ? tournament.endsAt : undefined);
+        const end = Date.parse(endsAt ?? '');
+        const finished = end <= now || ['FINISHED', 'COMPLETED', 'DONE', 'CLOSED']
+          .includes(detail.rawStatus?.trim().toUpperCase() ?? '');
+        const status = detail.canceled ? TournamentStatus.CANCELED
+          : finished ? TournamentStatus.FINISHED
+          : start <= now ? TournamentStatus.RUNNING
+          : TournamentStatus.REGISTRATION;
         confirmed += 1;
         if (date !== lookupDate) removedExerciseIds.push(tournament.exerciseId ?? tournament.id);
         if (date < reachableFrom || date > reachableTo) {
           tournaments.delete(tournament.id);
           return;
         }
+        const studioName = detail.studioName ?? tournament.studioName;
+        const courtName = detail.courtName ?? tournament.courtName;
         tournaments.set(tournament.id, {
           ...tournament,
-          ...Object.fromEntries(Object.entries(detail).filter(([, value]) => value !== undefined)),
-          id: tournament.id,
-          rawStatus: detail.status === TournamentStatus.CANCELED
-            ? TournamentStatus.CANCELED : detail.rawStatus ?? detail.status,
-          isPublic: tournament.isPublic === false ? false : detail.isPublic ?? tournament.isPublic
+          startsAt,
+          endsAt,
+          status,
+          rawStatus: status === TournamentStatus.CANCELED || status === TournamentStatus.FINISHED
+            ? status : detail.rawStatus ?? status,
+          studioId: detail.studioId ?? tournament.studioId,
+          studioName,
+          courtName,
+          locationName: detail.studioName || detail.courtName
+            ? [studioName, courtName].filter(Boolean).join(' · ') : tournament.locationName,
+          participantsCount: detail.participantsCount ?? tournament.participantsCount,
+          maxPlayers: detail.maxPlayers ?? tournament.maxPlayers
         });
       });
     }
