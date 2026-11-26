@@ -25,6 +25,10 @@ class InMemorySupportPersistence {
     return true;
   }
 
+  isConfigured(): boolean {
+    return false;
+  }
+
   async loadState(): Promise<SupportPersistedState> {
     return structuredClone(this.state);
   }
@@ -196,7 +200,7 @@ async function main(): Promise<void> {
 
     const rangeLimitedService = createService(persistence);
     await rangeLimitedService.hydrateFromPersistence();
-    assert.throws(
+    await assert.rejects(
       () => rangeLimitedService.getDialogsExport({ from: '2026-04-09', to: '2026-04-11' }, user),
       (error: unknown) =>
         error instanceof BadRequestException
@@ -208,7 +212,7 @@ async function main(): Promise<void> {
 
     const messageLimitedService = createService(persistence);
     await messageLimitedService.hydrateFromPersistence();
-    assert.throws(
+    await assert.rejects(
       () => messageLimitedService.getDialogsExport({ from: '2026-04-09', to: '2026-04-09' }, user),
       (error: unknown) =>
         error instanceof BadRequestException

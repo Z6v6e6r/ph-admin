@@ -276,7 +276,7 @@ export class SupportController {
     @Query('to') to: string | undefined,
     @Query('includeService') includeService: string | undefined,
     @CurrentUser() user?: RequestUser
-  ): SupportDialogsExportResult {
+  ): Promise<SupportDialogsExportResult> {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
     }

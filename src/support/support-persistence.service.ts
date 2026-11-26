@@ -65,6 +65,11 @@ export interface SupportHistoryPageOptions {
   includeService: boolean;
 }
 
+export interface SupportDialogsExportWindow {
+  fromInclusive: Date;
+  toExclusive: Date;
+}
+
 export type SupportDialogSummaryClient = Pick<SupportClientProfile, 'id' | 'displayName' | 'primaryPhone' | 'emails'>;
 export interface SupportDialogListContext { dialog: SupportDialog; client: SupportDialogSummaryClient | null }
 export interface SupportDialogListOptions {
@@ -317,6 +322,10 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
 
   isEnabled(): boolean {
     return this.getActiveBackends().length > 0;
+  }
+
+  isConfigured(): boolean {
+    return this.backendConfigs.some(config => Boolean(config.uri));
   }
 
   async getRuntimeDiagnostics(): Promise<SupportPersistenceRuntimeDiagnostics> {
@@ -631,6 +640,70 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
       }
       return [...dialogs.values()].map(dialog => ({ dialog, client: clients.get(dialog.clientId)?.value ?? null }));
     } catch { throw new ServiceUnavailableException({ code: 'SUPPORT_DIALOG_LIST_UNAVAILABLE' }); }
+  }
+
+  async findExportDialogIds(
+    window: SupportDialogsExportWindow, includeService: boolean, deadline: number
+  ): Promise<string[]> {
+    const ids = new Set<string>();
+    const candidateLimit = 20000; // Bound the subsequent exact-ID context lookup.
+    try {
+      const collections = this.exportMessageCollections(includeService);
+      const searches = this.historyBackends().flatMap(backend => collections.map(collection =>
+        this.collection(backend, collection).aggregate<{ _id: string }>([
+          { $match: { dialogId: { $type: 'string', $ne: '' }, deleted: { $ne: true } } },
+          ...this.exportMessageDateStages(window),
+          { $group: { _id: '$dialogId' } },
+          { $limit: candidateLimit + 1 }
+        ], this.historyReadOptions(deadline)).toArray()
+      ));
+      for (const search of await Promise.allSettled(searches)) {
+        if (search.status === 'rejected') throw search.reason;
+        search.value.forEach(row => ids.add(row._id));
+        if (ids.size > candidateLimit) {
+          throw new Error('Export candidate budget exceeded');
+        }
+      }
+      return [...ids];
+    } catch {
+      throw new ServiceUnavailableException({ code: 'SUPPORT_DIALOGS_EXPORT_UNAVAILABLE' });
+    }
+  }
+
+  async *readExportMessages(
+    dialogIds: string[], window: SupportDialogsExportWindow, includeService: boolean, deadline: number
+  ): AsyncGenerator<SupportMessage> {
+    if (!dialogIds.length) return;
+    try {
+      for (const backend of this.historyBackends()) {
+        for (const collection of this.exportMessageCollections(includeService)) {
+          const cursor = this.collection(backend, collection).aggregate<SupportMessage>([
+            { $match: { dialogId: { $in: dialogIds }, deleted: { $ne: true } } },
+            ...this.exportMessageDateStages(window),
+            { $set: { createdAt: { $dateToString: {
+              date: '$__exportCreatedAt', format: '%Y-%m-%dT%H:%M:%S.%LZ', timezone: 'UTC'
+            } } } },
+            { $project: { _id: 0, __exportCreatedAt: 0 } }
+          ], { ...this.historyReadOptions(deadline), batchSize: 1000 });
+          for await (const message of cursor) yield message;
+        }
+      }
+    } catch {
+      throw new ServiceUnavailableException({ code: 'SUPPORT_DIALOGS_EXPORT_UNAVAILABLE' });
+    }
+  }
+
+  private exportMessageCollections(includeService: boolean): SupportPersistenceCollectionKey[] {
+    return includeService ? ['messages', 'serviceMessages'] : ['messages'];
+  }
+
+  private exportMessageDateStages(window: SupportDialogsExportWindow): Document[] {
+    return [
+      { $set: { __exportCreatedAt: { $convert: {
+        input: { $ifNull: ['$createdAt', '$createdTs'] }, to: 'date', onError: null, onNull: null
+      } } } },
+      { $match: { __exportCreatedAt: { $gte: window.fromInclusive, $lt: window.toExclusive } } }
+    ];
   }
 
   async findHistoryMessages(
