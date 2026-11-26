@@ -57,6 +57,31 @@ async function main(): Promise<void> {
       'PadlHub-LK-Tournament-Refresh/1.0',
       'PadlHub-LK-Tournament-Refresh/1.0'
     ]);
+
+    requestedUrls.length = 0;
+    const exerciseId = '5b1d7bef-cf32-4f75-a217-48553799dd24';
+    let responseId = exerciseId;
+    globalThis.fetch = (async input => {
+      requestedUrls.push(String(input));
+      return Response.json({
+        id: responseId,
+        name: 'Турнир Американо',
+        timeFrom: '2026-08-04T19:00:00+03:00',
+        timeTo: '2026-08-04T21:00:00+03:00',
+        canceled: true,
+        clientsCount: 8,
+        clients: [{ id: 'synthetic-client', firstName: 'Fixture', phone: '+79990000000' }]
+      });
+    }) as typeof fetch;
+    const found = await service.readScheduleTournamentById(exerciseId);
+    assert.equal(found?.id, exerciseId);
+    assert.equal(found?.status, 'CANCELED');
+    assert.equal(found?.participantsCount, 8);
+    assert.equal(found?.participants, undefined, 'a schedule probe must not import identities');
+    responseId = '7b12bc00-c4ca-4b06-b43a-926350a684da';
+    assert.equal(await service.readScheduleTournamentById(exerciseId), null);
+    assert.deepEqual(requestedUrls.map(url => new URL(url).pathname),
+      Array(2).fill(`/end-user/api/v1/iSkq6G/exercises/${exerciseId}`));
   } finally {
     globalThis.fetch = originalFetch;
     restoreEnv('VIVA_END_USER_API_BASE_URL', originalApiBaseUrl);

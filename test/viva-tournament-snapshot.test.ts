@@ -161,15 +161,28 @@ async function testSnapshotRefreshSingleflightAndLocalDateFilter(): Promise<void
   });
 }
 
-async function testManualDayRefreshUsesOneBoundedVivaCall(): Promise<void> {
+async function testManualDayRefreshReconcilesOmittedVivaExercises(): Promise<void> {
   await withSnapshotEnv(async () => {
     let calls = 0;
+    const exactLookups: string[] = [];
     let lastOptions: { date?: string; includePast?: boolean } | undefined;
     const snapshotService = new VivaTournamentSnapshotService({
       listTournaments: async (options?: { date?: string; includePast?: boolean }) => {
         calls += 1;
         lastOptions = options;
         return [createTournament('fresh-day', '2026-07-04T20:00:00+03:00')];
+      },
+      readScheduleTournamentById: async (id: string) => {
+        exactLookups.push(id);
+        if (id === 'retained-exercise') return null;
+        if (id === 'moved-exercise') {
+          return createTournament(id, '2026-07-06T19:00:00+03:00');
+        }
+        return {
+          ...createTournament(id, '2026-07-04T19:00:00+03:00'),
+          status: id === 'canceled-exercise' ? TournamentStatus.CANCELED : TournamentStatus.RUNNING,
+          participantsCount: 8
+        };
       }
     } as never);
     const previousLastSuccessfulAt = '2026-07-01T10:00:00.000Z';
@@ -180,10 +193,16 @@ async function testManualDayRefreshUsesOneBoundedVivaCall(): Promise<void> {
       windowFrom: '2026-07-01',
       windowTo: '2026-07-10',
       tournaments: [
-        createTournament('stale-day', '2026-07-04T19:00:00+03:00'),
+        {
+          ...createTournament('omitted-day', '2026-07-04T19:00:00+03:00'),
+          exerciseId: 'active-exercise',
+          isPublic: false
+        },
+        ...['moved-exercise', 'canceled-exercise', 'retained-exercise']
+          .map(id => ({ ...createTournament(id, '2026-07-04T19:00:00+03:00'), rawStatus: 'ACTIVE' })),
         createTournament('untouched-day', '2026-07-05T19:00:00+03:00')
       ],
-      tournamentsCount: 2,
+      tournamentsCount: 5,
       refreshReason: 'persisted'
     };
 
@@ -191,7 +210,20 @@ async function testManualDayRefreshUsesOneBoundedVivaCall(): Promise<void> {
       const refreshed = await snapshotService.refreshDate('2026-07-04', 'test_manual');
       assert.equal(refreshed.refreshed, true);
       assert.equal(refreshed.reason, 'refreshed');
-      assert.deepEqual(refreshed.tournaments.map((item) => item.id), ['fresh-day']);
+      assert.deepEqual(new Set(refreshed.tournaments.map((item) => item.id)),
+        new Set(['omitted-day', 'retained-exercise', 'canceled-exercise', 'fresh-day']));
+      assert.deepEqual(refreshed.removedExerciseIds, ['moved-exercise']);
+      assert.deepEqual(new Set(exactLookups),
+        new Set(['active-exercise', 'moved-exercise', 'canceled-exercise', 'retained-exercise']));
+      const recovered = refreshed.tournaments.find(item => item.id === 'omitted-day');
+      assert.equal(recovered?.exerciseId, 'active-exercise');
+      assert.equal(recovered?.status, TournamentStatus.RUNNING);
+      assert.equal(recovered?.participantsCount, 8);
+      assert.equal(recovered?.isPublic, false);
+      assert.equal(refreshed.tournaments.find(item => item.id === 'canceled-exercise')?.status,
+        TournamentStatus.CANCELED);
+      assert.equal(refreshed.tournaments.find(item => item.id === 'canceled-exercise')?.rawStatus,
+        TournamentStatus.CANCELED);
       assert.deepEqual(lastOptions, { date: '2026-07-04', includePast: true });
       assert.equal(calls, 1);
 
@@ -203,8 +235,10 @@ async function testManualDayRefreshUsesOneBoundedVivaCall(): Promise<void> {
         date: '2026-07-05',
         refreshOnRead: false
       });
-      assert.deepEqual(selectedDay?.map((item) => item.id), ['fresh-day']);
+      assert.deepEqual(selectedDay, refreshed.tournaments);
       assert.deepEqual(untouchedDay?.map((item) => item.id), ['untouched-day']);
+      const destination = await snapshotService.listTournaments({ date: '2026-07-06', refreshOnRead: false });
+      assert.deepEqual(destination?.map(item => item.id), ['moved-exercise']);
       assert.equal(snapshotService.getDiagnostics().lastSuccessfulAt, previousLastSuccessfulAt);
 
       const throttled = await snapshotService.refreshDate('2026-07-05', 'test_duplicate');
@@ -212,8 +246,76 @@ async function testManualDayRefreshUsesOneBoundedVivaCall(): Promise<void> {
       assert.equal(throttled.reason, 'cooldown');
       assert.ok((throttled.retryAfterMs ?? 0) > 0);
       assert.equal(calls, 1, 'cooldown must not call Viva for another date');
+      assert.equal(exactLookups.length, 4, 'cooldown must not probe individual exercises');
     } finally {
       await snapshotService.onModuleDestroy();
+    }
+  });
+}
+
+async function testFullRefreshPreservesOmissionsFromHydratedSnapshot(): Promise<void> {
+  await withSnapshotEnv(async () => {
+    const date = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Moscow' }).format(new Date());
+    const known = Array.from({ length: 9 }, (_, index) => ({
+      ...createTournament(`known-${index}`, `${date}T00:00:00+03:00`),
+      endsAt: `${date}T23:59:59+03:00`
+    }));
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let lookups = 0;
+    const service = new VivaTournamentSnapshotService({
+      listTournaments: async () => [],
+      readScheduleTournamentById: async () => {
+        lookups += 1;
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await Promise.resolve();
+        inFlight -= 1;
+        return null;
+      }
+    } as never);
+    (service as any).getCurrentSnapshot = async () => ({
+      windowFrom: date,
+      windowTo: date,
+      tournaments: known
+    });
+    try {
+      const snapshot = await service.refreshNow('test_cold_refresh');
+      assert.equal(snapshot?.tournamentsCount, known.length);
+      assert.deepEqual(new Set(snapshot?.tournaments.map(item => item.id)), new Set(known.map(item => item.id)));
+      assert.equal(lookups, 8, 'a refresh has a fixed per-event lookup budget');
+      assert.equal(maxInFlight, 2, 'provider lookup concurrency is bounded');
+    } finally {
+      await service.onModuleDestroy();
+    }
+  });
+}
+
+async function testDayRefreshRetainsAnExerciseStartedDuringTheProviderRead(): Promise<void> {
+  await withSnapshotEnv(async () => {
+    const realNow = Date.now;
+    const date = '2026-07-04';
+    const startsAt = `${date}T19:00:00+03:00`;
+    let now = Date.parse(startsAt) - 1;
+    Date.now = () => now;
+    const service = new VivaTournamentSnapshotService({
+      listTournaments: async () => {
+        now += 2;
+        return [];
+      },
+      readScheduleTournamentById: async () => null
+    } as never);
+    (service as any).getCurrentSnapshot = async () => ({
+      windowFrom: date,
+      windowTo: date,
+      tournaments: [createTournament('started-during-refresh', startsAt)]
+    });
+    try {
+      const result = await service.refreshDate(date, 'test_at_start');
+      assert.deepEqual(result.tournaments.map(item => item.id), ['started-during-refresh']);
+    } finally {
+      Date.now = realNow;
+      await service.onModuleDestroy();
     }
   });
 }
@@ -1069,7 +1171,9 @@ async function testListEnvelopeWaitsForOnlyDayRefresh(): Promise<void> {
 
 async function main(): Promise<void> {
   await testSnapshotRefreshSingleflightAndLocalDateFilter();
-  await testManualDayRefreshUsesOneBoundedVivaCall();
+  await testManualDayRefreshReconcilesOmittedVivaExercises();
+  await testFullRefreshPreservesOmissionsFromHydratedSnapshot();
+  await testDayRefreshRetainsAnExerciseStartedDuringTheProviderRead();
   await testManualDayRefreshCoalescesConcurrentFailures();
   await testManualDayRefreshWorksWithBackgroundRefreshDisabled();
   await testSnapshotShadowRefreshDoesNotServeReadModel();
