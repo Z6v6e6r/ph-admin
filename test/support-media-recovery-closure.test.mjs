@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { MEDIA_RECOVERY_SOURCES, verifyMediaRecoverySources, verifyMediaRecoveryCompilation, restoreEquivalentRecoveryDeclarations, verifyMediaRecoveryCandidateHash, MEDIA_RECOVERY_SDK_SHA256, MEDIA_FPR_CANDIDATE_SDK_SHA256, MEDIA_TOURNAMENT_SCALE_CANDIDATE_SDK_SHA256 } from '../scripts/lib/cup-media-recovery-closure.mjs';
+import { MEDIA_RECOVERY_SOURCES, verifyMediaRecoverySources, verifyMediaRecoveryCompilation, restoreEquivalentRecoveryDeclarations, verifyMediaRecoveryCandidateHash, MEDIA_RECOVERY_SDK_SHA256, MEDIA_FPR_CANDIDATE_SDK_SHA256, MEDIA_TOURNAMENT_SCALE_CANDIDATE_SDK_SHA256, MEDIA_DIALOG_EXPORT_CANDIDATE_SDK_SHA256 } from '../scripts/lib/cup-media-recovery-closure.mjs';
 test('actual recovery patch derives exactly21 reviewed sources with the pinned historical photo SDK', t => {
   assert.equal(MEDIA_RECOVERY_SOURCES.length, 21);
   const root = path.resolve(import.meta.dirname, '..'), derived = fs.mkdtempSync(path.join(os.tmpdir(), 'media-recovery-source-'));
@@ -31,6 +31,7 @@ test('actual recovery patch derives exactly21 reviewed sources with the pinned h
 });
 test('SDK compatibility permits only exact reviewed digests; backend parity remains exact', () => {
   for (const name of ['phab-admin-panel.js', 'client-sdk/phab-admin-panel.js']) {
+    verifyMediaRecoveryCandidateHash(name, MEDIA_DIALOG_EXPORT_CANDIDATE_SDK_SHA256, MEDIA_RECOVERY_SDK_SHA256);
     verifyMediaRecoveryCandidateHash(name, MEDIA_TOURNAMENT_SCALE_CANDIDATE_SDK_SHA256, MEDIA_RECOVERY_SDK_SHA256);
     verifyMediaRecoveryCandidateHash(name, MEDIA_FPR_CANDIDATE_SDK_SHA256, MEDIA_RECOVERY_SDK_SHA256);
     verifyMediaRecoveryCandidateHash(name, MEDIA_RECOVERY_SDK_SHA256, MEDIA_RECOVERY_SDK_SHA256);
