@@ -25206,7 +25206,11 @@
       rows.forEach(function (row) {
         var line = headers
           .map(function (header) {
-            return escapeCsvCell(row[header]);
+            var value = row[header];
+            if (/^[\s\u0000-\u001f\u007f-\u009f]*[=+\-@＝＋－＠]/.test(value)) {
+              value = "'" + value;
+            }
+            return escapeCsvCell(value);
           })
           .join(',');
         lines.push(line);

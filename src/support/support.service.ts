@@ -44,6 +44,7 @@ import {
 import {
   SupportClientLookupQuery,
   SupportDialogSummaryClient,
+  SupportDialogsExportWindow,
   SupportPersistenceRuntimeDiagnostics,
   SupportPersistenceService
 } from './support-persistence.service';
@@ -151,6 +152,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   private readonly dialogsExportMaxRangeDays = this.resolveDialogsExportMaxRangeDays();
   private readonly dialogsExportMaxDialogs = this.resolveDialogsExportMaxDialogs();
   private readonly dialogsExportMaxMessages = this.resolveDialogsExportMaxMessages();
+  private nextDialogsExportAt = 0;
   private persistenceSyncTimer?: ReturnType<typeof setInterval>;
   private noReplyQuickReplyTimer?: ReturnType<typeof setInterval>;
   private isPersistenceSyncInProgress = false;
@@ -1753,25 +1755,46 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     return result;
   }
 
-  getDialogsExport(
+  async getDialogsExport(
     params: {
       from?: string;
       to?: string;
       includeService?: boolean;
     } = {},
     user?: RequestUser
-  ): SupportDialogsExportResult {
+  ): Promise<SupportDialogsExportResult> {
     if (!user) {
       throw new ForbiddenException('User context is missing');
     }
     this.ensureStaff(user);
+    if (!this.hasDialogPermission(user, 'dialogs:read')) {
+      throw new ForbiddenException('Dialog read permission required');
+    }
 
     const startedAt = process.hrtime.bigint();
     const memoryBefore = this.captureMemoryUsageSnapshot();
     const range = this.resolveDialogsExportDateRange(params.from, params.to);
     this.assertDialogsExportDateRangeWithinLimit(range);
     const includeServiceMessages = params.includeService === true;
-    const accessibleDialogs = this.listAccessibleDialogs(user);
+    let persisted: Awaited<ReturnType<SupportService['loadPersistedDialogsExport']>> | undefined;
+    if (this.persistence.isConfigured()) {
+      const started = performance.now();
+      if (started < this.nextDialogsExportAt) {
+        throw new ServiceUnavailableException({
+          code: 'SUPPORT_DIALOGS_EXPORT_BUSY',
+          message: 'Дождитесь окончания предыдущей выгрузки и повторите запрос через несколько секунд.'
+        });
+      }
+      this.nextDialogsExportAt = Infinity;
+      try {
+        persisted = await this.loadPersistedDialogsExport(range, includeServiceMessages, user);
+      } finally {
+        const finished = performance.now();
+        // Leave a gap between expensive collection scans.
+        this.nextDialogsExportAt = finished - started >= 2000 ? finished + 5000 : finished;
+      }
+    }
+    const accessibleDialogs = persisted?.dialogs ?? this.listAccessibleDialogs(user);
     const connectorStats = new Map<
       SupportConnectorRoute,
       {
@@ -1798,7 +1821,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     let withoutStationDialogsCount = 0;
 
     for (const dialog of accessibleDialogs) {
-      const sourceMessages = this.messages.get(dialog.id) ?? [];
+      const sourceMessages = (persisted?.messages ?? this.messages).get(dialog.id) ?? [];
       if (sourceMessages.length === 0) {
         continue;
       }
@@ -1904,11 +1927,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
       this.assertDialogsExportDialogsWithinLimit(exportedDialogs.length + 1);
 
-      const client = this.clients.get(dialog.clientId);
+      const clientDisplayName = persisted
+        ? persisted.clientNames.get(dialog.id)
+        : this.clients.get(dialog.clientId)?.displayName;
       exportedDialogs.push({
         dialogId: dialog.id,
         clientId: dialog.clientId,
-        clientDisplayName: client?.displayName,
+        clientDisplayName,
         stationId: dialog.stationId,
         stationName,
         connectors: this.mergeConnectors(dialog.connectors, Array.from(periodConnectors.values())),
@@ -2000,6 +2025,91 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     });
 
     return result;
+  }
+
+  private async loadPersistedDialogsExport(
+    range: SupportDialogsExportWindow, includeService: boolean, user: RequestUser
+  ): Promise<{
+    dialogs: SupportDialog[];
+    messages: Map<string, SupportMessage[]>;
+    clientNames: Map<string, string | undefined>;
+  }> {
+    const deadline = performance.now() + 45_000;
+    const ids = await this.persistence.findExportDialogIds(range, includeService, deadline);
+    const contexts = await this.persistence.loadDialogListContexts(ids, deadline, supportDialogHistoryBinding);
+    const authorized = new Map<string, SupportDialog>();
+    for (const { dialog: raw } of contexts) {
+      const dialog = this.normalizeLoadedDialog(raw, false);
+      if (this.canAccessDialog(dialog, user)) authorized.set(dialog.id, dialog);
+    }
+
+    const messages = new Map<string, SupportMessage[]>();
+    const seen = new Map<string, { binding: string; exported?: SupportMessage }>();
+    let messageCount = 0;
+    for await (const raw of this.persistence.readExportMessages([...authorized.keys()], range, includeService, deadline)) {
+      const dialog = authorized.get(raw.dialogId);
+      if (!dialog || (raw.clientId && raw.clientId !== dialog.clientId)) continue;
+      if (!raw.id) continue;
+      const record = raw as unknown as Record<string, unknown>;
+      const connector = record.connector ?? record.channel;
+      if (connector && !this.normalizeLoadedConnector(connector)) continue;
+      const message = this.normalizeLoadedMessage(record);
+      if (!message) continue;
+      if (raw.senderRole) {
+        message.senderRole = this.normalizeLoadedSenderRole(raw.senderRole, message.direction);
+      }
+      const isSystem = this.isSystemDialogMessage(message);
+      const binding = JSON.stringify([
+        message.dialogId, message.connector, message.createdAt, isSystem
+      ]);
+      const visible = this.isConnectorAllowedForUser(user, message.connector) && (includeService || !isSystem);
+      const previous = seen.get(message.id);
+      if (previous) {
+        if (previous.binding !== binding || (visible && !isDeepStrictEqual(previous.exported, message))) {
+          throw new ServiceUnavailableException({ code: 'SUPPORT_DIALOGS_EXPORT_CONTEXT_CHANGED' });
+        }
+        continue;
+      }
+      if (seen.size >= 100000) {
+        throw new ServiceUnavailableException({ code: 'SUPPORT_DIALOGS_EXPORT_UNAVAILABLE' });
+      }
+      seen.set(message.id, { binding, exported: visible ? message : undefined });
+      if (!visible) continue;
+
+      this.assertDialogsExportMessagesWithinLimit(++messageCount);
+      const group = messages.get(dialog.id);
+      if (group) {
+        group.push(message);
+      } else {
+        this.assertDialogsExportDialogsWithinLimit(messages.size + 1);
+        messages.set(dialog.id, [message]);
+      }
+    }
+
+    // Station and connector ownership may change while the Mongo cursor is open.
+    const latest = await this.persistence.loadDialogListContexts(
+      [...messages.keys()], deadline, supportDialogHistoryBinding
+    );
+    const dialogs: SupportDialog[] = [];
+    const clientNames = new Map<string, string | undefined>();
+    for (const { dialog: raw, client } of latest) {
+      const dialog = this.normalizeLoadedDialog(raw, false);
+      const initial = authorized.get(dialog.id);
+      const cached = this.dialogs.get(dialog.id);
+      if (
+        !initial || supportDialogHistoryBinding(initial) !== supportDialogHistoryBinding(dialog) ||
+        !this.canAccessDialog(dialog, user) ||
+        (cached && (cached.clientId !== dialog.clientId || !this.canAccessDialog(cached, user)))
+      ) {
+        throw new ServiceUnavailableException({ code: 'SUPPORT_DIALOGS_EXPORT_CONTEXT_CHANGED' });
+      }
+      dialogs.push(dialog);
+      clientNames.set(dialog.id, client?.displayName);
+    }
+    if (dialogs.length !== messages.size) {
+      throw new ServiceUnavailableException({ code: 'SUPPORT_DIALOGS_EXPORT_CONTEXT_CHANGED' });
+    }
+    return { dialogs, messages, clientNames };
   }
 
   private listDialogsForClient(clientId: string): SupportDialog[] {
