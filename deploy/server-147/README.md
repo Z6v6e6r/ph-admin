@@ -123,7 +123,17 @@ sibling backup path and the printed candidate SHA-256. The managed block preserv
 the exact legacy card redirect while proxying nested public tournament API routes
 such as `/join` to ph-admin with the same CORS/auth headers as `/api/`.
 
-Add it into your `server { listen 443 ssl; ... }` block, then:
+For the production tournament checkout CORS rule, build a candidate from the audited
+active vhost and its SHA-256 with `node scripts/build-tournament-checkout-nginx.mjs
+<source-config> <expected-sha256>`. The generator writes the candidate to stdout.
+The rule allows `Idempotency-Key` on `/api/tournaments/<UUID>/checkout` for the
+existing `https://padlhub.ru` origin. Rehearse the candidate with the full nginx
+configuration, including original vhost order, and keep the preimage outside
+`sites-enabled`. After an approved reload, check the checkout preflight, a neighboring
+API preflight and an unauthenticated checkout denial.
+
+If you are installing the base API snippet, add it into your
+`server { listen 443 ssl; ... }` block, then:
 
 ```bash
 sudo nginx -t
