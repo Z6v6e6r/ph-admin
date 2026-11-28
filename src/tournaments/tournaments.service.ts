@@ -6286,6 +6286,14 @@ export class TournamentsService {
     return this.bindCheckoutActor(target, await this.confirmTournamentActor(actor, auth));
   }
 
+  async resolveVivaTennisCheckoutActor(auth?: string) {
+    const actor = await this.resolveTournamentActor(auth);
+    if (actor.tenantKey !== this.vivaEndUserWidgetId) {
+      throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH' });
+    }
+    return actor;
+  }
+
   async refreshCheckoutIdentity(exerciseRef: string, actor: ConfirmedTournamentActor) {
     return this.bindCheckoutActor(await this.readCheckoutTarget(exerciseRef, actor.tenantKey), actor);
   }

@@ -85,6 +85,18 @@ const CHECKOUT_MAPPING_CONTAINERS = [
   'details.sourceTournamentSnapshot', 'sourceTournamentSnapshot'
 ];
 
+export interface VivaTennisCheckoutAttempt {
+  _id: string;
+  operationId: string;
+  requestKey: string;
+  clientId: string;
+  exerciseId: string;
+  studioId: string;
+  widgetId: string;
+  createdAt: Date;
+  providerTransactionId?: string;
+}
+
 export interface CreateCustomTournamentMutation {
   sourceTournamentId?: string;
   sourceTournamentSnapshot?: Record<string, unknown>;
@@ -623,6 +635,58 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
   async serverBookingAttemptsCollection() {
     await this.collection(false);
     return this.requireDb().collection<any>('tournament_server_booking_attempts_v1');
+  }
+
+  async hasVivaTennisCheckoutMapping(exerciseId: string) {
+    const collection = await this.collection(false);
+    return Boolean(await collection.findOne({ $or: CHECKOUT_EXERCISE_PATHS.map(path => ({ [path]: exerciseId })) }, {
+      projection: { _id: 1 }, readPreference: 'primary', readConcern: { level: 'majority' }, maxTimeMS: 5000
+    }));
+  }
+
+  private async vivaTennisCheckoutCollection() {
+    await this.collection(false);
+    return this.requireDb().collection<VivaTennisCheckoutAttempt>('viva_tennis_checkout_attempts_v1');
+  }
+
+  async readVivaTennisCheckout(key: string) {
+    const collection = await this.vivaTennisCheckoutCollection();
+    return collection.findOne({ _id: key }, {
+      readPreference: 'primary', readConcern: { level: 'majority' }, maxTimeMS: 5000
+    });
+  }
+
+  async claimVivaTennisCheckout(attempt: VivaTennisCheckoutAttempt, previous: VivaTennisCheckoutAttempt | null) {
+    const collection = await this.vivaTennisCheckoutCollection();
+    const writeConcern = { w: 'majority' as const, j: true, wtimeoutMS: 5000 };
+    if (previous) {
+      const saved = await collection.replaceOne({ _id: attempt._id, operationId: previous.operationId },
+        attempt, { writeConcern });
+      return saved.modifiedCount === 1;
+    }
+    try {
+      return (await collection.insertOne(attempt, { writeConcern })).acknowledged;
+    } catch (error) {
+      if (this.toRecord(error)?.code === 11000) return false;
+      throw error;
+    }
+  }
+
+  async withdrawVivaTennisCheckout(attempt: VivaTennisCheckoutAttempt, previous: VivaTennisCheckoutAttempt | null) {
+    // Called only by the claimant before it has attempted the Viva POST.
+    const collection = await this.vivaTennisCheckoutCollection();
+    const filter = { _id: attempt._id, operationId: attempt.operationId, providerTransactionId: { $exists: false } };
+    const writeConcern = { w: 'majority' as const, j: true, wtimeoutMS: 5000 };
+    if (previous) await collection.replaceOne(filter, previous, { writeConcern });
+    else await collection.deleteOne(filter, { writeConcern });
+  }
+
+  async recordVivaTennisCheckoutReceipt(attempt: VivaTennisCheckoutAttempt, providerTransactionId: string) {
+    const collection = await this.vivaTennisCheckoutCollection();
+    const result = await collection.updateOne({
+      _id: attempt._id, operationId: attempt.operationId, providerTransactionId: { $exists: false }
+    }, { $set: { providerTransactionId } }, { writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 } });
+    return result.modifiedCount === 1;
   }
 
   /** Chat reuses the established Mongo client. This path NEVER calls index provisioning. */
