@@ -36,6 +36,7 @@ function fixture() {
       return 'PAYMENT_PENDING';
     },
     isEnabled: () => true,
+    readVivaTennisCheckout: async () => null,
     findCheckoutTournamentByExerciseId: async (ref: string) => ref === exerciseId
       ? { tournament: clone(row), mappingChecks: [] } : null,
     readPublicAdmissionRule: async () => ({ gender: row.gender, accessLevels: clone(row.accessLevels),

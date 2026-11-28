@@ -41,6 +41,7 @@ async function main() {
     const repo = new TournamentsPersistenceService(); repositories.push(repo);
     const tournaments: any = Object.create(TournamentsService.prototype);
     Object.assign(tournaments, { tournamentsPersistence: repo, trustedRegistrationIdentities: new WeakMap(),
+      vivaEndUserWidgetId: 'fixture-tenant',
       lkIdentityService: { verifyTrustedBearer: async (header: string) => {
         assert.equal(header, 'Bearer synthetic-token'); return { actor: actor(n) };
       } },
@@ -740,6 +741,181 @@ async function main() {
       assert.equal(alternate.operationId, next.operationId);
       await assert.rejects(checkout(instance(330).service, 'level-retry', 'other-player'));
       assert.equal(postCount - before, 1);
+    });
+    const tennisAuth = 'Bearer synthetic-token';
+    const tennisTariff = { id: 'tennis-single', name: 'Synthetic tennis tariff', productType: 'SERVICE', cost: 799900 };
+    const tennisBody = { productId: tennisTariff.id, source: 'one-time' };
+    const code = (expected: string) => (error: any) => error.getResponse?.().code === expected;
+    function tennisFixture(ref: string) {
+      const player = actor(501);
+      const exercise = { id: ref, studio: { id: 'synthetic-studio' }, timeFrom: '2099-12-19T13:00:00+03:00',
+        direction: { id: 4120, subscribersOnly: false, payOnPlace: false }, type: { id: 839, format: 'GROUP' },
+        inBooking: false, availableSpots: [1], archived: false };
+      const calls: Row[] = [];
+      let products: Row[] = [tennisTariff], history: Row[] = [], active: Row[] = [];
+      let transactionStatus: Row | null = { transactionStatus: 'WAITING' };
+      let reply = async (): Promise<unknown> => ({ transactionId: `tennis-payment-${calls.length}`, paymentUrl: 'https://pay.example/payment' });
+      const create = (playerId = 501) => {
+        const f = instance(playerId);
+        (f.service as any).http = async (url: string, auth: string, payload?: Row) => {
+          assert.equal(auth, tennisAuth);
+          if (payload) {
+            assert.ok(url.endsWith('/fixture-tenant/transactions'));
+            calls.push(clone(payload));
+            return reply();
+          }
+          if (url.includes('/exercises/')) return clone(exercise);
+          if (url.includes('/products/one-times?')) return clone(products);
+          if (url.includes('/bookings/history?')) return clone(history);
+          if (url.includes('/bookings?')) return clone(active);
+          if (url.includes('/transactions/') && url.endsWith('/status')) {
+            if (transactionStatus === null) throw new Error('synthetic status outage');
+            return clone(transactionStatus);
+          }
+          throw new Error(`Unexpected synthetic request: ${url}`);
+        };
+        return f;
+      };
+      const pay = (key: string, f = create(), body: Row = tennisBody) => f.service.checkout(ref, tennisAuth, body, key);
+      return { create, pay, calls, exercise, player,
+        setProducts: (value: Row[]) => { products = value; }, setReply: (value: typeof reply) => { reply = value; },
+        cancelled: (transactionId: string) => {
+          const booking = { id: 'cancelled-tennis-booking', clientId: player.clientId, exerciseId: ref, transactionId };
+          history = [{ ...booking, status: 'CANCELLED' }];
+          return booking;
+        },
+        setActive: (value: Row[]) => { active = value; },
+        setTransactionStatus: (value: Row | null) => { transactionStatus = value; } };
+    }
+
+    await check('unmapped Viva tennis checkout uses an authenticated tariff and a single durable dispatch', async () => {
+      const ref = 'exercise-tennis-race';
+      const f = tennisFixture(ref);
+      const requests = Array.from({ length: 8 }, (_, index) => f.pay(`first-${index}`, f.create(),
+        { ...tennisBody, amountMinor: 1, clientId: 'forged-client', clientPhone: 'forged-phone' }));
+      const responses = await Promise.all(requests);
+      const first = responses.find(response => response.transactionId);
+      assert.ok(first);
+      assert.equal(new Set(responses.map(response => response.operationId)).size, 1);
+      assert.deepEqual(first, { operationId: first.operationId, transactionId: 'tennis-payment-1' });
+      assert.deepEqual(await f.pay('after-restart'), first);
+      assert.equal(f.calls.length, 1);
+      assert.deepEqual(f.calls[0], {
+        products: [{ id: tennisTariff.id, name: tennisTariff.name, type: 'SERVICE', count: 1,
+          bookingRequests: [{ exerciseId: ref, client: null, comment: null, marketingAttribution: {} }] }],
+        clientPhone: f.player.phoneNorm, paymentMethod: 'WIDGET', exerciseId: ref, studioId: 'synthetic-studio', promoCode: null
+      });
+      assert.equal(await collection.countDocuments({ 'details.booking.vivaExerciseId': ref }), 0);
+      await assert.rejects(f.create(502).service.reconcile(ref, tennisAuth), code('TOURNAMENT_TARGET_UNMAPPED'));
+    });
+    await check('unmapped padel, archived links, exhausted or booked tennis and forged tariffs never dispatch', async () => {
+      const f = tennisFixture('exercise-tennis-denied');
+      f.exercise.direction.id = 566;
+      await assert.rejects(f.pay('padel'), code('TOURNAMENT_TARGET_UNMAPPED'));
+      f.exercise.direction.id = 4120;
+      const foreign = f.create();
+      foreign.tournaments.lkIdentityService.verifyTrustedBearer = async () => ({
+        actor: { ...f.player, tenantKey: 'foreign-tenant' }
+      });
+      await assert.rejects(f.pay('foreign-tenant', foreign), code('TOURNAMENT_IDENTITY_MISMATCH'));
+      f.exercise.availableSpots = [];
+      await assert.rejects(f.pay('full'), code('TOURNAMENT_FULL'));
+      f.exercise.availableSpots = [1];
+      f.exercise.inBooking = true;
+      await assert.rejects(f.pay('already-booked'), code('TOURNAMENT_CHECKOUT_TARGET_UNVERIFIED'));
+      f.exercise.inBooking = false;
+      f.exercise.archived = true;
+      await assert.rejects(f.pay('archived-viva'), code('TOURNAMENT_CHECKOUT_TARGET_UNVERIFIED'));
+      f.exercise.archived = false;
+      await assert.rejects(f.pay('subscription', f.create(), { ...tennisBody, source: 'subscription' }), code('TOURNAMENT_TARGET_UNMAPPED'));
+      await assert.rejects(f.pay('other-product', f.create(), { ...tennisBody, productId: 'forged-tariff' }), code('TOURNAMENT_CHECKOUT_PRODUCT_UNAVAILABLE'));
+      f.setProducts([{ ...tennisTariff, cost: 0 }]);
+      await assert.rejects(f.pay('free'), code('TOURNAMENT_CHECKOUT_PRODUCT_UNAVAILABLE'));
+      f.setProducts([tennisTariff]);
+      await seed('tennis-denied');
+      await collection.updateOne({ id: 'tennis-denied' }, { $set: { archived: true } });
+      await assert.rejects(f.pay('archived-link'), code('TOURNAMENT_TARGET_UNMAPPED'));
+      assert.deepEqual(f.calls, []);
+    });
+    await check('an unknown provider outcome or failed receipt ACK stays pending on restart', async () => {
+      for (const scenario of ['timeout', 'receipt-ack']) {
+        const f = tennisFixture(`exercise-tennis-${scenario}`);
+        const firstService = f.create();
+        if (scenario === 'timeout') f.setReply(async () => { throw new Error('synthetic provider timeout'); });
+        else firstService.repo.recordVivaTennisCheckoutReceipt = async () => { throw new Error('synthetic write timeout'); };
+        const pending = await f.pay('first', firstService);
+        assert.equal(pending.state, 'PENDING_CONFIRMATION');
+        assert.deepEqual(await f.pay('restored-alternate-key'), pending);
+        assert.equal(f.calls.length, 1);
+      }
+    });
+    await check('missing, malformed or crossed provider status cannot reopen the checkout link', async () => {
+      const f = tennisFixture('exercise-tennis-status-unavailable');
+      const first = await f.pay('first');
+      for (const response of [null, {}, { transactionStatus: 'WAITING', transactionId: 'foreign-payment' }]) {
+        f.setTransactionStatus(response);
+        const pending = await f.pay('alternate-key');
+        assert.equal(pending.state, 'PENDING_CONFIRMATION');
+        assert.equal(pending.operationId, first.operationId);
+        assert.equal(pending.transactionId, undefined);
+        assert.equal(pending.paymentUrl, undefined);
+      }
+      assert.equal(f.calls.length, 1);
+    });
+    await check('a paid tennis replay returns its exact booking without reopening payment', async () => {
+      const f = tennisFixture('exercise-tennis-paid');
+      const first = await f.pay('first');
+      f.setTransactionStatus({ transactionStatus: 'PAID' });
+      assert.equal((await f.pay('no-paid-booking-yet')).state, 'PENDING_CONFIRMATION');
+      f.setActive([{ id: 'exact-paid-booking', clientId: f.player.clientId, exerciseId: f.exercise.id,
+        transactionId: first.transactionId, status: 'ACTIVE' }]);
+      assert.deepEqual(await f.pay('paid'), { operationId: first.operationId, bookingId: 'exact-paid-booking', toPay: 0 });
+      assert.equal(f.calls.length, 1);
+    });
+    await check('only exact terminal cancellation permits a fresh attempt with its successor key', async () => {
+      const ref = 'exercise-tennis-rebook';
+      const f = tennisFixture(ref);
+      const first = await f.pay('initial');
+      const booking = f.cancelled(first.transactionId);
+      const successor = `tournament-retry:${first.operationId}`;
+      f.setTransactionStatus({ transactionId: first.transactionId, transactionStatus: 'WAITING' });
+      assert.equal((await f.pay(successor)).state, 'PENDING_CONFIRMATION');
+      f.setTransactionStatus({ transactionId: 'foreign-payment', transactionStatus: 'CANCELLED' });
+      assert.equal((await f.pay(successor)).state, 'PENDING_CONFIRMATION');
+      f.setTransactionStatus({ transactionId: first.transactionId, transactionStatus: 'CANCELLED' });
+      f.setActive([{ ...booking, status: 'REGISTERED' }]);
+      assert.equal((await f.pay(successor)).state, 'PENDING_CONFIRMATION');
+      f.setActive([]);
+      assert.equal((await f.create().service.reconcile(ref, tennisAuth, 'other-booking')).state, 'PENDING_CONFIRMATION');
+      const cancelled = await f.create().service.reconcile(ref, tennisAuth, booking.id);
+      assert.equal(cancelled.state, 'CANCELLED');
+      assert.equal(cancelled.requestKey, 'initial');
+      assert.deepEqual(await f.pay('unrelated-key'), cancelled);
+      assert.equal(f.calls.length, 1);
+      const next = await Promise.all([f.pay(successor), f.pay(successor)]);
+      assert.equal(new Set(next.map(response => response.operationId)).size, 1);
+      assert.notEqual(next[0].operationId, first.operationId);
+      assert.equal(f.calls.length, 2);
+    });
+    await check('a CUP link added around checkout cannot cause a second provider dispatch', async () => {
+      const ref = 'exercise-tennis-link';
+      const f = tennisFixture(ref), first = f.create();
+      const claim = first.repo.claimVivaTennisCheckout.bind(first.repo);
+      first.repo.claimVivaTennisCheckout = async (attempt, previous) => {
+        const result = await claim(attempt, previous);
+        await seed('tennis-link');
+        return result;
+      };
+      await assert.rejects(f.pay('link-during-checkout', first), code('TOURNAMENT_TARGET_CHANGED'));
+      assert.equal(f.calls.length, 0);
+      await f.pay('existing-cup-link');
+      assert.equal(f.calls.length, 1);
+
+      const detached = tennisFixture('exercise-tennis-link-after');
+      const original = await detached.pay('no-link');
+      await seed('tennis-link-after');
+      assert.deepEqual(await detached.pay('now-linked'), original);
+      assert.equal(detached.calls.length, 1);
     });
     console.log('PASS physical Mongo checkout-owner scenarios; synthetic provider only');
   } finally {

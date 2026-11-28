@@ -1,8 +1,8 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Optional, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { VivaAdminService } from '../integrations/viva/viva-admin.service';
 import { TournamentsService } from './tournaments.service';
-import { TournamentsPersistenceService } from './tournaments-persistence.service';
+import { TournamentsPersistenceService, type VivaTennisCheckoutAttempt } from './tournaments-persistence.service';
 
 type Row = Record<string, any>;
 type CheckoutContext = Awaited<ReturnType<TournamentsService['resolveCheckoutIdentity']>>;
@@ -14,6 +14,20 @@ const safelyRefused = (operation: Row) => operation.state === 'FAILED' && operat
 const permitsFreshAttempt = (operation: Row) => safelyRefused(operation) || operation.state === 'OWNER_CANCELLED';
 const pending = (operation: Row) => ({ operationId: operation.transactionId, state: 'PENDING_CONFIRMATION',
   code: 'TOURNAMENT_CHECKOUT_OUTCOME_UNRESOLVED', message: 'Результат записи уточняется. Повторная оплата заблокирована.' });
+
+function unmapped(error: unknown): boolean {
+  return error instanceof NotFoundException && (error.getResponse() as Row)?.code === 'TOURNAMENT_TARGET_UNMAPPED';
+}
+
+function checkoutJournalKey(widgetId: string, clientId: string, exerciseId: string): string {
+  return JSON.stringify([widgetId, clientId, exerciseId]);
+}
+
+function providerTransactionId(result: Row) {
+  const value = str(result, ['transactionId', 'transaction_id', 'id', 'uuid'])
+    ?? str(result.transaction, ['transactionId', 'id']) ?? str(result.data, ['transactionId', 'id']);
+  return id(value) ? value : undefined;
+}
 
 function agree(values: unknown[], expected: unknown, required = false): boolean {
   const present = values.filter(value => value !== undefined && value !== null);
@@ -85,6 +99,8 @@ export function tournamentCheckoutReturnUrl(value: unknown): string | undefined 
 
 @Injectable()
 export class TournamentCheckoutService {
+  private readonly logger = new Logger(TournamentCheckoutService.name);
+
   constructor(
     private readonly tournaments: TournamentsService,
     private readonly persistence: TournamentsPersistenceService,
@@ -119,10 +135,11 @@ export class TournamentCheckoutService {
     return this.subscriptionPaymentView(operation);
   }
 
-  private async http(url: string, auth: string | undefined, body?: Row): Promise<unknown> {
+  private async http(url: string, auth: string | undefined, body?: Row, allowMissing = false): Promise<unknown> {
     const response = await fetch(url, { method: body ? 'POST' : 'GET', redirect: 'error',
       headers: { Authorization: auth ?? '', Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(10000) });
+    if (allowMissing && response.status === 404) return null;
     if (!response.ok) throw new ServiceUnavailableException({ code: 'TOURNAMENT_PROVIDER_UNAVAILABLE' });
     return response.json();
   }
@@ -156,7 +173,15 @@ export class TournamentCheckoutService {
     if (!id(requestKey)) throw new BadRequestException({ code: 'IDEMPOTENCY_KEY_REQUIRED' });
     if (!record(body)) throw new BadRequestException('Invalid checkout');
     // Identity and operation lookup precede every fresh rule/catalog read, including alternate keys.
-    let context = await this.tournaments.resolveCheckoutIdentity(ref, auth);
+    let context: CheckoutContext;
+    try {
+      context = await this.tournaments.resolveCheckoutIdentity(ref, auth);
+    } catch (error) {
+      if (!unmapped(error) || body.source !== 'one-time') throw error;
+      return this.checkoutVivaTennis(ref, auth, body, requestKey);
+    }
+    const detached = await this.readVivaTennisAttempt(context);
+    if (detached) return this.vivaTennisAttemptView(detached, auth);
     const replay = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm, { requestKey });
     if (replay) return this.resume(context, auth, replay);
     const reconciled = await this.reconcilePreviousCancellation(context, auth);
@@ -212,9 +237,139 @@ export class TournamentCheckoutService {
     return this.resume(context, auth, operation);
   }
 
+  private readVivaTennisAttempt(context: CheckoutContext) {
+    return this.persistence.readVivaTennisCheckout(
+      checkoutJournalKey(context.tenantKey, context.actor.clientId, context.exerciseId)
+    );
+  }
+
+  private async checkoutVivaTennis(ref: string, auth: string | undefined, body: Row, requestKey: string): Promise<Row> {
+    if (!id(ref) || !id(body.productId) || body.promoCode != null) {
+      throw new BadRequestException({ code: 'TOURNAMENT_CHECKOUT_INVALID' });
+    }
+    const actor = await this.tournaments.resolveVivaTennisCheckoutActor(auth);
+    const key = checkoutJournalKey(actor.tenantKey, actor.clientId, ref);
+    const previous = await this.persistence.readVivaTennisCheckout(key);
+    if (previous) {
+      const status = await this.vivaTennisAttemptView(previous, auth);
+      if (status.state !== 'CANCELLED' || requestKey !== `tournament-retry:${previous.operationId}`) return status;
+    }
+    this.tournaments.assertTournamentOwnerNewOperationsOpen();
+
+    const base = 'https://api.vivacrm.ru/end-user/api';
+    const tenant = encodeURIComponent(actor.tenantKey), exerciseId = encodeURIComponent(ref);
+    const exercise = await this.http(`${base}/v1/${tenant}/exercises/${exerciseId}`, auth, undefined, true);
+    // The Viva direction identifies this tennis tournament series. Type 839 also covers padel,
+    // so it cannot authorize an unmapped checkout on its own.
+    if (!record(exercise) || exercise.id !== ref || String(exercise.direction?.id) !== '4120'
+      || String(exercise.type?.id) !== '839' || exercise.type?.format !== 'GROUP'
+      || await this.persistence.hasVivaTennisCheckoutMapping(ref)) {
+      throw new NotFoundException({ code: 'TOURNAMENT_TARGET_UNMAPPED' });
+    }
+    const studioId = exercise.studio?.id;
+    if (!id(studioId) || !agree([exercise.studioId], studioId)
+      || !(Date.parse(String(exercise.timeFrom)) > Date.now())
+      || exercise.direction.subscribersOnly !== false || exercise.direction.payOnPlace !== false
+      || exercise.inBooking !== false || exercise.inWaitlist === true || exercise.inReserve === true
+      || exercise.archived === true || exercise.deleted === true || hasCancellationOrRefund(exercise)) {
+      throw new ConflictException({ code: 'TOURNAMENT_CHECKOUT_TARGET_UNVERIFIED' });
+    }
+    if (!Array.isArray(exercise.availableSpots)) {
+      throw new ConflictException({ code: 'TOURNAMENT_CHECKOUT_TARGET_UNVERIFIED' });
+    }
+    if (exercise.availableSpots.length === 0) {
+      throw new ConflictException({ code: 'TOURNAMENT_FULL', message: 'Нет свободных мест' });
+    }
+    const raw = await this.http(`${base}/v2/${tenant}/products/one-times?exerciseId=${exerciseId}`, auth);
+    const matches = this.rows(raw).filter(row => row.id === body.productId);
+    const tariff = matches.length === 1 ? matches[0] : undefined;
+    if (!tariff || tariff.productType !== 'SERVICE' || !Number.isSafeInteger(tariff.cost) || tariff.cost <= 0
+      || !agree([tariff.exerciseId, tariff.exercise?.id], ref)
+      || !agree([tariff.studioId, tariff.studio?.id], studioId)) {
+      throw new ConflictException({ code: 'TOURNAMENT_CHECKOUT_PRODUCT_UNAVAILABLE' });
+    }
+    const successUrl = tournamentCheckoutReturnUrl(body.successUrl), failUrl = tournamentCheckoutReturnUrl(body.failUrl);
+    const payload = {
+      products: [tournamentCheckoutProduct(tariff, 'one-time', ref)],
+      clientPhone: actor.phoneNorm, paymentMethod: 'WIDGET', exerciseId: ref, studioId, promoCode: null,
+      ...(successUrl ? { successUrl, baseRedirectUrl: successUrl, redirectUrl: successUrl, returnUrl: successUrl, successRedirectUrl: successUrl } : {}),
+      ...(failUrl ? { failUrl, failRedirectUrl: failUrl, failureRedirectUrl: failUrl } : {})
+    };
+    const attempt: VivaTennisCheckoutAttempt = {
+      _id: key, operationId: `tournament-owner:${randomUUID()}`, requestKey,
+      clientId: actor.clientId, exerciseId: ref, studioId, widgetId: actor.tenantKey, createdAt: new Date()
+    };
+    if (!await this.persistence.claimVivaTennisCheckout(attempt, previous)) {
+      const winner = await this.persistence.readVivaTennisCheckout(key);
+      if (winner) return this.vivaTennisAttemptView(winner, auth);
+      throw new ConflictException({ code: 'TOURNAMENT_CHECKOUT_TARGET_UNVERIFIED' });
+    }
+    // A newly linked CUP checkout also reads this claim before it can dispatch.
+    if (await this.persistence.hasVivaTennisCheckoutMapping(ref)) {
+      await this.persistence.withdrawVivaTennisCheckout(attempt, previous);
+      throw new ConflictException({ code: 'TOURNAMENT_TARGET_CHANGED' });
+    }
+    let result: unknown;
+    try {
+      result = await this.http(`${base}/v2/${tenant}/transactions`, auth, payload);
+    } catch {
+      this.logger.warn({ event: 'viva_tennis_provider_outcome_unknown', operationId: attempt.operationId });
+      return pending({ transactionId: attempt.operationId });
+    }
+    const transactionId = record(result) && providerTransactionId(result);
+    if (!transactionId || !await this.persistence.recordVivaTennisCheckoutReceipt(attempt, transactionId).catch(() => false)) {
+      this.logger.warn({ event: 'viva_tennis_receipt_unconfirmed', operationId: attempt.operationId });
+      return pending({ transactionId: attempt.operationId });
+    }
+    // Force the current widget to recover the booking ID and link together by
+    // this transaction ID. A bare URL skips that lookup and cannot be opened.
+    return { transactionId, operationId: attempt.operationId };
+  }
+
+  private async vivaTennisAttemptView(attempt: VivaTennisCheckoutAttempt, auth?: string, cancelledBookingId?: string): Promise<Row> {
+    const { operationId, providerTransactionId: transactionId } = attempt;
+    if (!transactionId) return pending({ transactionId: operationId });
+    const operation = {
+      ...attempt, ownerCommand: { kind: 'CHECKOUT' }, ownerReceipt: { transactionId }
+    };
+    const status = await this.readVivaTennisPaymentStatus(attempt, transactionId, auth);
+    if (['PAID', 'COMPLETED', 'CONFIRMED', 'SUCCESS', 'SUCCEEDED'].includes(status)) {
+      if (cancelledBookingId) return pending({ transactionId: operationId });
+      const active = await this.readProviderBookings(operation, auth).catch(() => []);
+      const booking = active.length === 1 && !hasCancellationOrRefund(active[0]) ? active[0] : undefined;
+      return booking ? { operationId, bookingId: booking.id, toPay: 0 } : pending({ transactionId: operationId });
+    }
+    if (['CANCELLED', 'CANCELED', 'EXPIRED', 'REFUNDED'].includes(status)) {
+      const cancelled = await this.readCancelledBooking(operation, auth, cancelledBookingId).catch(() => undefined);
+      if (!cancelled) return pending({ transactionId: operationId });
+      return { operationId, state: 'CANCELLED', code: 'TOURNAMENT_BOOKING_CANCELLED',
+        actorClientId: attempt.clientId, requestKey: attempt.requestKey };
+    }
+    if (cancelledBookingId || !['UNPAID', 'NOT_PAID', 'WAITING', 'PENDING', 'CREATED', 'NEW', 'RESERVED'].includes(status)
+      || await this.readCancelledBooking(operation, auth).catch(() => undefined)) {
+      return pending({ transactionId: operationId });
+    }
+    // A replay uses the widget's exact-transaction lookup instead of an old payment URL.
+    return { operationId, transactionId };
+  }
+
+  private async readVivaTennisPaymentStatus(attempt: VivaTennisCheckoutAttempt, transactionId: string, auth?: string) {
+    const url = `https://api.vivacrm.ru/end-user/api/v2/${encodeURIComponent(attempt.widgetId)}/transactions/${encodeURIComponent(transactionId)}/status`;
+    const raw = await this.http(url, auth).catch(() => null);
+    const tx = record(raw) && record(raw.data) ? raw.data : raw;
+    if (!record(tx) || !agree([tx.id, tx.transactionId, tx.transaction?.id], transactionId)
+      || !agree([tx.clientId, tx.client?.id], attempt.clientId)
+      || !agree([tx.exerciseId, tx.exercise?.id], attempt.exerciseId)
+      || !agree([tx.studioId, tx.studio?.id], attempt.studioId)) return 'UNVERIFIED';
+    return String(tx.transactionStatus?.transactionStatus ?? tx.transactionStatus ?? tx.status ?? '').toUpperCase();
+  }
+
   async subscriptionAdmission(ref: string, auth: string | undefined, body: unknown): Promise<Row> {
     if (!record(body) || !id(body.operationId) || !id(body.clientSubscriptionId)) throw new BadRequestException('Invalid subscription admission');
     let context = await this.tournaments.resolveCheckoutIdentity(ref, auth);
+    if (await this.readVivaTennisAttempt(context)) {
+      throw new ConflictException({ code: 'TOURNAMENT_OPERATION_ALREADY_STARTED' });
+    }
     const replay = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm, { requestKey: body.operationId });
     const reconciled = replay ? { operation: replay, context } : await this.reconcilePreviousCancellation(context, auth);
     const previous = reconciled.operation;
@@ -296,7 +451,18 @@ export class TournamentCheckoutService {
 
   async reconcile(ref: string, auth: string | undefined, cancelledBookingId?: unknown): Promise<Row> {
     if (cancelledBookingId !== undefined && !id(cancelledBookingId)) throw new BadRequestException();
-    const context = await this.tournaments.resolveCheckoutIdentity(ref, auth);
+    let context: CheckoutContext;
+    try {
+      context = await this.tournaments.resolveCheckoutIdentity(ref, auth);
+    } catch (error) {
+      if (!unmapped(error)) throw error;
+      const actor = await this.tournaments.resolveVivaTennisCheckoutActor(auth);
+      const attempt = await this.persistence.readVivaTennisCheckout(checkoutJournalKey(actor.tenantKey, actor.clientId, ref));
+      if (!attempt) throw error;
+      return this.vivaTennisAttemptView(attempt, auth, cancelledBookingId as string | undefined);
+    }
+    const detached = await this.readVivaTennisAttempt(context);
+    if (detached) return this.vivaTennisAttemptView(detached, auth, cancelledBookingId as string | undefined);
     const operation = await this.persistence.readTournamentCheckoutOperation(context.tournament.id, context.actor.phoneNorm);
     if (!operation || !this.boundToContext(operation, context)) {
       if (cancelledBookingId) return { state: 'NOT_TRACKED' };
@@ -439,9 +605,8 @@ export class TournamentCheckoutService {
       result = await this.http(`https://api.vivacrm.ru/end-user/api/v2/${encodeURIComponent(operation.widgetId)}/transactions`, auth, operation.ownerCommand.payload);
     } catch { return pending(operation); }
     if (!record(result)) return pending(operation);
-    const transactionId = str(result, ['transactionId', 'transaction_id', 'id', 'uuid'])
-      ?? str(result.transaction, ['transactionId', 'id']) ?? str(result.data, ['transactionId', 'id']);
-    if (!id(transactionId)) return pending(operation);
+    const transactionId = providerTransactionId(result);
+    if (!transactionId) return pending(operation);
     // Retain only response fields used by the widget; no provider identity/profile is exposed.
     const receipt = { transactionId, ...(str(result, ['paymentUrl', 'checkoutUrl']) ? { paymentUrl: str(result, ['paymentUrl', 'checkoutUrl']) } : {}) };
     await this.persistence.recordTournamentCheckoutReceipt(context.tournament.id, operation, receipt);
